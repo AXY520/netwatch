@@ -1,0 +1,12 @@
+FROM scratch
+
+WORKDIR /app
+COPY dist/netwatch /app/netwatch
+COPY dist/netwatch-proxy /app/netwatch-proxy
+COPY dist/web /app/web
+COPY dist/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY dist/rootfs/ /
+
+ENV PATH=/usr/bin:/bin
+EXPOSE 23087
+CMD ["/app/netwatch"]

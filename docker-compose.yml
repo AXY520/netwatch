@@ -1,0 +1,36 @@
+services:
+  netwatch:
+    build: .
+    image: netwatch:latest
+    container_name: netwatch
+    # host 网络模式：容器共享宿主机的 network namespace，/proc/net/dev 读到真实网卡统计
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      # 监听端口（host 网络模式下就是宿主机端口）
+      PORT: "8080"
+      # 数据目录（测速历史、设置、时序数据）
+      DATA_DIR: "/app/data"
+      # 后台自动探测间隔秒（UI 默认关闭自动刷新，此值仅决定开启后的间隔）
+      REFRESH_INTERVAL_SEC: "10"
+      # 宽带 / 本机传输测速时长（下载和上传各持续 N 秒）
+      BROADBAND_TEST_SEC: "15"
+      LOCAL_TRANSFER_TEST_SEC: "10"
+      # 需要实时监控速率的网卡名（逗号分隔），宿主机 `ls /sys/class/net` 可查
+      MONITORED_NICS: "enp2s0,wlp4s0"
+      # 网站连通性目标，格式 Name|URL，逗号分隔
+      # DOMESTIC_SITES: "Baidu|https://www.baidu.com,Bilibili|https://www.bilibili.com"
+      # GLOBAL_SITES: "GitHub|https://github.com,YouTube|https://www.youtube.com"
+      # 可选：Basic Auth（两个同时设置才会启用）
+      # BASIC_AUTH_USER: "admin"
+      # BASIC_AUTH_PASSWORD: "change-me"
+      # 可选：出口 IP / NAT 变化时 POST 给该 URL
+      # ALERT_WEBHOOK_URL: "https://example.com/webhook"
+      TZ: "Asia/Shanghai"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

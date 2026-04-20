@@ -1,0 +1,8 @@
+dist/
+*.lpk
+
+# local scratch files
+test.html
+
+# editor / system
+.DS_Store

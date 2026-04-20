@@ -1,0 +1,15 @@
+buildscript: sh build.sh
+manifest: ./lzc-manifest.yml
+contentdir: ./dist
+pkgout: ./
+icon: ./lzc-icon.png
+compose_override:
+  services:
+    netwatch:
+      cap_add:
+        - NET_RAW
+        - NET_ADMIN
+images:
+  netwatch:
+    dockerfile: ./Dockerfile.lzc
+    context: .

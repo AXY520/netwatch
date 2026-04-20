@@ -1,0 +1,56 @@
+lzc-sdk-version: "0.1"
+package: cloud.lazycat.app.netwatch
+version: "0.1.0"
+name: 网络监测
+description: 主机网络诊断与出口观测面板
+#homepage: https://github.com/axy/netwatch
+#author: axy
+locales:
+  zh:
+    name: 网络监测
+    description: 主机网络诊断与出口观测面板
+  zh-CN:
+    name: 网络监测
+    description: 主机网络诊断与出口观测面板
+  en:
+    name: Netwatch
+    description: Network diagnostics and egress observation dashboard
+  en-US:
+    name: Netwatch
+    description: Network diagnostics and egress observation dashboard
+application:
+  subdomain: netwatch
+  background_task: true
+  routes:
+    - /=http://proxy:23088
+services:
+  netwatch:
+    image: embed:netwatch
+    network_mode: host
+    environment:
+      - PORT=23087
+      - REFRESH_INTERVAL_SEC=10
+      - BROADBAND_TEST_SEC=10
+      - LOCAL_TRANSFER_TEST_SEC=10
+      - LOCAL_TRANSFER_PAYLOAD_MB=32
+      - DATA_DIR=/app/data
+      - MONITORED_NICS=enp2s0,wlp4s0
+    binds:
+      - /lzcapp/var/data:/app/data
+  proxy:
+    image: embed:netwatch
+    command: /app/netwatch-proxy
+    depends_on:
+      - netwatch
+    environment:
+      - LISTEN_PORT=23088
+      - TARGET_PORT=23087
+    healthcheck:
+      test:
+        - CMD
+        - /app/netwatch-proxy
+        - -healthcheck
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s

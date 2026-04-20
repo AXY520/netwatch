@@ -1,0 +1,18 @@
+package: cloud.lazycat.app.netwatch
+version: 0.1.0
+name: Netwatch
+description: 网络连通性、出口 IP、NAT、网卡与测速监控面板
+author: axy
+license: MIT
+homepage: https://github.com/axy/netwatch
+min_os_version: 1.5.0
+locales:
+  zh-CN:
+    name: Netwatch
+    description: 网络连通性、出口 IP、NAT、网卡与测速监控面板
+  en:
+    name: Netwatch
+    description: Network connectivity, egress IP, NAT, interface and speed test dashboard.
+permissions:
+  required:
+    - net.internet
