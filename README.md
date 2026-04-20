@@ -1,11 +1,7 @@
 # Netwatch
 
-当前版本聚焦两块内容：
-
 - 国内网站连通性：`Baidu`、`Bilibili`
 - 国外网站连通性：`GitHub`、`YouTube`
-
-页面展示内容只保留：
 
 - 网站名
 - 延迟
@@ -15,12 +11,10 @@
 - 出口地区
 - NAT 类型
 
-`IPv4/IPv6` 专门连通性模块已经移除。
-
 ## 运行
 
 ```bash
-pg-docker compose up --build
+docker compose up --build
 ```
 
 或者直接本地运行：
@@ -99,8 +93,6 @@ network_mode: host
 ```
 
 ## 直接运行
-
-如果你不走容器，直接在项目目录执行：
 
 ```bash
 cd /root/.codex/netwatch
