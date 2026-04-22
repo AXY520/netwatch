@@ -16,8 +16,15 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	if err != nil {
 		return s, false
 	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return s, false
+	}
 	if err := json.Unmarshal(body, &s); err != nil {
 		return s, false
+	}
+	if _, ok := raw["broadband_domestic_only"]; !ok {
+		s.BroadbandDomesticOnly = true
 	}
 	return s, true
 }

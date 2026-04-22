@@ -170,12 +170,10 @@
                 <div class="st-panel download" id="broadband-panel-download">
                     <div class="st-panel-head"><span>下载</span><span class="arrow">↓</span></div>
                     <div><span class="st-num" id="broadband-download">--</span><span class="st-unit">Mbps</span></div>
-                    <div class="st-panel-bar" id="broadband-download-bar"></div>
                 </div>
                 <div class="st-panel upload" id="broadband-panel-upload">
                     <div class="st-panel-head"><span>上传</span><span class="arrow">↑</span></div>
                     <div><span class="st-num" id="broadband-upload">--</span><span class="st-unit">Mbps</span></div>
-                    <div class="st-panel-bar" id="broadband-upload-bar"></div>
                 </div>
             </div>
 
@@ -216,12 +214,10 @@
                 <div class="st-panel download" id="transfer-panel-download">
                     <div class="st-panel-head"><span>下载</span><span class="arrow">↓</span></div>
                     <div><span class="st-num" id="transfer-download">--</span><span class="st-unit">Mbps</span></div>
-                    <div class="st-panel-bar" id="transfer-download-bar"></div>
                 </div>
                 <div class="st-panel upload" id="transfer-panel-upload">
                     <div class="st-panel-head"><span>上传</span><span class="arrow">↑</span></div>
                     <div><span class="st-num" id="transfer-upload">--</span><span class="st-unit">Mbps</span></div>
-                    <div class="st-panel-bar" id="transfer-upload-bar"></div>
                 </div>
             </div>
 
@@ -287,6 +283,15 @@
             </div>
 
             <div class="settings-section">
+                <div class="table-subtitle">宽带测速 (Broadband)</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-broadband-domestic-only">
+                    <span>仅使用国内测速节点</span>
+                </label>
+                <div class="note">开启后将强制筛选中国大陆境内的运营商节点，适用于存在全局代理但需要测试真实物理带宽的场景。</div>
+            </div>
+
+            <div class="settings-section">
                 <div class="table-subtitle">网卡实时监测</div>
                 <label class="settings-toggle">
                     <input type="checkbox" id="setting-nic-realtime-enabled">
@@ -306,6 +311,7 @@
             </div>
         </div>
     </section>
+    <script src="/speedtest.js"></script>
     <script src="/app.js"></script>
 </body>
 </html>

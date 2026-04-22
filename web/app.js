@@ -17,6 +17,7 @@ const state = {
             settings: {
                 refresh_interval_sec: 10,
                 auto_refresh_enabled: true,
+                broadband_domestic_only: true,
                 nic_realtime_enabled: true,
                 nic_realtime_interval_sec: 1
             },
@@ -70,6 +71,7 @@ const state = {
             saveSettings: document.getElementById('save-settings'),
             settingAutoRefreshEnabled: document.getElementById('setting-auto-refresh-enabled'),
             settingRefreshIntervalSec: document.getElementById('setting-refresh-interval-sec'),
+            settingBroadbandDomesticOnly: document.getElementById('setting-broadband-domestic-only'),
             settingNICRealtimeEnabled: document.getElementById('setting-nic-realtime-enabled'),
             settingNICRealtimeIntervalSec: document.getElementById('setting-nic-realtime-interval-sec'),
             broadbandNote: document.getElementById('broadband-note'),
@@ -215,57 +217,76 @@ function initTheme() {
                 dlPanel.classList.toggle('active', mode === 'Download');
                 upPanel.classList.toggle('active', mode === 'Upload');
             }
-
-            if (unit === 'Mbps' && (mode === 'Download' || mode === 'Upload')) {
-                const barId = `${scope}-${mode.toLowerCase()}-bar`;
-                const bar = document.getElementById(barId);
-                if (bar) bar.style.setProperty('--fill', `${ratio * 100}%`);
-            }
         }
 
         function createSpeedSampler() {
             return {
                 startedAt: performance.now(),
+                warmupEndAt: performance.now() + 2500, // 2.5秒预热
                 lastAt: performance.now(),
                 lastBytes: 0,
-                samples: []
+                samples: [],
+                allMbps: [], // 预热后的所有样本
+                lastMbps: 0,
+                isWarmup: true
             };
         }
 
         function observeSpeedSampler(sampler, totalBytes) {
             const now = performance.now();
+            if (sampler.isWarmup && now >= sampler.warmupEndAt) {
+                sampler.isWarmup = false;
+                // 进入正式测试阶段，重置计数以排除预热影响
+                sampler.lastBytes = totalBytes;
+                sampler.lastAt = now;
+                return sampler.lastMbps;
+            }
+
             const elapsedMs = now - sampler.lastAt;
-            if (elapsedMs > 0) {
+            if (elapsedMs > 100) { // 100ms 采样一次
                 const deltaBytes = Math.max(0, totalBytes - sampler.lastBytes);
                 const instantMbps = (deltaBytes * 8) / (elapsedMs / 1000) / 1_000_000;
-                if (now - sampler.startedAt >= 2000 && instantMbps > 0) {
+                
+                if (!sampler.isWarmup && instantMbps > 0) {
                     sampler.samples.push(instantMbps);
-                    if (sampler.samples.length > 80) {
-                        sampler.samples = sampler.samples.slice(-80);
+                    sampler.allMbps.push(instantMbps);
+                    if (sampler.samples.length > 20) {
+                        sampler.samples = sampler.samples.slice(-20);
                     }
                 }
-            }
-            sampler.lastAt = now;
-            sampler.lastBytes = totalBytes;
 
-            const visible = sampler.samples.slice(-6);
-            if (visible.length > 0) {
-                return visible.reduce((sum, value) => sum + value, 0) / visible.length;
+                // 指数移动平均 (EMA)：LibreSpeed 风格的平滑
+                // 如果是预热期，平滑权重更重，正式期则反应更快
+                const weight = sampler.isWarmup ? 0.15 : 0.3;
+                if (sampler.lastMbps > 0) {
+                    sampler.lastMbps = instantMbps * weight + sampler.lastMbps * (1 - weight);
+                } else {
+                    sampler.lastMbps = instantMbps;
+                }
+
+                sampler.lastAt = now;
+                sampler.lastBytes = totalBytes;
             }
-            const totalElapsedSec = Math.max((now - sampler.startedAt) / 1000, 0.001);
-            return (totalBytes * 8) / totalElapsedSec / 1_000_000;
+
+            return sampler.lastMbps;
         }
 
         function stableSpeedFromSampler(sampler, totalBytes) {
-            observeSpeedSampler(sampler, totalBytes);
-            if (sampler.samples.length === 0) {
-                const totalElapsedSec = Math.max((performance.now() - sampler.startedAt) / 1000, 0.001);
+            // 最终结果：丢弃所有样本中最高和最低的 10%，然后取剩余部分的平均值
+            // 这能有效过滤掉 TCP 慢启动突发和偶发掉速
+            const data = sampler.allMbps.length > 5 ? sampler.allMbps : sampler.samples;
+            if (data.length === 0) {
+                const totalElapsedSec = Math.max((performance.now() - sampler.startedAt) / 1000, 0.5);
                 return (totalBytes * 8) / totalElapsedSec / 1_000_000;
             }
-            const sorted = [...sampler.samples].sort((a, b) => a - b);
-            const cut = Math.floor(sorted.length * 0.2);
-            const trimmed = cut * 2 < sorted.length ? sorted.slice(cut, sorted.length - cut) : sorted;
-            return trimmed.reduce((sum, value) => sum + value, 0) / Math.max(trimmed.length, 1);
+
+            const sorted = [...data].sort((a, b) => a - b);
+            const cut = Math.floor(sorted.length * 0.1);
+            const trimmed = sorted.slice(cut, sorted.length - cut);
+            const final = trimmed.reduce((sum, v) => sum + v, 0) / (trimmed.length || 1);
+            
+            // 兜底：如果算出来的结果明显异常（比如 0），则取未裁剪的中位数
+            return final > 0 ? final : sorted[Math.floor(sorted.length / 2)];
         }
 
         function renderPlaceholderTable(tbody, message) {
@@ -440,7 +461,7 @@ function initTheme() {
             }
 
             elements.broadbandNote.textContent =
-                `下行使用国内多家镜像（清华/中科大/华为云/南大/网易 等）并发测试，上行走 Cloudflare（回程通常经 HK），每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
+                `宽带测速使用 Speedtest.net 节点；开启“仅国内节点”后会强制选择国内候选节点，每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
             elements.transferNote.textContent =
                 `浏览器与本机服务间并发下载/上传 ${state.speedConfig.local_transfer_duration_sec} 秒，实时显示速率。`;
         }
@@ -491,7 +512,7 @@ function initTheme() {
         function resetBroadbandMetrics() {
             elements.broadbandStage.textContent = '待启动';
             elements.broadbandProgress.textContent = '0%';
-            elements.broadbandNote.textContent = `下行使用国内多家镜像并发测试，上行走 Cloudflare，每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
+            elements.broadbandNote.textContent = `宽带测速使用 Speedtest.net 节点，每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
             setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, 0, 'Mbps', 'Idle', '等待测速开始');
             elements.broadbandDownload.textContent = '--';
             elements.broadbandUpload.textContent = '--';
@@ -613,182 +634,100 @@ function initTheme() {
             }
         }
 
-        async function measureAveragePing(signal, samples = 8) {
-            const raw = [];
-            for (let i = 0; i < samples; i += 1) {
-                const start = performance.now();
-                try {
-                    await fetch(`/api/v1/speed/local/ping?ts=${Date.now()}-${i}`, { cache: 'no-store', signal });
-                } catch (e) {
-                    if (signal?.aborted) throw e;
-                    continue;
-                }
-                raw.push(performance.now() - start);
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, raw[raw.length - 1], 'ms', 'Ping', `延迟采样 ${i + 1}/${samples}`);
-                updateTransferProgress('延迟采样', 5 + ((i + 1) / samples) * 10, `正在测量往返延迟 ${i + 1}/${samples}`);
-            }
-            // 丢掉首个样本（含 TCP 握手开销），用后面的作为 RTT
-            const values = raw.length > 1 ? raw.slice(1) : raw;
-            if (values.length === 0) return { latency: 0, jitter: 0 };
-            const avg = values.reduce((s, v) => s + v, 0) / values.length;
-            let jitter = 0;
-            if (values.length > 1) {
-                let diffSum = 0;
-                for (let i = 1; i < values.length; i += 1) {
-                    diffSum += Math.abs(values[i] - values[i - 1]);
-                }
-                jitter = diffSum / (values.length - 1);
-            }
-            return {
-                latency: Math.round(avg),
-                jitter: Math.round(jitter)
-            };
-        }
-
-        async function runParallelDownload(durationSec, signal) {
-            const workerCount = 4;
-            const deadline = performance.now() + durationSec * 1000;
-            const shared = { bytes: 0 };
-            const sampler = createSpeedSampler();
-
-            const progressTimer = setInterval(() => {
-                const mbps = observeSpeedSampler(sampler, shared.bytes);
-                const phaseRatio = Math.min(1, (performance.now() - sampler.startedAt) / (durationSec * 1000));
-                elements.transferDownload.textContent = formatMbps(mbps);
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, mbps, 'Mbps', 'Download', `下载阶段 ${Math.round(phaseRatio * 100)}%`);
-                updateTransferProgress('下载测速', 15 + phaseRatio * 40, `浏览器到本机下载测速中 ${mbps.toFixed(2)} Mbps`);
-            }, 150);
-
-            const worker = async () => {
-                while (performance.now() < deadline - 500) {
-                    if (signal?.aborted) return;
-                    try {
-                        const remaining = Math.max(2, Math.ceil((deadline - performance.now()) / 1000) + 2);
-                        const response = await fetch(`/api/v1/speed/local/download?sec=${remaining}&ts=${Date.now()}`, {
-                            cache: 'no-store',
-                            signal
-                        });
-                        const reader = response.body.getReader();
-                        try {
-                            while (performance.now() < deadline) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                shared.bytes += value.byteLength;
-                            }
-                        } finally {
-                            try { await reader.cancel(); } catch (_) {}
-                        }
-                    } catch (e) {
-                        if (signal?.aborted) return;
-                        // 网络中断 / 连接被服务端关闭：短暂等待后重开连接
-                        await new Promise(r => setTimeout(r, 150));
-                    }
-                }
-            };
-
-            try {
-                await Promise.all(Array.from({ length: workerCount }, worker));
-            } finally {
-                clearInterval(progressTimer);
-            }
-
-            return stableSpeedFromSampler(sampler, shared.bytes);
-        }
-
-        async function runParallelUpload(durationSec, signal) {
-            const workerCount = 4;
-            const chunkBytes = 512 * 1024; // 512 KB：采样频率更高
-            const payload = new Uint8Array(chunkBytes);
-            const deadline = performance.now() + durationSec * 1000;
-            const shared = { bytes: 0 };
-            const sampler = createSpeedSampler();
-
-            const progressTimer = setInterval(() => {
-                const mbps = observeSpeedSampler(sampler, shared.bytes);
-                const phaseRatio = Math.min(1, (performance.now() - sampler.startedAt) / (durationSec * 1000));
-                elements.transferUpload.textContent = formatMbps(mbps);
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, mbps, 'Mbps', 'Upload', `上传阶段 ${Math.round(phaseRatio * 100)}%`);
-                updateTransferProgress('上传测速', 55 + phaseRatio * 45, `浏览器到本机上传测速中 ${mbps.toFixed(2)} Mbps`);
-            }, 150);
-
-            const worker = async () => {
-                while (performance.now() < deadline) {
-                    if (signal?.aborted) return;
-                    try {
-                        await fetch(`/api/v1/speed/local/upload?ts=${Date.now()}`, {
-                            method: 'POST',
-                            body: payload,
-                            headers: { 'Content-Type': 'application/octet-stream' },
-                            cache: 'no-store',
-                            signal
-                        });
-                        shared.bytes += chunkBytes;
-                    } catch (e) {
-                        if (signal?.aborted) return;
-                        await new Promise(r => setTimeout(r, 150));
-                    }
-                }
-            };
-
-            try {
-                await Promise.all(Array.from({ length: workerCount }, worker));
-            } finally {
-                clearInterval(progressTimer);
-            }
-
-            return stableSpeedFromSampler(sampler, shared.bytes);
-        }
-
         async function runTransferTest() {
             if (state.runningTest) return;
             state.runningTest = 'transfer';
-            state.transferAbortController = new AbortController();
             updateWindowControls();
             resetTransferMetrics();
 
-            const { signal } = state.transferAbortController;
-            const durationSec = state.speedConfig.local_transfer_duration_sec;
+            const s = new Speedtest();
+            state.transferAbortController = { abort: () => s.abort() };
+            
+            s.setParameter("url_dl", "/api/v1/speed/local/download?sec=30");
+            s.setParameter("url_ul", "/api/v1/speed/local/upload");
+            s.setParameter("url_ping", "/api/v1/speed/local/ping");
+            s.setParameter("url_getIp", "/api/v1/summary");
+            s.setParameter("worker_path", "/speedtest_worker.js");
+            s.setParameter("test_order", "P_D_U");
+            s.setParameter("time_dl_max", state.speedConfig.local_transfer_duration_sec);
+            s.setParameter("time_ul_max", state.speedConfig.local_transfer_duration_sec);
+            s.setParameter("time_auto", false);
+            s.setParameter("count_ping", 10);
+            
+            let lastData = {};
+            s.onupdate = (data) => {
+                lastData = data;
+                const testStateMap = {
+                    0: { stage: '准备中', progress: 0, mode: 'Idle' },
+                    1: { stage: '下载测速', progress: 15 + (data.dlProgress || 0) * 40, mode: 'Download' },
+                    2: { stage: '延迟采样', progress: 5 + (data.pingProgress || 0) * 10, mode: 'Ping' },
+                    3: { stage: '上传测速', progress: 55 + (data.ulProgress || 0) * 45, mode: 'Upload' }
+                };
+                
+                const current = testStateMap[data.testState];
+                if (current) {
+                    elements.transferStage.textContent = current.stage;
+                    elements.transferProgress.textContent = `${Math.round(current.progress)}%`;
+                    
+                    let speed = 0, unit = 'Mbps', caption = '';
+                    if (current.mode === 'Download') {
+                        speed = parseFloat(data.dlStatus) || 0;
+                        elements.transferDownload.textContent = speed.toFixed(1);
+                        caption = `正在下载... ${speed.toFixed(2)} Mbps`;
+                    } else if (current.mode === 'Upload') {
+                        speed = parseFloat(data.ulStatus) || 0;
+                        elements.transferUpload.textContent = speed.toFixed(1);
+                        caption = `正在上传... ${speed.toFixed(2)} Mbps`;
+                    } else if (current.mode === 'Ping') {
+                        speed = parseFloat(data.pingStatus) || 0;
+                        elements.transferLatency.textContent = formatMS(speed);
+                        elements.transferJitter.textContent = formatMS(parseFloat(data.jitterStatus));
+                        unit = 'ms';
+                        caption = `延迟采样中... ${speed.toFixed(0)} ms`;
+                    }
+                    
+                    setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, speed, unit, current.mode, caption);
+                }
+            };
 
-            try {
-                updateTransferProgress('准备中', 0, '正在启动网页到本机传输测速');
-                const pingStats = await measureAveragePing(signal, 8);
-                elements.transferLatency.textContent = formatMS(pingStats.latency);
-                elements.transferJitter.textContent = formatMS(pingStats.jitter);
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, pingStats.latency, 'ms', 'Ping', '延迟采样完成');
+            s.onend = async (aborted) => {
+                if (aborted) {
+                    return;
+                }
 
-                const downloadMbps = await runParallelDownload(durationSec, signal);
-                elements.transferDownload.textContent = formatMbps(downloadMbps);
+                const downloadMbps = parseFloat(elements.transferDownload.textContent) || 0;
+                const uploadMbps = parseFloat(elements.transferUpload.textContent) || 0;
+                const pingMs = parseFloat(elements.transferLatency.textContent) || 0;
+                const jitterMs = parseFloat(elements.transferJitter.textContent) || 0;
 
-                const uploadMbps = await runParallelUpload(durationSec, signal);
-                elements.transferUpload.textContent = formatMbps(uploadMbps);
-
-                updateTransferProgress('已完成', 100, '网页到本机传输测速完成');
+                elements.transferStage.textContent = '已完成';
+                elements.transferProgress.textContent = '100%';
+                elements.transferNote.textContent = '网页到本机传输测速完成';
                 setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, downloadMbps, 'Mbps', 'Result', '测速完成');
 
-                await fetch('/api/v1/speed/local/result', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        download_mbps: downloadMbps,
-                        upload_mbps: uploadMbps,
-                        round_trip_latency_ms: pingStats.latency,
-                        jitter_ms: pingStats.jitter
-                    })
-                });
+                try {
+                    await fetch('/api/v1/speed/local/result', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            download_mbps: downloadMbps,
+                            upload_mbps: uploadMbps,
+                            round_trip_latency_ms: Math.round(pingMs),
+                            jitter_ms: Math.round(jitterMs)
+                        })
+                    });
+                    await loadSpeedHistory();
+                } catch (e) {
+                    console.error('Failed to save transfer result:', e);
+                }
 
-                await loadSpeedHistory();
-            } catch (error) {
-                if (!isAbortError(error)) {
-                    console.error(error);
-                    updateTransferProgress('失败', 0, '网页到本机传输测速失败');
-                }
-            } finally {
+                state.runningTest = null;
                 state.transferAbortController = null;
-                if (state.runningTest === 'transfer') {
-                    state.runningTest = null;
-                }
                 updateWindowControls();
-            }
+            };
+
+            updateTransferProgress('准备中', 0, '正在启动网页到本机传输测速');
+            s.start();
         }
 
         function cancelTransferTest(showStopped = true) {
@@ -894,8 +833,11 @@ function initTheme() {
             elements.runTransferTest.addEventListener('click', runTransferTest);
             elements.saveSettings?.addEventListener('click', saveSettings);
             elements.settingNICRealtimeEnabled?.addEventListener('change', () => {
-                state.settings.nic_realtime_enabled = !!elements.settingNICRealtimeEnabled.checked;
-                applySettingsToForm();
+                const isEnabled = !!elements.settingNICRealtimeEnabled.checked;
+                state.settings.nic_realtime_enabled = isEnabled;
+                if (elements.settingNICRealtimeIntervalSec) {
+                    elements.settingNICRealtimeIntervalSec.disabled = !isEnabled;
+                }
             });
         }
 
@@ -1248,6 +1190,9 @@ function initTheme() {
             if (elements.settingRefreshIntervalSec) {
                 elements.settingRefreshIntervalSec.value = String(state.settings.refresh_interval_sec || 10);
             }
+            if (elements.settingBroadbandDomesticOnly) {
+                elements.settingBroadbandDomesticOnly.checked = !!state.settings.broadband_domestic_only;
+            }
             if (elements.settingNICRealtimeEnabled) {
                 elements.settingNICRealtimeEnabled.checked = !!state.settings.nic_realtime_enabled;
             }
@@ -1268,6 +1213,7 @@ function initTheme() {
                 state.settings = {
                     refresh_interval_sec: settingsData.refresh_interval_sec || state.refreshInterval || 10,
                     auto_refresh_enabled: !!autoData.enabled,
+                    broadband_domestic_only: !!settingsData.broadband_domestic_only,
                     nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
                     nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1
                 };
@@ -1303,6 +1249,7 @@ function initTheme() {
             const payload = {
                 refresh_interval_sec: parseInt(elements.settingRefreshIntervalSec?.value || '10', 10) || 10,
                 auto_refresh_enabled: !!elements.settingAutoRefreshEnabled?.checked,
+                broadband_domestic_only: !!elements.settingBroadbandDomesticOnly?.checked,
                 nic_realtime_enabled: !!elements.settingNICRealtimeEnabled?.checked,
                 nic_realtime_interval_sec: parseInt(elements.settingNICRealtimeIntervalSec?.value || '1', 10) || 1
             };

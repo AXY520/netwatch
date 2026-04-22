@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
-	"path"
 	"os/signal"
+	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -59,7 +58,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           api.BasicAuth(loggingMiddleware(mux)),
+		Handler:           api.BasicAuth(accessLogMiddleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       0,
 		WriteTimeout:      0,
@@ -80,11 +79,45 @@ func main() {
 	}
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func accessLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		elapsed := time.Since(start)
+		path := r.URL.Path
+
+		// 高频健康检查和实时网卡轮询默认静默，避免生产日志被刷屏。
+		if path == "/healthz" || path == "/api/v1/network/realtime" {
+			if rec.status >= http.StatusBadRequest {
+				logger.Warn("%s %s -> %d (%s)", r.Method, path, rec.status, elapsed.Round(time.Millisecond))
+			}
+			return
+		}
+
+		// 普通请求只记录异常或慢请求；测速/诊断类接口保留完成日志。
+		if rec.status >= http.StatusInternalServerError {
+			logger.Error("%s %s -> %d (%s)", r.Method, path, rec.status, elapsed.Round(time.Millisecond))
+			return
+		}
+		if rec.status >= http.StatusBadRequest {
+			logger.Warn("%s %s -> %d (%s)", r.Method, path, rec.status, elapsed.Round(time.Millisecond))
+			return
+		}
+		if elapsed >= 2*time.Second || strings.HasPrefix(path, "/api/v1/speed/") || strings.HasPrefix(path, "/api/v1/diagnostics/trace") {
+			logger.Info("%s %s -> %d (%s)", r.Method, path, rec.status, elapsed.Round(time.Millisecond))
+		}
 	})
 }
 

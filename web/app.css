@@ -659,8 +659,9 @@
         #broadband-window,
         #transfer-window {
             width: min(860px, calc(100vw - 2rem));
-            height: min(760px, calc(100vh - 3rem));
-            overflow: hidden;
+            height: auto;
+            max-height: calc(100vh - 4rem);
+            overflow-y: visible;
         }
 
         #broadband-window.active,
@@ -671,8 +672,9 @@
 
         #broadband-window .history-list,
         #transfer-window .history-list {
-            flex: 1 1 auto;
-            min-height: 0;
+            flex: 0 0 auto;
+            min-height: 140px;
+            margin-top: 1rem;
         }
 
         .window-head {
@@ -751,8 +753,8 @@
             display: flex;
             flex-direction: column;
             gap: 1.25rem;
-            margin-bottom: 1.5rem;
-            min-height: 25rem;
+            margin-bottom: .6rem;
+            min-height: auto;
             flex: 0 0 auto;
         }
 
@@ -836,25 +838,6 @@
             margin-left: .5rem;
         }
 
-        .st-panel-bar {
-            --fill: 0%;
-            margin-top: 1rem;
-            height: 6px;
-            border-radius: 3px;
-            background: var(--border-color);
-            position: relative;
-            overflow: hidden;
-        }
-        .st-panel-bar::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            width: var(--fill);
-            background: var(--accent-cyan);
-            transition: width .18s ease;
-        }
-        .st-panel.upload .st-panel-bar::after { background: var(--accent-green); }
-
         .st-meta {
             display: flex;
             gap: .75rem;
@@ -892,10 +875,8 @@
         }
 
         .history-list {
-            max-height: 280px;
-            overflow: auto;
             border-top: 1px solid var(--border-color);
-            padding-top: 1rem;
+            padding-top: .65rem;
         }
 
         .history-item {

@@ -71,13 +71,14 @@ type TraceResult struct {
 }
 
 type MutableSettings struct {
-	RefreshIntervalSec   int          `json:"refresh_interval_sec"`
-	AutoRefreshEnabled   bool         `json:"auto_refresh_enabled"`
-	NICRealtimeEnabled   bool         `json:"nic_realtime_enabled"`
-	NICRealtimeIntervalSec int        `json:"nic_realtime_interval_sec"`
-	DomesticSites        []SiteTarget `json:"domestic_sites"`
-	GlobalSites          []SiteTarget `json:"global_sites"`
-	AlertWebhookURL      string       `json:"alert_webhook_url"`
+	RefreshIntervalSec     int          `json:"refresh_interval_sec"`
+	AutoRefreshEnabled     bool         `json:"auto_refresh_enabled"`
+	NICRealtimeEnabled     bool         `json:"nic_realtime_enabled"`
+	NICRealtimeIntervalSec int          `json:"nic_realtime_interval_sec"`
+	BroadbandDomesticOnly  bool         `json:"broadband_domestic_only"`
+	DomesticSites          []SiteTarget `json:"domestic_sites"`
+	GlobalSites            []SiteTarget `json:"global_sites"`
+	AlertWebhookURL        string       `json:"alert_webhook_url"`
 }
 
 type EgressLookup struct {

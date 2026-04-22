@@ -1,6 +1,6 @@
 lzc-sdk-version: "0.1"
 package: cloud.lazycat.app.netwatch
-version: "0.1.0"
+version: "0.2.0"
 name: 网络监测
 description: 主机网络诊断与出口观测面板
 #homepage: https://github.com/axy/netwatch

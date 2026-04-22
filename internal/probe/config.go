@@ -13,24 +13,26 @@ import (
 var (
 	ErrInvalidRefreshInterval = errors.New("invalid refresh interval: must be > 0")
 	ErrInvalidHTTPTimeout     = errors.New("invalid http timeout: must be > 0")
-	ErrInvalidNATTimeout     = errors.New("invalid nat timeout: must be > 0")
-	ErrInvalidDataDir        = errors.New("invalid data dir")
+	ErrInvalidNATTimeout      = errors.New("invalid nat timeout: must be > 0")
+	ErrInvalidDataDir         = errors.New("invalid data dir")
 )
 
 type FileConfig struct {
-	Port                   string   `json:"port"`
-	RefreshIntervalSec     int      `json:"refresh_interval_sec"`
-	HTTPTimeoutSec         int      `json:"http_timeout_sec"`
-	NATTimeoutSec          int      `json:"nat_timeout_sec"`
-	PublicIPv4Endpoint     string   `json:"public_ipv4_endpoint"`
-	PublicIPv6Endpoint     string   `json:"public_ipv6_endpoint"`
-	MonitoredNICs          []string `json:"monitored_nics"`
-	DataDir                string   `json:"data_dir"`
-	BroadbandTestSec       int      `json:"broadband_test_sec"`
-	LocalTransferTestSec   int      `json:"local_transfer_test_sec"`
-	LocalTransferPayloadMB int      `json:"local_transfer_payload_mb"`
-	IPv6HighPortProbeHost  string   `json:"ipv6_high_port_probe_host"`
-	IPv6HighPortProbePort  int      `json:"ipv6_high_port_probe_port"`
+	Port                  string   `json:"port"`
+	RefreshIntervalSec    int      `json:"refresh_interval_sec"`
+	HTTPTimeoutSec        int      `json:"http_timeout_sec"`
+	NATTimeoutSec         int      `json:"nat_timeout_sec"`
+	PublicIPv4Endpoint    string   `json:"public_ipv4_endpoint"`
+	PublicIPv6Endpoint    string   `json:"public_ipv6_endpoint"`
+	MonitoredNICs         []string `json:"monitored_nics"`
+	DataDir               string   `json:"data_dir"`
+	BroadbandTestSec      int      `json:"broadband_test_sec"`
+	BroadbandDomesticOnly *bool    `json:"broadband_domestic_only"`
+	LocalTransferTestSec  int      `json:"local_transfer_test_sec"`
+
+	LocalTransferPayloadMB int    `json:"local_transfer_payload_mb"`
+	IPv6HighPortProbeHost  string `json:"ipv6_high_port_probe_host"`
+	IPv6HighPortProbePort  int    `json:"ipv6_high_port_probe_port"`
 }
 
 func LoadConfig(path string) (FileConfig, error) {
@@ -76,6 +78,9 @@ func (f FileConfig) Apply(cfg *Config) error {
 	if f.BroadbandTestSec > 0 {
 		cfg.BroadbandDuration = time.Duration(f.BroadbandTestSec) * time.Second
 	}
+	if f.BroadbandDomesticOnly != nil {
+		cfg.BroadbandDomesticOnly = *f.BroadbandDomesticOnly
+	}
 	if f.LocalTransferTestSec > 0 {
 		cfg.LocalTransferDuration = time.Duration(f.LocalTransferTestSec) * time.Second
 	}
@@ -109,22 +114,23 @@ func validatePort(port string) error {
 }
 
 type Config struct {
-	Port                  string
-	DomesticSites         []SiteTarget
-	GlobalSites           []SiteTarget
-	STUNServers           []string
-	HTTPTimeout           time.Duration
-	NATTimeout            time.Duration
-	RefreshInterval       time.Duration
-	PublicIPv4Endpoint    string
-	PublicIPv6Endpoint    string
-	MonitoredNICs         []string
-	DataDir               string
-	BroadbandDuration     time.Duration
-	LocalTransferDuration time.Duration
+	Port                   string
+	DomesticSites          []SiteTarget
+	GlobalSites            []SiteTarget
+	STUNServers            []string
+	HTTPTimeout            time.Duration
+	NATTimeout             time.Duration
+	RefreshInterval        time.Duration
+	PublicIPv4Endpoint     string
+	PublicIPv6Endpoint     string
+	MonitoredNICs          []string
+	DataDir                string
+	BroadbandDuration      time.Duration
+	BroadbandDomesticOnly  bool
+	LocalTransferDuration  time.Duration
 	LocalTransferPayloadMB int
-	IPv6HighPortProbeHost string
-	IPv6HighPortProbePort int
+	IPv6HighPortProbeHost  string
+	IPv6HighPortProbePort  int
 }
 
 func DefaultConfig() Config {
@@ -151,6 +157,7 @@ func DefaultConfig() Config {
 		MonitoredNICs:          envCSV("MONITORED_NICS", []string{"enp2s0", "wlp4s0"}),
 		DataDir:                envOrDefault("DATA_DIR", "/app/data"),
 		BroadbandDuration:      envDurationValue("BROADBAND_TEST_SEC", 15*time.Second),
+		BroadbandDomesticOnly:  envBool("BROADBAND_DOMESTIC_ONLY", true),
 		LocalTransferDuration:  envDurationValue("LOCAL_TRANSFER_TEST_SEC", 10*time.Second),
 		LocalTransferPayloadMB: envInt("LOCAL_TRANSFER_PAYLOAD_MB", 32),
 		IPv6HighPortProbeHost:  envOrDefault("IPV6_HIGH_PORT_PROBE_HOST", "2a05:46c0:100:1007::5"),
@@ -175,6 +182,14 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+	return value == "true" || value == "1" || value == "yes" || value == "on"
 }
 
 func envDurationValue(key string, fallback time.Duration) time.Duration {

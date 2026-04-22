@@ -1,5 +1,5 @@
 package: cloud.lazycat.app.netwatch
-version: 0.1.0
+version: 0.2.0
 name: Netwatch
 description: 网络连通性、出口 IP、NAT、网卡与测速监控面板
 author: axy

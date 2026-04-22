@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const maxHistoryItems = 30
+const maxHistoryItems = 3
 
 type Service struct {
 	cfg                  Config
@@ -141,6 +141,7 @@ func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResul
 	duration := s.cfg.BroadbandDuration
 	s.mu.RUnlock()
 
+	ctx = context.WithValue(ctx, "service", s)
 	result, completed := executeBroadbandSpeedTest(ctx, duration, nil)
 	if completed {
 		s.pushBroadbandHistory(result)
@@ -158,6 +159,7 @@ func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
 
 	duration := s.cfg.BroadbandDuration
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, "service", s)
 	task := BroadbandTaskStatus{
 		ID:              fmt.Sprintf("broadband-%d", time.Now().UnixNano()),
 		Stage:           "starting",
@@ -338,6 +340,7 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		AutoRefreshEnabled:     s.autoRefresh,
 		NICRealtimeEnabled:     s.nicStats.enabled(),
 		NICRealtimeIntervalSec: s.nicStats.intervalSeconds(),
+		BroadbandDomesticOnly:  s.cfg.BroadbandDomesticOnly,
 		DomesticSites:          append([]SiteTarget(nil), s.cfg.DomesticSites...),
 		GlobalSites:            append([]SiteTarget(nil), s.cfg.GlobalSites...),
 		AlertWebhookURL:        s.alertWebhookURL,
@@ -355,6 +358,7 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 		s.cfg.RefreshInterval = time.Duration(in.RefreshIntervalSec) * time.Second
 	}
 	s.autoRefresh = in.AutoRefreshEnabled
+	s.cfg.BroadbandDomesticOnly = in.BroadbandDomesticOnly
 	if len(in.DomesticSites) > 0 {
 		s.cfg.DomesticSites = in.DomesticSites
 	}
@@ -821,10 +825,11 @@ func (s *throughputSampler) observe(totalBytes int64, now time.Time) float64 {
 			deltaBytes = 0
 		}
 		instMbps := computeMbps(deltaBytes, elapsed)
-		if now.Sub(s.startedAt) >= 1200*time.Millisecond && instMbps > 0 {
+		// 只要有数据在跑，就记录样本
+		if now.Sub(s.startedAt) >= 2000*time.Millisecond && instMbps > 0 {
 			s.samples = append(s.samples, instMbps)
-			if len(s.samples) > 80 {
-				s.samples = s.samples[len(s.samples)-80:]
+			if len(s.samples) > 120 {
+				s.samples = s.samples[len(s.samples)-120:]
 			}
 		}
 	}
@@ -835,9 +840,15 @@ func (s *throughputSampler) observe(totalBytes int64, now time.Time) float64 {
 }
 
 func (s *throughputSampler) displayMbps(totalBytes int64, now time.Time) float64 {
-	window := 6
-	if len(s.samples) >= window {
-		return averageFloat64(s.samples[len(s.samples)-window:])
+	// 显示逻辑优化：如果样本库里有最近的数据，优先使用最近 10 个有效样本的平均值
+	// 这样即使当前 ticker 是 0Mbps（空窗），显示的依然是最近活跃期的平均水平
+	window := 10
+	if len(s.samples) > 0 {
+		count := len(s.samples)
+		if count > window {
+			count = window
+		}
+		return averageFloat64(s.samples[len(s.samples)-count:])
 	}
 	return computeMbps(totalBytes, now.Sub(s.startedAt))
 }
@@ -850,7 +861,7 @@ func (s *throughputSampler) stableMbps() float64 {
 	samples := append([]float64(nil), s.samples...)
 	sortFloat64(samples)
 
-	cut := int(math.Floor(float64(len(samples)) * 0.1))
+	cut := int(math.Floor(float64(len(samples)) * 0.2))
 	if cut*2 >= len(samples) {
 		return averageFloat64(samples)
 	}

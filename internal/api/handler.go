@@ -10,7 +10,7 @@ import (
 	"netwatch/internal/probe"
 )
 
-var downloadPayload = make([]byte, 256*1024)
+var downloadPayload = make([]byte, 1024*1024)
 
 type Handler struct {
 	service *probe.Service
@@ -172,7 +172,6 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	flusher, _ := w.(http.Flusher)
 	secStr := r.URL.Query().Get("sec")
 	if secStr != "" {
 		sec, err := strconv.ParseFloat(secStr, 64)
@@ -192,9 +191,6 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := w.Write(downloadPayload); err != nil {
 				return
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 		}
 		return
