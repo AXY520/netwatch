@@ -570,6 +570,33 @@
         .app-traffic-table-fixed .col-rx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-tx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-total  { width: 16%; text-align: right; font-weight: 600; }
+        .sort-header {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+        }
+        .sort-header:hover,
+        .sort-header.active {
+            color: var(--text-primary);
+        }
+        .sort-indicator::before {
+            content: "↕";
+            opacity: 0.45;
+        }
+        .sort-header[data-sort-direction="asc"] .sort-indicator::before {
+            content: "↑";
+            opacity: 1;
+        }
+        .sort-header[data-sort-direction="desc"] .sort-indicator::before {
+            content: "↓";
+            opacity: 1;
+        }
 
         .target-info {
             display: flex;
@@ -1070,6 +1097,31 @@
             .table-subtitle { margin-bottom: .55rem; }
             .data-table, .data-table thead, .data-table tbody, .data-table tr, .data-table th, .data-table td { display: block; width: 100%; }
             .data-table thead { display: none; }
+            .app-traffic-table-fixed,
+            .app-traffic-table-fixed thead,
+            .app-traffic-table-fixed tbody,
+            .app-traffic-table-fixed tr,
+            .app-traffic-table-fixed th,
+            .app-traffic-table-fixed td {
+                display: revert;
+                width: auto;
+            }
+            .app-traffic-table-fixed thead {
+                display: table-header-group;
+            }
+            .app-traffic-table-fixed tbody {
+                display: table-row-group;
+            }
+            .app-traffic-table-fixed tr {
+                display: table-row;
+            }
+            .app-traffic-table-fixed th,
+            .app-traffic-table-fixed td {
+                display: table-cell;
+            }
+            .app-traffic-table-fixed td::before {
+                content: none !important;
+            }
             .data-table tr {
                 border: 1px solid var(--border-color);
                 border-radius: 10px;

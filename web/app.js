@@ -33,7 +33,11 @@ const state = {
             nicRealtimeInitialized: false,
             autoRefreshInitialized: false,
             traceInitialized: false,
-            controlsBound: false
+            controlsBound: false,
+            appTrafficSort: {
+                key: 'total',
+                direction: 'desc'
+            }
         };
 
         const elements = {
@@ -1050,17 +1054,53 @@ function initTheme() {
         async function initAppTraffic() {
             if (state.appTrafficInitialized) return;
             state.appTrafficInitialized = true;
+            const table = document.getElementById('app-traffic-table');
             const tbody = document.querySelector('#app-traffic-table tbody');
             const statusEl = document.getElementById('app-traffic-status');
             const noteEl = document.getElementById('app-traffic-note');
             const btn = document.getElementById('app-traffic-refresh-btn');
+            const sortButtons = Array.from(document.querySelectorAll('#app-traffic-table [data-sort-key]'));
+            let latestTrafficData = null;
             if (!tbody) return;
 
+            const getAppTrafficName = (item) => {
+                return String(item.app_title || item.app_id || item.project || item.bridge || '').toLowerCase();
+            };
+
+            const compareAppTraffic = (a, b, key, direction) => {
+                let result = 0;
+                if (key === 'app') {
+                    result = getAppTrafficName(a).localeCompare(getAppTrafficName(b), 'zh-CN');
+                } else if (key === 'rx') {
+                    result = (a.rx_bytes || 0) - (b.rx_bytes || 0);
+                } else if (key === 'tx') {
+                    result = (a.tx_bytes || 0) - (b.tx_bytes || 0);
+                } else {
+                    result = ((a.rx_bytes || 0) + (a.tx_bytes || 0)) - ((b.rx_bytes || 0) + (b.tx_bytes || 0));
+                }
+                return direction === 'asc' ? result : -result;
+            };
+
+            const updateSortHeaders = () => {
+                if (!table) return;
+                const { key, direction } = state.appTrafficSort;
+                sortButtons.forEach((button) => {
+                    const active = button.dataset.sortKey === key;
+                    button.classList.toggle('active', active);
+                    button.dataset.sortDirection = active ? direction : 'none';
+                    button.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
+                });
+            };
+
             const renderTraffic = (data) => {
-                const list = Array.isArray(data.bridges) ? data.bridges : [];
+                latestTrafficData = data;
+                const list = Array.isArray(data.bridges) ? [...data.bridges] : [];
+                updateSortHeaders();
                 if (list.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="4" class="placeholder">未发现 lzc-br-* 网桥（容器需要 host 网络模式）</td></tr>';
                 } else {
+                    const { key, direction } = state.appTrafficSort;
+                    list.sort((a, b) => compareAppTraffic(a, b, key, direction));
                     tbody.innerHTML = list.map(b => {
                         const total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
                         let appCell;
@@ -1100,6 +1140,21 @@ function initTheme() {
                 }
             };
 
+            sortButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    const key = button.dataset.sortKey || 'total';
+                    if (state.appTrafficSort.key === key) {
+                        state.appTrafficSort.direction = state.appTrafficSort.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        state.appTrafficSort.key = key;
+                        state.appTrafficSort.direction = key === 'app' ? 'asc' : 'desc';
+                    }
+                    if (latestTrafficData) renderTraffic(latestTrafficData);
+                    else updateSortHeaders();
+                });
+            });
+
+            updateSortHeaders();
             if (btn) btn.addEventListener('click', load);
             await load();
         }
