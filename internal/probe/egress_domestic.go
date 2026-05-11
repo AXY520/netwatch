@@ -33,7 +33,11 @@ func lookupDomesticIPs(ctx context.Context, cfg Config) DomesticIPSnapshot {
 	}()
 	go func() {
 		defer wg.Done()
-		out.IPv6 = lookupDomesticIPVersion(ctx, 6)
+		out.IPv6 = lookupDomesticIPv6Local(ctx, cfg)
+		if out.IPv6.IP == "" {
+			// 本机没有可用的国内 IPv6 段就回落到 ZXINC（可能给出隧道 IP）
+			out.IPv6 = lookupDomesticIPVersion(ctx, 6)
+		}
 		if out.IPv6.IP != "" {
 			out.IPv6.PortProbe = probeIPv6HighPort(ctx, cfg)
 		} else {
@@ -44,9 +48,123 @@ func lookupDomesticIPs(ctx context.Context, cfg Config) DomesticIPSnapshot {
 	return out
 }
 
+// lookupDomesticIPv6Local prefers a public IPv6 from the host's own NICs
+// that falls inside a known mainland-China carrier prefix
+// (240e:/2408:/2409:/2400:3200/2001:da8:). This avoids reporting a tunneled
+// US IPv6 (e.g. DMIT 2605:52c0:) when the user's box also has a real CN IPv6
+// from the ISP. Falls back to ZXINC when no such address is found.
+func lookupDomesticIPv6Local(ctx context.Context, cfg Config) DomesticIPEntry {
+	entry := DomesticIPEntry{Source: "local-nic"}
+	ip := pickDomesticIPv6FromInterfaces(cfg.MonitoredNICs)
+	if ip == "" {
+		return entry
+	}
+	entry.IP = ip
+	entry.HasPublicPath = true
+	if location, isp, err := fetchZXINCLocation(ctx, ip); err == nil {
+		entry.Location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+		entry.ISP = isp
+	}
+	return entry
+}
+
+func pickDomesticIPv6FromInterfaces(monitored []string) string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	target := make(map[string]struct{}, len(monitored))
+	for _, n := range monitored {
+		target[n] = struct{}{}
+	}
+	for _, iface := range ifaces {
+		if _, ok := target[iface.Name]; !ok {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() != nil {
+				continue
+			}
+			if isCNIPv6(ipNet.IP) {
+				return ipNet.IP.String()
+			}
+		}
+	}
+	return ""
+}
+
+// isCNIPv6 checks whether an IPv6 address falls in a known mainland-China
+// carrier or APNIC-CN allocation. Conservative — we don't try to be exhaustive,
+// only cover the ones common in residential / SMB lines:
+//
+//	240e::/20  CT (China Telecom)
+//	2408::/20  CU (China Unicom)
+//	2409::/20  CM (China Mobile)
+//	2400:3200::/32  Aliyun-CN
+//	2001:da8::/32   CERNET
+func isCNIPv6(ip net.IP) bool {
+	if ip == nil || ip.To4() != nil {
+		return false
+	}
+	for _, cidr := range []string{
+		"240e::/20",
+		"2408::/20",
+		"2409::/20",
+		"2400:3200::/32",
+		"2001:da8::/32",
+	} {
+		_, n, _ := net.ParseCIDR(cidr)
+		if n != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func lookupDomesticIPVersion(ctx context.Context, version int) DomesticIPEntry {
+	if version == 4 {
+		return lookupDomesticIPv4ViaIPInfo(ctx)
+	}
+	return lookupDomesticIPv6ViaZXINC(ctx)
+}
+
+// lookupDomesticIPv4ViaIPInfo calls https://ipinfo.io/json (the fixed
+// "domestic" data source per user request) and packages the result as a
+// DomesticIPEntry. ipinfo.io reaches us over the box's default IPv4 route,
+// so the IP it sees is the actual v4 egress.
+func lookupDomesticIPv4ViaIPInfo(ctx context.Context) DomesticIPEntry {
+	entry := DomesticIPEntry{Source: "ipinfo.io"}
+	out, err := fetchIPInfo(ctx)
+	if err != nil {
+		entry.Error = err.Error()
+		return entry
+	}
+	if net.ParseIP(out.IP).To4() == nil {
+		entry.Error = "ipinfo.io 未返回 IPv4"
+		return entry
+	}
+	entry.IP = out.IP
+	entry.HasPublicPath = isPublicIP(out.IP)
+	loc := strings.TrimSpace(strings.Join([]string{out.Country, out.Region, out.City}, " "))
+	if !isMainlandChina(out.Country) {
+		return DomesticIPEntry{
+			Source: entry.Source,
+			Error:  "未检测到国内出口（实际经海外: " + strings.TrimSpace(loc) + "）",
+		}
+	}
+	entry.Location = loc
+	entry.ISP = out.ISP
+	return entry
+}
+
+// lookupDomesticIPv6ViaZXINC is the fallback when the host doesn't have a CN
+// IPv6 prefix on a NIC. ipinfo.io is reachable only over IPv4 from the box,
+// so we keep ZXINC for the IPv6 path.
+func lookupDomesticIPv6ViaZXINC(ctx context.Context) DomesticIPEntry {
 	entry := DomesticIPEntry{Source: "zxinc"}
-	ip, err := fetchDomesticIP(ctx, version)
+	ip, err := fetchZXINCIP(ctx, 6)
 	if err != nil {
 		entry.Error = err.Error()
 		return entry
@@ -56,22 +174,21 @@ func lookupDomesticIPVersion(ctx context.Context, version int) DomesticIPEntry {
 	if !entry.HasPublicPath {
 		return entry
 	}
-
 	location, isp, err := fetchZXINCLocation(ctx, ip)
 	if err != nil {
 		entry.Error = err.Error()
 		return entry
 	}
-	entry.Location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+	location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+	if !isMainlandChina(location) {
+		return DomesticIPEntry{
+			Source: entry.Source,
+			Error:  "未检测到国内出口（实际经海外: " + location + "）",
+		}
+	}
+	entry.Location = location
 	entry.ISP = isp
 	return entry
-}
-
-func fetchDomesticIP(ctx context.Context, version int) (string, error) {
-	if version == 4 {
-		return fetchIPIPDomesticIPv4(ctx)
-	}
-	return fetchZXINCIP(ctx, version)
 }
 
 func fetchZXINCIP(ctx context.Context, version int) (string, error) {
@@ -116,22 +233,6 @@ func fetchZXINCIP(ctx context.Context, version int) (string, error) {
 		return "", fmt.Errorf("invalid ip response")
 	}
 	return ip, nil
-}
-
-func fetchIPIPDomesticIPv4(ctx context.Context) (string, error) {
-	body, err := httpGetString(ctx, "https://myip.ipip.net/")
-	if err != nil {
-		return "", err
-	}
-	body = strings.TrimSpace(body)
-	m := ipipRE.FindStringSubmatch(body)
-	if m == nil {
-		return "", fmt.Errorf("parse failed: %s", body)
-	}
-	if net.ParseIP(m[1]) == nil || net.ParseIP(m[1]).To4() == nil {
-		return "", fmt.Errorf("invalid ipv4 response")
-	}
-	return m[1], nil
 }
 
 func fetchZXINCLocation(ctx context.Context, ip string) (string, string, error) {

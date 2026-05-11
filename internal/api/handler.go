@@ -48,6 +48,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auto-refresh", h.handleAutoRefresh)
 	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
 	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
+	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 }
 
@@ -300,4 +301,8 @@ func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, h.service.GetEgressLookups(r.Context()))
+}
+
+func (h *Handler) handleAppTraffic(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, probe.CollectAppTraffic())
 }

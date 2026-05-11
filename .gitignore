@@ -1,6 +1,13 @@
 dist/
 *.lpk
 
+# lzc-cli 临时构建/缓存目录
+.lzc-cli-build*/
+.lzc-cli-cache/
+
+# 偶然下载的外部 npm 文档，与项目无关
+/@lazycatcloud_lzc-file-pickers - npm.html
+
 # local scratch files
 test.html
 

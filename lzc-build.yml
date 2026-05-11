@@ -9,7 +9,20 @@ compose_override:
       cap_add:
         - NET_RAW
         - NET_ADMIN
+      volumes:
+        # 只读挂载 lzc 应用 docker daemon 的 socket，用于读取每个应用对应的
+        # 网桥名（com.docker.network.bridge.name）做"应用容器流量"映射。
+        # 仅在懒猫允许此路径的 bind 时生效；不允许时 netwatch 会自动降级到
+        # 仅按网桥名展示流量。
+        - /lzcsys/run/lzc-docker/docker.sock:/var/run/docker.sock:ro
+        # 只读挂载所有应用的 pkg 元数据目录，从 package.yml 读取中文应用名
+        # (字段名 `name`，例如 "懒猫开发者工具")。SDK PackageManager.Title
+        # 在测试机上有时为空，这里作为兜底。
+        - /lzcsys/data/system/pkgm/run:/lzcapp/run/pkgm:ro
 images:
   netwatch:
     dockerfile: ./Dockerfile.lzc
     context: .
+resource_exports:
+  - kind: skills
+    source: ./resources/skills

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,9 +29,12 @@ type egressProvider struct {
 	fetch func(ctx context.Context) (EgressLookup, error)
 }
 
+// Egress lookup uses fixed endpoints per user request:
+//   - domestic perspective → https://ipinfo.io/json
+//   - global   perspective → http://ip-api.com/json
 var egressProviders = []egressProvider{
-	{name: "IPIP.net", scope: "domestic", fetch: fetchIPIP},
-	{name: "Global", scope: "global", fetch: fetchGlobalEgress},
+	{name: "ipinfo.io", scope: "domestic", fetch: fetchIPInfo},
+	{name: "ip-api.com", scope: "global", fetch: fetchIPAPI},
 }
 
 // LookupEgressIPs 并发查询所有源，总超时 15s。
@@ -64,28 +66,6 @@ func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 	}
 }
 
-func httpGetString(ctx context.Context, url string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "curl/8.5.0")
-	req.Header.Set("Accept", "*/*")
-	resp, err := egressHTTPClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
 func httpGetJSON(ctx context.Context, url string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -104,33 +84,95 @@ func httpGetJSON(ctx context.Context, url string, target any) error {
 	return json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(target)
 }
 
-var (
-	ipipRE = regexp.MustCompile(`当前\s*IP[:：]\s*([\d.a-fA-F:]+)\s*来自于[:：]?\s*(.+)`)
-)
+// isMainlandChina returns true when a Country/location string clearly
+// resolves to mainland China. Tolerates both "中国" and "CN"/"China" so it
+// works regardless of which provider produced the field.
+func isMainlandChina(country string) bool {
+	c := strings.TrimSpace(country)
+	if c == "" {
+		return false
+	}
+	return strings.Contains(c, "中国") || strings.Contains(c, "China") || strings.EqualFold(c, "CN")
+}
 
-func fetchIPIP(ctx context.Context) (EgressLookup, error) {
-	body, err := httpGetString(ctx, "https://myip.ipip.net/")
-	if err != nil {
+// --- ipinfo.io (domestic) ---
+
+type ipinfoResponse struct {
+	IP       string `json:"ip"`
+	City     string `json:"city"`
+	Region   string `json:"region"`
+	Country  string `json:"country"` // ISO-2 like "CN"
+	Org      string `json:"org"`     // "AS9808 China Mobile ..."
+	Hostname string `json:"hostname"`
+}
+
+func fetchIPInfo(ctx context.Context) (EgressLookup, error) {
+	var p ipinfoResponse
+	if err := httpGetJSON(ctx, "https://ipinfo.io/json", &p); err != nil {
 		return EgressLookup{}, err
 	}
-	body = strings.TrimSpace(body)
-	m := ipipRE.FindStringSubmatch(body)
-	if m == nil {
-		return EgressLookup{}, fmt.Errorf("parse failed: %s", body)
+	ip := strings.TrimSpace(p.IP)
+	if ip == "" {
+		return EgressLookup{}, fmt.Errorf("ipinfo.io: empty ip")
 	}
-	out := EgressLookup{IP: m[1]}
-	parts := strings.Fields(m[2])
-	if len(parts) > 0 {
-		out.Country = parts[0]
+	out := EgressLookup{
+		IP:      ip,
+		Country: p.Country,
+		Region:  p.Region,
+		City:    p.City,
+		ISP:     p.Org,
 	}
-	if len(parts) > 1 {
-		out.Region = parts[1]
-	}
-	if len(parts) > 2 {
-		out.City = parts[2]
-	}
-	if len(parts) > 3 {
-		out.ISP = strings.Join(parts[3:], " ")
+	// ipinfo.io 的 country 是 ISO-2 (例如 "CN")，转个直观写法
+	if strings.EqualFold(p.Country, "CN") {
+		out.Country = "中国"
 	}
 	return out, nil
+}
+
+// --- ip-api.com (global) ---
+
+type ipapiResponse struct {
+	Status     string  `json:"status"`
+	Message    string  `json:"message"`
+	Query      string  `json:"query"`
+	Country    string  `json:"country"`
+	RegionName string  `json:"regionName"`
+	City       string  `json:"city"`
+	ISP        string  `json:"isp"`
+	Org        string  `json:"org"`
+	AS         string  `json:"as"`
+	Lat        float64 `json:"lat"`
+	Lon        float64 `json:"lon"`
+}
+
+func fetchIPAPI(ctx context.Context) (EgressLookup, error) {
+	var p ipapiResponse
+	if err := httpGetJSON(ctx, "http://ip-api.com/json", &p); err != nil {
+		return EgressLookup{}, err
+	}
+	if p.Status != "" && p.Status != "success" {
+		return EgressLookup{}, fmt.Errorf("ip-api.com: %s", firstNonEmpty(p.Message, p.Status))
+	}
+	ip := strings.TrimSpace(p.Query)
+	if ip == "" {
+		return EgressLookup{}, fmt.Errorf("ip-api.com: empty query ip")
+	}
+	isp := p.ISP
+	if isp == "" {
+		isp = p.Org
+	}
+	if p.AS != "" {
+		if isp != "" {
+			isp = p.AS + " · " + isp
+		} else {
+			isp = p.AS
+		}
+	}
+	return EgressLookup{
+		IP:      ip,
+		Country: p.Country,
+		Region:  p.RegionName,
+		City:    p.City,
+		ISP:     isp,
+	}, nil
 }

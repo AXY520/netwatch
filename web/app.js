@@ -55,6 +55,7 @@ const state = {
             valIPv6Region: document.getElementById('val-ipv6-region'),
             valGw4: document.getElementById('val-gw4'),
             valGw6: document.getElementById('val-gw6'),
+            valPlatformConnectivity: document.getElementById('val-platform-connectivity'),
             backdrop: document.getElementById('window-backdrop'),
             traceBackdrop: document.getElementById('trace-window-backdrop'),
             openSettingsWindow: document.getElementById('open-settings-window'),
@@ -324,37 +325,104 @@ function initTheme() {
             elements.valGw4.textContent = networkInfo.default_ipv4?.gateway || '未知';
             elements.valGw6.textContent = networkInfo.default_ipv6?.gateway || '未知';
 
+            if (elements.valPlatformConnectivity) {
+                elements.valPlatformConnectivity.textContent = formatPlatformConnectivity(networkInfo);
+            }
+
             const interfaces = Array.isArray(networkInfo.interfaces) ? networkInfo.interfaces : [];
-            elements.interfacesTable.innerHTML = interfaces.map(iface => `
-                <tr>
-                    <td>${iface.name || '---'}${iface.label ? `<br><small style="color:var(--text-muted)">${iface.label}</small>` : ''}</td>
-                    <td>${iface.hardware_addr || '---'}</td>
-                    <td>${iface.mtu || '---'}</td>
-                    <td>${Array.isArray(iface.ipv4) && iface.ipv4.length ? iface.ipv4.join('<br>') : '---'}</td>
-                    <td>${Array.isArray(iface.ipv6) && iface.ipv6.length ? iface.ipv6.join('<br>') : '---'}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="placeholder">未找到目标网卡</td></tr>';
+            elements.interfacesTable.innerHTML = interfaces.map(iface => {
+                // Wi-Fi 时直接用 SSID 作为接口主标题；有线沿用 label
+                let mainLabel;
+                if (iface.link_type === 'wifi' && iface.wifi_ssid) {
+                    mainLabel = iface.wifi_ssid;
+                } else {
+                    mainLabel = iface.label || ifaceFallbackLabel(iface.link_type) || iface.name || '---';
+                }
+                const subtitle = iface.name && iface.name !== mainLabel
+                    ? `<br><small style="color:var(--text-muted)">${iface.name}</small>`
+                    : '';
+                const statusCell = formatDeviceStatus(iface.device_status);
+                // 过滤 link-local，主表格只展示真正可访问的地址
+                const ipv4List = (iface.ipv4 || []).filter(s => s);
+                const ipv6List = (iface.ipv6 || []).filter(s => !/^fe80:/i.test(s));
+                return `
+                    <tr>
+                        <td class="col-iface">${mainLabel}${subtitle}</td>
+                        <td class="col-status">${statusCell}</td>
+                        <td class="col-ipv4">${ipv4List.length ? ipv4List.join('<br>') : '---'}</td>
+                        <td class="col-ipv6">${ipv6List.length ? ipv6List.join('<br>') : '---'}</td>
+                        <td class="col-mac"><small>${iface.hardware_addr || '---'}</small></td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="5" class="placeholder">未找到目标网卡</td></tr>';
+        }
+
+        function ifaceFallbackLabel(linkType) {
+            if (linkType === 'wired') return '有线';
+            if (linkType === 'wifi') return 'Wi-Fi';
+            return '';
+        }
+
+        function formatDeviceStatus(status) {
+            switch (status) {
+                case 'connected': return '已连接';
+                case 'disconnected': return '未连接';
+                case 'connecting': return '连接中';
+                case 'disconnecting': return '断开中';
+                case 'disabled': return '已禁用';
+                case 'unavailable': return '不可用';
+                case 'unknown': return '未知';
+                case '': case undefined: return '---';
+                default: return status;
+            }
+        }
+
+        function formatPlatformConnectivity(networkInfo) {
+            const level = networkInfo.platform_connectivity || '';
+            switch (level) {
+                case 'Full': return '已联网';
+                case 'Limited': return '受限';
+                case 'Portal': return '需要登录认证';
+                case 'None': return '无法访问外网';
+                case 'Unknown': return '未知';
+                case '':
+                    if (networkInfo.has_internet) return '已联网';
+                    return 'SDK 状态异常';
+                default: return level;
+            }
         }
 
         function renderNAT() { /* NAT card removed */ }
 
         function detectProxyState() {
+            const ci = state.summary?.website_connectivity || {};
+            const globalSites = (ci.global || []).filter(s => s && s.status);
+            if (globalSites.length === 0) {
+                return { mode: 'unknown', label: '状态不明' };
+            }
+            const okCount = globalSites.filter(s => s.status === 'ok').length;
+            const total = globalSites.length;
+
             const lookups = state.egressData?.lookups || [];
             const dom = lookups.find(l => l.scope === 'domestic' && l.ip);
             const glb = lookups.find(l => l.scope === 'global' && l.ip);
-            if (!dom || !glb) {
-                return {
-                    mode: 'unknown',
-                    label: '代理环境状态暂不可判定'
-                };
-            }
-
-            const hasProxy = dom.ip !== glb.ip;
-
-            return {
-                mode: hasProxy ? 'proxy' : 'direct',
-                label: hasProxy ? '检测到代理环境' : '未检测到代理环境'
+            const inChina = (entry) => {
+                if (!entry) return false;
+                const c = (entry.country || '') + (entry.region || '');
+                return c.includes('中国') || c.includes('China') || c.includes('CN');
             };
+            const boxInChina = inChina(dom) || inChina(glb);
+
+            if (okCount === total) {
+                if (boxInChina) {
+                    return { mode: 'proxy', label: '存在代理环境' };
+                }
+                return { mode: 'direct', label: '境外出口' };
+            }
+            if (okCount === 0) {
+                return { mode: 'direct', label: '无代理' };
+            }
+            return { mode: 'partial', label: '状态不明' };
         }
 
         function renderProxyBanner() {
@@ -859,6 +927,7 @@ function initTheme() {
             initAutoRefreshToggle();
             initNICRealtime();
             initEgressLookups();
+            initAppTraffic();
         }
 
         function formatBitsPerSec(bytesPerSec) {
@@ -976,6 +1045,80 @@ function initTheme() {
 
             btn.addEventListener('click', () => load(true));
             await load(false);
+        }
+
+        async function initAppTraffic() {
+            if (state.appTrafficInitialized) return;
+            state.appTrafficInitialized = true;
+            const tbody = document.querySelector('#app-traffic-table tbody');
+            const statusEl = document.getElementById('app-traffic-status');
+            const noteEl = document.getElementById('app-traffic-note');
+            const btn = document.getElementById('app-traffic-refresh-btn');
+            if (!tbody) return;
+
+            const renderTraffic = (data) => {
+                const list = Array.isArray(data.bridges) ? data.bridges : [];
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="placeholder">未发现 lzc-br-* 网桥（容器需要 host 网络模式）</td></tr>';
+                } else {
+                    tbody.innerHTML = list.map(b => {
+                        const total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
+                        let appCell;
+                        if (b.app_title) {
+                            appCell = `<strong>${b.app_title}</strong>`;
+                        } else if (b.app_id) {
+                            appCell = `<strong>${shortAppName(b.app_id)}</strong><br><small style="color:var(--text-muted)">${b.app_id}</small>`;
+                        } else if (b.project) {
+                            appCell = `<small style="color:var(--text-muted)">${b.project}</small>`;
+                        } else {
+                            appCell = `<small style="color:var(--text-muted)">${b.bridge}</small>`;
+                        }
+                        return `
+                            <tr>
+                                <td class="col-app">${appCell}</td>
+                                <td class="col-rx">${formatBytes(b.rx_bytes || 0)}</td>
+                                <td class="col-tx">${formatBytes(b.tx_bytes || 0)}</td>
+                                <td class="col-total">${formatBytes(total)}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+                if (statusEl) statusEl.textContent = data.generated_at ? `采样于 ${data.generated_at}` : '';
+                if (noteEl && data.note) noteEl.textContent = data.note;
+            };
+
+            const load = async () => {
+                if (btn) btn.disabled = true;
+                if (statusEl) statusEl.textContent = '采样中...';
+                try {
+                    const resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
+                    renderTraffic(await resp.json());
+                } catch (e) {
+                    if (statusEl) statusEl.textContent = '采样失败: ' + e.message;
+                } finally {
+                    if (btn) btn.disabled = false;
+                }
+            };
+
+            if (btn) btn.addEventListener('click', load);
+            await load();
+        }
+
+        function formatBytes(n) {
+            if (!n || n <= 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let i = 0;
+            let v = n;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return (i === 0 ? v.toString() : v.toFixed(v < 10 ? 2 : 1)) + ' ' + units[i];
+        }
+
+        // shortAppName extracts the last dotted segment from an appid,
+        // e.g. cloud.lazycat.app.netwatch → netwatch.
+        function shortAppName(appid) {
+            if (!appid) return '';
+            const parts = appid.split('.');
+            return parts[parts.length - 1] || appid;
         }
 
         async function initNICRealtime() {

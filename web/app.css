@@ -543,6 +543,34 @@
             vertical-align: middle;
         }
 
+        /* 固定网卡表布局：避免 IP 长短不同时列宽抖动 */
+        .interfaces-table-fixed {
+            table-layout: fixed;
+        }
+        .interfaces-table-fixed th,
+        .interfaces-table-fixed td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            word-break: break-all;
+            padding-right: 0.5rem;
+        }
+        .interfaces-table-fixed .col-iface  { width: 18%; }
+        .interfaces-table-fixed .col-status { width: 10%; }
+        .interfaces-table-fixed .col-ipv4   { width: 22%; }
+        .interfaces-table-fixed .col-ipv6   { width: 35%; }
+        .interfaces-table-fixed .col-mac    { width: 15%; }
+
+        .app-traffic-table-fixed { table-layout: fixed; }
+        .app-traffic-table-fixed th, .app-traffic-table-fixed td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding-right: 0.5rem;
+        }
+        .app-traffic-table-fixed .col-app    { width: 52%; }
+        .app-traffic-table-fixed .col-rx     { width: 16%; text-align: right; }
+        .app-traffic-table-fixed .col-tx     { width: 16%; text-align: right; }
+        .app-traffic-table-fixed .col-total  { width: 16%; text-align: right; font-weight: 600; }
+
         .target-info {
             display: flex;
             align-items: center;

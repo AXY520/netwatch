@@ -138,12 +138,17 @@ type DefaultRoute struct {
 type InterfaceInfo struct {
 	Name         string   `json:"name"`
 	Label        string   `json:"label,omitempty"`
+	LinkType     string   `json:"link_type,omitempty"` // "wired" / "wifi"
 	Present      bool     `json:"present"`
 	MTU          int      `json:"mtu"`
 	HardwareAddr string   `json:"hardware_addr,omitempty"`
 	Flags        []string `json:"flags,omitempty"`
 	IPv4         []string `json:"ipv4,omitempty"`
 	IPv6         []string `json:"ipv6,omitempty"`
+	DeviceStatus string   `json:"device_status,omitempty"` // connected/disconnected/disabled/...
+	LinkSpeedBps int64    `json:"link_speed_bps,omitempty"` // 协商速率 (bit/s)
+	WifiSSID     string   `json:"wifi_ssid,omitempty"`
+	WifiSignal   int32    `json:"wifi_signal,omitempty"` // 0..100
 }
 
 type EgressLocation struct {
@@ -170,17 +175,21 @@ type NATInfo struct {
 }
 
 type NetworkInfo struct {
-	GeneratedAt      string          `json:"generated_at"`
-	Hostname         string          `json:"hostname"`
-	Interfaces       []InterfaceInfo `json:"interfaces"`
-	DefaultIPv4      DefaultRoute    `json:"default_ipv4"`
-	DefaultIPv6      DefaultRoute    `json:"default_ipv6"`
-	EgressIPv4       string          `json:"egress_ipv4,omitempty"`
-	EgressIPv6       string          `json:"egress_ipv6,omitempty"`
-	EgressIPv4Region EgressLocation  `json:"egress_ipv4_region"`
-	EgressIPv6Region EgressLocation  `json:"egress_ipv6_region"`
-	NAT              NATInfo         `json:"nat"`
-	DetectionNotes   []string        `json:"detection_notes,omitempty"`
+	GeneratedAt          string          `json:"generated_at"`
+	Hostname             string          `json:"hostname"`
+	Interfaces           []InterfaceInfo `json:"interfaces"`
+	DefaultIPv4          DefaultRoute    `json:"default_ipv4"`
+	DefaultIPv6          DefaultRoute    `json:"default_ipv6"`
+	EgressIPv4           string          `json:"egress_ipv4,omitempty"`
+	EgressIPv6           string          `json:"egress_ipv6,omitempty"`
+	EgressIPv4Region     EgressLocation  `json:"egress_ipv4_region"`
+	EgressIPv6Region     EgressLocation  `json:"egress_ipv6_region"`
+	NAT                  NATInfo         `json:"nat"`
+	PlatformConnectivity string          `json:"platform_connectivity,omitempty"` // Full/Limited/Portal/None/Unknown
+	HasInternet          bool            `json:"has_internet,omitempty"`
+	WifiSSID             string          `json:"wifi_ssid,omitempty"`
+	WifiSignal           int32           `json:"wifi_signal,omitempty"`
+	DetectionNotes       []string        `json:"detection_notes,omitempty"`
 }
 
 type BroadbandSpeedResult struct {

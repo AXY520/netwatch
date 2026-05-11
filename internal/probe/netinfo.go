@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,11 +14,18 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"netwatch/internal/lzcsdk"
 )
 
-var nicLabels = map[string]string{
-	"enp2s0": "有线网络",
-	"wlp4s0": "无线网络",
+type nicMetaEntry struct {
+	Label    string
+	LinkType string // "wired" / "wifi"
+}
+
+var nicMeta = map[string]nicMetaEntry{
+	"enp2s0": {Label: "有线", LinkType: "wired"},
+	"wlp4s0": {Label: "Wi-Fi", LinkType: "wifi"},
 }
 
 type ipWhoResponse struct {
@@ -47,7 +55,22 @@ type ipSBResponse struct {
 func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 	hostname, _ := os.Hostname()
 	hostname = sanitizeHostname(hostname)
-	interfaces := collectInterfaces(s.cfg.MonitoredNICs)
+
+	var (
+		sdkStatus lzcsdk.NetStatus
+		sdkOK     bool
+	)
+	if lzcsdk.Available() {
+		ns, err := lzcsdk.FetchNetworkStatus(ctx)
+		if err != nil {
+			log.Printf("lzc-sdk network status: %v", err)
+		} else {
+			sdkStatus = ns
+			sdkOK = true
+		}
+	}
+
+	interfaces := collectInterfaces(s.cfg.MonitoredNICs, sdkStatus, sdkOK)
 	egressIPv4 := fetchPublicIP(ctx, s.cfg.PublicIPv4Endpoint, "tcp4", s.cfg.HTTPTimeout)
 	egressIPv6 := fetchPublicIP(ctx, s.cfg.PublicIPv6Endpoint, "tcp6", s.cfg.HTTPTimeout)
 
@@ -83,6 +106,13 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		},
 	}
 
+	if sdkOK {
+		info.PlatformConnectivity = sdkStatus.Connectivity
+		info.HasInternet = sdkStatus.HasInternet
+		info.WifiSSID = sdkStatus.Wifi.SSID
+		info.WifiSignal = sdkStatus.Wifi.Signal
+	}
+
 	return info
 }
 
@@ -100,10 +130,10 @@ func sanitizeHostname(hostname string) string {
 	return hostname
 }
 
-func collectInterfaces(monitored []string) []InterfaceInfo {
+func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return placeholderInterfaces(monitored)
+		return placeholderInterfaces(monitored, sdkStatus, sdkOK)
 	}
 
 	byName := make(map[string]net.Interface, len(ifaces))
@@ -113,16 +143,23 @@ func collectInterfaces(monitored []string) []InterfaceInfo {
 
 	result := make([]InterfaceInfo, 0, len(monitored))
 	for _, name := range monitored {
+		meta := nicMeta[name]
 		iface, exists := byName[name]
 		if !exists {
-			result = append(result, InterfaceInfo{Name: name, Label: nicLabels[name], Present: false})
+			result = append(result, applySDKToInterface(InterfaceInfo{
+				Name:     name,
+				Label:    meta.Label,
+				LinkType: meta.LinkType,
+				Present:  false,
+			}, sdkStatus, sdkOK))
 			continue
 		}
 
 		addrs, _ := iface.Addrs()
 		info := InterfaceInfo{
 			Name:         iface.Name,
-			Label:        nicLabels[iface.Name],
+			Label:        meta.Label,
+			LinkType:     meta.LinkType,
 			Present:      true,
 			MTU:          iface.MTU,
 			HardwareAddr: iface.HardwareAddr.String(),
@@ -141,18 +178,51 @@ func collectInterfaces(monitored []string) []InterfaceInfo {
 				info.IPv6 = append(info.IPv6, ipNet.String())
 			}
 		}
-		result = append(result, info)
+		result = append(result, applySDKToInterface(info, sdkStatus, sdkOK))
 	}
 
 	return result
 }
 
-func placeholderInterfaces(monitored []string) []InterfaceInfo {
+func placeholderInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 	result := make([]InterfaceInfo, 0, len(monitored))
 	for _, name := range monitored {
-		result = append(result, InterfaceInfo{Name: name, Label: nicLabels[name], Present: false})
+		meta := nicMeta[name]
+		result = append(result, applySDKToInterface(InterfaceInfo{
+			Name:     name,
+			Label:    meta.Label,
+			LinkType: meta.LinkType,
+			Present:  false,
+		}, sdkStatus, sdkOK))
 	}
 	return result
+}
+
+// applySDKToInterface overlays SDK device-status / link-speed / wifi info
+// onto an InterfaceInfo based on its LinkType. The SDK exposes only one
+// link_speed field — assign it to whichever device is currently connected;
+// if both are connected, prefer wired.
+func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK bool) InterfaceInfo {
+	if !sdkOK {
+		return info
+	}
+	switch info.LinkType {
+	case "wired":
+		info.DeviceStatus = sdkStatus.WiredStatus
+		if sdkStatus.WiredStatus == "connected" {
+			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
+		}
+	case "wifi":
+		info.DeviceStatus = sdkStatus.WirelessStatus
+		if sdkStatus.WirelessStatus == "connected" && sdkStatus.WiredStatus != "connected" {
+			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
+		}
+		if sdkStatus.Wifi.SSID != "" {
+			info.WifiSSID = sdkStatus.Wifi.SSID
+			info.WifiSignal = sdkStatus.Wifi.Signal
+		}
+	}
+	return info
 }
 
 func interfaceFlags(flags net.Flags) []string {

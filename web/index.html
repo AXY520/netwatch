@@ -69,6 +69,10 @@
                         <span class="identity-strip-label">默认网关</span>
                         <span class="identity-strip-value" id="val-gw4">---</span>
                     </div>
+                    <div class="identity-strip-row">
+                        <span class="identity-strip-label">平台连通性</span>
+                        <span class="identity-strip-value" id="val-platform-connectivity">---</span>
+                    </div>
                 </div>
 
                 <div class="connectivity-split identity-ip-grid">
@@ -89,11 +93,11 @@
 
                 <div class="connectivity-split" style="margin-top: 1.25rem">
                     <div>
-                        <div class="table-subtitle">国内视角</div>
+                        <div class="table-subtitle">国内数据库查询 (ipinfo.io)</div>
                         <div id="egress-domestic-list" class="egress-list"></div>
                     </div>
                     <div>
-                        <div class="table-subtitle">国际视角</div>
+                        <div class="table-subtitle">国际数据库查询 (ip-api.com)</div>
                         <div id="egress-global-list" class="egress-list"></div>
                     </div>
                 </div>
@@ -108,7 +112,7 @@
 
             <section class="card trace-card">
                 <div class="card-title">
-                    <span>路径诊断 (Traceroute)</span>
+                    <span>路径诊断</span>
                 </div>
                 <div class="trace-toolbar">
                     <input id="trace-host" placeholder="如 github.com" />
@@ -133,8 +137,23 @@
                     <span>硬件网卡接口详情</span>
                     <span class="placeholder"></span>
                 </div>
-                <table class="data-table" id="interfaces-table">
-                    <thead><tr><th>接口名称</th><th>MAC 地址</th><th>MTU</th><th>IPv4 地址</th><th>IPv6 地址</th></tr></thead>
+                <table class="data-table interfaces-table-fixed" id="interfaces-table">
+                    <thead><tr><th class="col-iface">接口</th><th class="col-status">状态</th><th class="col-ipv4">IPv4 地址</th><th class="col-ipv6">IPv6 地址</th><th class="col-mac">MAC</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </section>
+
+            <section class="card interfaces-card">
+                <div class="card-title">
+                    <span>应用流量</span>
+                    <div class="title-tools">
+                        <span id="app-traffic-status" class="placeholder">等待采样</span>
+                        <button id="app-traffic-refresh-btn">刷新</button>
+                    </div>
+                </div>
+                <!-- <div class="note" id="app-traffic-note">按 lzc-br-* 网桥统计的累计流量。host 网络模式下的应用容器(如 netwatch 自己)不通过网桥，所以不在此处计入。</div> -->
+                <table class="data-table app-traffic-table-fixed" id="app-traffic-table">
+                    <thead><tr><th class="col-app">应用</th><th class="col-rx">下行</th><th class="col-tx">上行</th><th class="col-total">合计</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </section>
