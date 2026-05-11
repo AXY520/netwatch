@@ -19,13 +19,14 @@ import (
 
 const speedtestCNIDBaseURL = "https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main"
 
+// 镜像按国内可达性排序：cdn0/cdn2 较稳定，cdn1/cdn3 经常超时放后面。
 var speedtestCNIDMirrors = []string{
 	speedtestCNIDBaseURL,
 	"https://cdn0.spiritlhl.top/" + speedtestCNIDBaseURL,
-	"http://cdn1.spiritlhl.net/" + speedtestCNIDBaseURL,
 	"http://cdn2.spiritlhl.net/" + speedtestCNIDBaseURL,
-	"http://cdn3.spiritlhl.net/" + speedtestCNIDBaseURL,
 	"http://cdn4.spiritlhl.net/" + speedtestCNIDBaseURL,
+	"http://cdn1.spiritlhl.net/" + speedtestCNIDBaseURL,
+	"http://cdn3.spiritlhl.net/" + speedtestCNIDBaseURL,
 }
 
 var domesticSpeedtestSources = []domesticSpeedtestSource{
@@ -34,14 +35,28 @@ var domesticSpeedtestSources = []domesticSpeedtestSource{
 	{file: "CN_Mobile.csv", isp: "移动"},
 }
 
-// 兜底列表来自 spiritLHLS/speedtest.net-CN-ID 当前三网 CSV 的国内节点。
+// 兜底列表：来自 Ookla API + spiritLHLS CSV 的国内节点，覆盖三网主要城市。
 var fallbackDomesticSpeedtestCandidates = []domesticSpeedtestCandidate{
-	{id: "24447", isp: "联通", city: "上海5G", supplier: "China Unicom 5G"},
+	// 联通
+	{id: "24447", isp: "联通", city: "上海", supplier: "China Unicom 5G", host: "mobile.shunicomtest.com.prod.hosts.ooklaserver.net", port: "8080"},
 	{id: "43752", isp: "联通", city: "北京", supplier: "BJ Unicom"},
-	{id: "5396", isp: "电信", city: "Suzhou5G", supplier: "China Telecom JiangSu 5G"},
-	{id: "36663", isp: "电信", city: "Zhenjiang5G", supplier: "China Telecom JiangSu 5G"},
+	{id: "51413", isp: "联通", city: "广州", supplier: "China Unicom Guangzhou"},
+	{id: "48832", isp: "联通", city: "成都", supplier: "China Unicom Chengdu"},
+	{id: "57477", isp: "联通", city: "南京", supplier: "China Unicom Nanjing"},
+	// 电信
+	{id: "5396", isp: "电信", city: "苏州", supplier: "China Telecom JiangSu 5G", host: "4gsuzhou1.speedtest.jsinfo.net.prod.hosts.ooklaserver.net", port: "8080"},
+	{id: "36663", isp: "电信", city: "镇江", supplier: "China Telecom JiangSu 5G", host: "5gzhenjiang.speedtest.jsinfo.net.prod.hosts.ooklaserver.net", port: "8080"},
+	{id: "59386", isp: "电信", city: "杭州", supplier: "浙江电信", host: "cesu-hz.zjtelecom.com.cn", port: "8080"},
 	{id: "59387", isp: "电信", city: "浙江", supplier: "浙江电信"},
-	{id: "16204", isp: "移动", city: "Suzhou", supplier: "JSQY - Suzhou"},
+	{id: "30852", isp: "电信", city: "昆山", supplier: "Duke Kunshan University", host: "speedtest.dukekunshan.edu.cn", port: "8080"},
+	{id: "54156", isp: "电信", city: "上海", supplier: "China Telecom Shanghai"},
+	{id: "29026", isp: "电信", city: "南京", supplier: "China Telecom JiangSu"},
+	// 移动
+	{id: "16204", isp: "移动", city: "苏州", supplier: "JSQY", host: "speedtest.jsqiuying.com", port: "8080"},
+	{id: "41906", isp: "移动", city: "上海", supplier: "China Mobile Shanghai"},
+	{id: "26970", isp: "移动", city: "北京", supplier: "China Mobile Beijing"},
+	{id: "55075", isp: "移动", city: "广州", supplier: "China Mobile Guangzhou"},
+	{id: "27249", isp: "移动", city: "杭州", supplier: "China Mobile Hangzhou"},
 }
 
 var domesticSpeedtestHTTPClient = &http.Client{Timeout: 8 * time.Second}
@@ -64,7 +79,6 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	if duration <= 0 {
 		duration = 15 * time.Second
 	}
-	// 获取 Service 实例以读取配置
 	s_ptr := ctx.Value("service").(*Service)
 	s_ptr.mu.RLock()
 	domesticOnly := s_ptr.cfg.BroadbandDomesticOnly
@@ -105,6 +119,11 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	if domesticOnly {
 		report("starting", 5, "正在检索国内优质运营商节点")
 		server = selectDomesticSpeedtestServer(ctx, stClient, s_ptr)
+		if server != nil {
+			// 确保 server.Context 指向设置了回调的 stClient，
+			// 否则 Download/Upload 回调不会触发（实时进度丢失）。
+			server.Context = stClient
+		}
 		if server == nil {
 			setResult(func(r *BroadbandSpeedResult) {
 				r.Error = "未找到可用的国内 Speedtest 节点"
@@ -135,7 +154,6 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	})
 	report("latency", 15, fmt.Sprintf("已选节点：%s (%s)", server.Sponsor, server.Name))
 
-	// 延迟采样
 	_ = server.PingTestContext(ctx, nil)
 	latencyMS := int64(server.Latency.Milliseconds())
 	jitterMS := int64(server.Jitter.Milliseconds())
@@ -145,7 +163,6 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	})
 	report("latency", 25, fmt.Sprintf("延迟 %d ms · 抖动 %d ms", latencyMS, jitterMS))
 
-	// 下载测速（由 speedtest-go 的实时采样回调上报）
 	report("download", 30, "准备开始下载压测")
 	downloadStart := time.Now()
 	stClient.SetCallbackDownload(func(rate speedtest.ByteRate) {
@@ -174,7 +191,6 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	})
 	report("download", 60, fmt.Sprintf("下载完成 %.1f Mbps", downloadMbps))
 
-	// 上传测速（由 speedtest-go 的实时采样回调上报）
 	report("upload", 65, "准备开始上传压测")
 	uploadStart := time.Now()
 	stClient.SetCallbackUpload(func(rate speedtest.ByteRate) {
@@ -211,27 +227,98 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	return currentResult(), true
 }
 
+// selectDomesticSpeedtestServer 按优先级尝试多种策略选择国内测速节点：
+//  1. Ookla API 关键词搜索 (search=China)
+//  2. Ookla API 地理坐标搜索 (中国中心点)
+//  3. spiritLHLS CSV 远程列表
+//  4. 内置扩展兜底列表
+//
+// 任一策略找到可用节点即返回，不继续尝试后续策略。
 func selectDomesticSpeedtestServer(ctx context.Context, stClient *speedtest.Speedtest, svc *Service) *speedtest.Server {
-	candidates := fetchDomesticSpeedtestCandidates(ctx)
-	if len(candidates) == 0 {
-		logger.Warn("broadband: remote CN speedtest CSV unavailable, fallback to embedded candidates")
-		candidates = fallbackDomesticSpeedtestCandidates
+	preferredISP := detectPreferredDomesticISP(ctx, svc)
+	logger.Info("broadband: preferred domestic isp=%q", preferredISP)
+
+	// 策略 1: Ookla API 关键词搜索
+	if s := selectDomesticViaOoklaKeyword(ctx, preferredISP); s != nil {
+		return s
 	}
 
-	preferredISP := detectPreferredDomesticISP(ctx, svc)
-	logger.Info("broadband: preferred domestic isp=%q candidates=%d", preferredISP, len(candidates))
+	// 策略 2: Ookla API 坐标搜索
+	if s := selectDomesticViaOoklaLocation(ctx, preferredISP); s != nil {
+		return s
+	}
+
+	// 策略 3: spiritLHLS CSV 远程列表
+	if s := selectDomesticViaCSV(ctx, stClient, preferredISP); s != nil {
+		return s
+	}
+
+	// 策略 4: 内置兜底列表
+	logger.Warn("broadband: all remote sources failed, using embedded fallback list")
+	return selectDomesticFromCandidates(ctx, stClient, fallbackDomesticSpeedtestCandidates, preferredISP)
+}
+
+// selectDomesticViaOoklaKeyword 用 Ookla API 的 search=China 关键词搜索。
+func selectDomesticViaOoklaKeyword(ctx context.Context, preferredISP string) *speedtest.Server {
+	kwClient := speedtest.New()
+	kwClient.NewUserConfig(&speedtest.UserConfig{Keyword: "China"})
+	serverList, err := kwClient.FetchServerListContext(ctx)
+	if err != nil {
+		logger.Warn("broadband: ookla keyword search failed: %v", err)
+		return nil
+	}
+	cnServers := filterChinaServers(serverList)
+	if len(cnServers) == 0 {
+		logger.Info("broadband: ookla keyword search returned 0 China servers")
+		return nil
+	}
+	logger.Info("broadband: ookla keyword found %d China servers", len(cnServers))
+	return pickBestChinaServer(ctx, cnServers, preferredISP)
+}
+
+// selectDomesticViaOoklaLocation 用中国中心坐标 (35, 105) 搜索附近节点。
+func selectDomesticViaOoklaLocation(ctx context.Context, preferredISP string) *speedtest.Server {
+	locClient := speedtest.New()
+	locClient.NewUserConfig(&speedtest.UserConfig{Location: &speedtest.Location{Lat: 35, Lon: 105}})
+	serverList, err := locClient.FetchServerListContext(ctx)
+	if err != nil {
+		logger.Warn("broadband: ookla location search failed: %v", err)
+		return nil
+	}
+	cnServers := filterChinaServers(serverList)
+	if len(cnServers) == 0 {
+		logger.Info("broadband: ookla location search returned 0 China servers")
+		return nil
+	}
+	logger.Info("broadband: ookla location found %d China servers", len(cnServers))
+	return pickBestChinaServer(ctx, cnServers, preferredISP)
+}
+
+// selectDomesticViaCSV 从 spiritLHLS 的 CSV 列表获取候选节点。
+func selectDomesticViaCSV(ctx context.Context, stClient *speedtest.Speedtest, preferredISP string) *speedtest.Server {
+	candidates := fetchDomesticSpeedtestCandidates(ctx)
+	if len(candidates) == 0 {
+		logger.Warn("broadband: remote CN speedtest CSV unavailable")
+		return nil
+	}
+	logger.Info("broadband: CSV fetched %d domestic candidates", len(candidates))
+	return selectDomesticFromCandidates(ctx, stClient, candidates, preferredISP)
+}
+
+// selectDomesticFromCandidates 从候选列表中选最优节点：先按 ISP 筛选，再按延迟排序。
+func selectDomesticFromCandidates(ctx context.Context, stClient *speedtest.Speedtest, candidates []domesticSpeedtestCandidate, preferredISP string) *speedtest.Server {
 	if preferredISP != "" {
 		preferred := filterDomesticSpeedtestCandidatesByISP(candidates, preferredISP)
 		if len(preferred) > 0 {
-			logger.Info("broadband: using ISP-matched candidates isp=%s count=%d", preferredISP, len(preferred))
+			logger.Info("broadband: ISP-filtered candidates isp=%s count=%d", preferredISP, len(preferred))
 			candidates = preferred
 		} else {
-			logger.Warn("broadband: no ISP-matched domestic candidates for isp=%s, fallback to all domestic candidates", preferredISP)
+			logger.Warn("broadband: no ISP-matched candidates for isp=%s, using all %d", preferredISP, len(candidates))
 		}
 	}
 
 	var best *speedtest.Server
-	for _, candidate := range nearestDomesticSpeedtestCandidates(ctx, candidates, 2) {
+	for _, candidate := range nearestDomesticSpeedtestCandidates(ctx, candidates, 3) {
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -261,10 +348,73 @@ func selectDomesticSpeedtestServer(ctx context.Context, stClient *speedtest.Spee
 	}
 	if best != nil {
 		logger.Info("broadband: selected server id=%s sponsor=%s name=%s latency=%s", best.ID, best.Sponsor, best.Name, best.Latency.Round(time.Millisecond))
-	} else {
-		logger.Warn("broadband: no domestic speedtest candidate selected")
 	}
 	return best
+}
+
+// filterChinaServers 从 speedtest.Server 列表中筛选中国节点。
+func filterChinaServers(servers speedtest.Servers) speedtest.Servers {
+	var out speedtest.Servers
+	for _, s := range servers {
+		if isChinaSpeedtestServer(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// pickBestChinaServer 从中国节点列表中选延迟最低的，优先匹配 ISP。
+func pickBestChinaServer(ctx context.Context, servers speedtest.Servers, preferredISP string) *speedtest.Server {
+	if preferredISP != "" {
+		var matched speedtest.Servers
+		for _, s := range servers {
+			if matchServerISP(s, preferredISP) {
+				matched = append(matched, s)
+			}
+		}
+		if len(matched) > 0 {
+			servers = matched
+			logger.Info("broadband: ISP-matched %d servers for isp=%s", len(matched), preferredISP)
+		}
+	}
+
+	var best *speedtest.Server
+	for _, s := range servers {
+		if ctx.Err() != nil {
+			return nil
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		if err := s.PingTestContext(pingCtx, nil); err != nil {
+			cancel()
+			continue
+		}
+		cancel()
+		if s.Latency <= 0 {
+			continue
+		}
+		logger.Info("broadband: ping ok id=%s sponsor=%s latency=%s", s.ID, s.Sponsor, s.Latency.Round(time.Millisecond))
+		if best == nil || s.Latency < best.Latency {
+			best = s
+		}
+	}
+	if best != nil {
+		logger.Info("broadband: pickBest id=%s sponsor=%s name=%s latency=%s", best.ID, best.Sponsor, best.Name, best.Latency.Round(time.Millisecond))
+	}
+	return best
+}
+
+// matchServerISP 检查 speedtest.Server 的 Sponsor/Name 是否匹配指定 ISP。
+func matchServerISP(s *speedtest.Server, isp string) bool {
+	text := strings.ToLower(s.Sponsor + " " + s.Name)
+	switch isp {
+	case "联通":
+		return strings.Contains(text, "unicom") || strings.Contains(text, "联通")
+	case "电信":
+		return strings.Contains(text, "telecom") || strings.Contains(text, "电信")
+	case "移动":
+		return strings.Contains(text, "mobile") || strings.Contains(text, "cmcc") || strings.Contains(text, "移动")
+	}
+	return false
 }
 
 func detectPreferredDomesticISP(ctx context.Context, svc *Service) string {

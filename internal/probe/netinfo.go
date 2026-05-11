@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -156,13 +158,17 @@ func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK boo
 		}
 
 		addrs, _ := iface.Addrs()
+		mac := iface.HardwareAddr.String()
+		if mac == "" {
+			mac = readMACFromSys(name)
+		}
 		info := InterfaceInfo{
 			Name:         iface.Name,
 			Label:        meta.Label,
 			LinkType:     meta.LinkType,
 			Present:      true,
 			MTU:          iface.MTU,
-			HardwareAddr: iface.HardwareAddr.String(),
+			HardwareAddr: mac,
 			Flags:        interfaceFlags(iface.Flags),
 		}
 		for _, addr := range addrs {
@@ -177,6 +183,10 @@ func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK boo
 			if ipNet.IP.To16() != nil {
 				info.IPv6 = append(info.IPv6, ipNet.String())
 			}
+		}
+		// 容器环境下 iface.Addrs() 可能为空，从 /sys 回退读取
+		if len(info.IPv4) == 0 && len(info.IPv6) == 0 {
+			info.IPv4, info.IPv6 = readIPsFromSys(name)
 		}
 		result = append(result, applySDKToInterface(info, sdkStatus, sdkOK))
 	}
@@ -223,6 +233,74 @@ func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK b
 		}
 	}
 	return info
+}
+
+// readMACFromSys reads MAC address from /sys/class/net/<iface>/address
+// as a fallback when net.Interface.HardwareAddr is empty (common in containers).
+func readMACFromSys(iface string) string {
+	data, err := os.ReadFile("/sys/class/net/" + iface + "/address")
+	if err != nil {
+		return ""
+	}
+	mac := strings.TrimSpace(string(data))
+	if mac == "00:00:00:00:00:00" {
+		return ""
+	}
+	return mac
+}
+
+// readIPsFromSys reads IP addresses as a fallback when iface.Addrs() returns empty.
+// IPv6 comes from /proc/net/if_inet6; IPv4 from the `ip` command.
+func readIPsFromSys(iface string) (ipv4s, ipv6s []string) {
+	// IPv6 from /proc/net/if_inet6
+	if f, err := os.Open("/proc/net/if_inet6"); err == nil {
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 6 || fields[5] != iface {
+				continue
+			}
+			hexIP := fields[0]
+			if len(hexIP) != 32 {
+				continue
+			}
+			ip := make(net.IP, 16)
+			for i := 0; i < 16; i++ {
+				b, _ := strconv.ParseInt(hexIP[i*2:i*2+2], 16, 0)
+				ip[i] = byte(b)
+			}
+			if ip.IsLinkLocalUnicast() {
+				continue
+			}
+			ipv6s = append(ipv6s, ip.String())
+		}
+	}
+
+	// IPv4: use `ip` command fallback
+	if out, err := execCommand("ip", "-4", "addr", "show", iface); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "inet ") {
+				continue
+			}
+			// "inet 192.168.1.100/24 brd ..."
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				ipv4s = append(ipv4s, fields[1])
+			}
+		}
+	}
+
+	return ipv4s, ipv6s
+}
+
+func execCommand(name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.Output()
+	return string(out), err
 }
 
 func interfaceFlags(flags net.Flags) []string {

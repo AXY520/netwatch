@@ -417,7 +417,7 @@ function initTheme() {
                 if (boxInChina) {
                     return { mode: 'proxy', label: '存在代理环境' };
                 }
-                return { mode: 'direct', label: '境外出口' };
+                return { mode: 'direct', label: '获取到境外出口' };
             }
             if (okCount === 0) {
                 return { mode: 'direct', label: '无代理' };
@@ -602,7 +602,7 @@ function initTheme() {
         function renderBroadbandTask(task = {}) {
             elements.broadbandStage.textContent = broadbandStageMap[task.stage] || '待启动';
             elements.broadbandProgress.textContent = `${Math.max(0, Math.min(100, Math.round(task.progress_percent || 0)))}%`;
-            elements.broadbandNote.textContent = broadbandStageMap[task.stage] || '等待测速开始';
+            elements.broadbandNote.textContent = task.message || broadbandStageMap[task.stage] || '等待测速开始';
             elements.broadbandLatency.textContent = formatMS(task.result?.latency_ms);
             elements.broadbandJitter.textContent = formatMS(task.result?.jitter_ms);
             elements.broadbandDownload.textContent = formatMbps(task.result?.download_mbps);
