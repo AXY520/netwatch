@@ -297,6 +297,7 @@ func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, _ *http.Request)
 
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
+		h.service.ClearPublicIPCache()
 		writeJSON(w, http.StatusOK, h.service.RefreshEgressLookups(r.Context()))
 		return
 	}

@@ -1,94 +1,130 @@
 ---
 name: netwatch-observer
-description: Read network status from the Netwatch app, including connectivity, egress IP, NAT, interfaces, realtime throughput, history, and diagnostics.
+description: Check network connectivity (domestic & global websites), egress IP & geolocation, NAT type, interface status, per-app traffic stats, traceroute, and speed tests.
 ---
 
-Use this skill when the user wants current network status from the Netwatch app running on Lazycat MicroServer.
+## When to use this skill
 
-Netwatch package:
+Call Netwatch when the user's request involves any of these scenarios:
 
-`cloud.lazycat.app.netwatch`
+- **Network status**: "Is the network up?", "Can I access the internet?", "Is the connection working?"
+- **Website reachability**: "Can I reach example.com?", "What's the latency to that site?", "Check if domestic/global sites are accessible"
+- **Egress IP / proxy status**: "What's my IP?", "Am I going through a proxy?", "Where is my exit point?", "What's my NAT type?"
+- **Interface & link status**: "Is the wired connection up?", "How's the Wi-Fi signal?", "What's the link speed?"
+- **Per-app traffic**: "Which app uses the most bandwidth?", "How much has app X uploaded/downloaded?", "Traffic ranking"
+- **Traceroute**: "What's the route to this host?", "Why is it slow to reach X?", "Run a traceroute"
+- **Speed test**: "What's my bandwidth?", "What's the LAN transfer rate?"
 
-Primary base URL:
+## Access
 
-`http://app.cloud.lazycat.app.netwatch.lzcx`
+Package: `cloud.lazycat.app.netwatch`
 
-If direct `.lzcx` resolution is unavailable in the current runtime, follow the platform's normal application access rules. Do not guess random ports.
+Inter-app URL: `http://app.cloud.lazycat.app.netwatch.lzcx`
 
-Authentication:
+If `.lzcx` resolution is unavailable in the current runtime, follow the platform's normal application access rules. Do not guess random ports.
 
-- If the current app/runtime requires delegated user access for inter-app HTTP requests, forward the real user's ticket according to Lazycat's normal application-to-application access rules.
-- If the Netwatch app is configured with HTTP Basic Auth, include the configured credentials. Otherwise, no extra auth is required.
+Authentication: forward the real user's ticket according to Lazycat's inter-app access rules. Netwatch itself requires no extra auth.
 
-Read-only rule:
+## Recommended call order
 
-- Prefer GET endpoints.
-- Do not call mutation endpoints such as refresh, settings update, or speed-test start/cancel unless the user explicitly asks for an active operation.
+1. `GET /healthz` — confirm the app is alive and data is ready.
+2. `GET /api/v1/summary` — combined snapshot (connectivity, egress IP, NAT, interfaces, etc.).
+3. If `summary` is empty or `ready` is `false`, call `POST /api/v1/probe/run` to trigger a probe, then re-read `summary`.
+4. Call the narrower endpoints below only when the user needs more detail.
 
-Recommended read order:
+## Endpoints
 
-1. Call `/healthz` first to confirm the app is alive and whether probe data is ready.
-2. Call `/api/v1/summary` for the main dashboard view.
-3. Only call narrower endpoints when the user asks for more detail or when a specific field is missing from `summary`.
+### General
 
-Primary endpoints:
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/healthz` | App health, server time, whether probe data is ready |
+| GET | `/api/v1/summary` | Combined snapshot: connectivity, egress IP, NAT, interfaces — preferred first call |
+| GET | `/api/v1/events` | SSE stream; pushes `summary_update` events after probe cycles |
 
-- `GET /healthz`
-  Returns service status, current server time, and whether probe data is ready.
-- `GET /api/v1/summary`
-  Best first choice. Returns the combined snapshot for website connectivity, network info, egress IP, NAT, and related status.
-- `GET /api/v1/connectivity/websites`
-  Returns website reachability and latency details.
-- `GET /api/v1/network`
-  Returns network information details.
-- `GET /api/v1/network/realtime`
-  Returns realtime interface throughput stats for monitored NICs.
-- `GET /api/v1/network/egress-lookups`
-  Returns cached egress lookup details.
-- `GET /api/v1/timeseries?limit=300`
-  Returns recent timeseries history.
-- `GET /api/v1/settings`
-  Returns current mutable settings.
-- `GET /api/v1/speed/config`
-  Returns current speed-test configuration.
-- `GET /api/v1/speed/broadband/history`
-  Returns broadband speed-test history.
-- `GET /api/v1/speed/local/history`
-  Returns local transfer speed-test history.
-- `GET /api/v1/diagnostics/trace/task`
-  Returns current trace task state if a diagnostic trace was started earlier.
-- `GET /metrics`
-  Returns Prometheus-style metrics if raw metrics are needed.
+### Website connectivity
 
-Use active operations only with explicit user intent:
+Check whether domestic and global websites are reachable, plus their latency.
 
-- `POST /api/v1/probe/run`
-  Trigger a full refresh.
-- `POST /api/v1/connectivity/websites/run`
-  Refresh website connectivity only.
-- `POST /api/v1/network/nat/run`
-  Refresh NAT detection only.
-- `GET /api/v1/diagnostics/trace?host=<host>`
-  Run a network trace for a target host.
-- `POST /api/v1/speed/broadband/start`
-  Start a background broadband speed test.
-- `GET /api/v1/speed/broadband/task`
-  Poll broadband task progress.
-- `POST /api/v1/speed/broadband/cancel`
-  Cancel a running broadband speed test.
-- `POST /api/v1/speed/broadband/run`
-  Run a synchronous broadband speed test.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/connectivity/websites` | Reachability, latency, and status code for each target |
+| POST | `/api/v1/connectivity/websites/run` | Trigger a website connectivity refresh |
 
-Response handling guidance:
+### Egress IP & network identity
 
-- Treat `summary` as the source of truth for a concise user-facing answer.
-- If `healthz.ready` is `false`, explain that Netwatch is still warming up and data may be incomplete.
-- When reporting connectivity, distinguish domestic and global targets if the response separates them.
-- When reporting NAT or egress details, quote the actual observed values instead of inferring from interface names.
-- For realtime throughput, summarize the busiest interfaces and direction rather than dumping every counter unless the user asks for raw data.
+View egress IPv4/IPv6, geolocation, ISP, and NAT type.
 
-Answer style:
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/network` | Full network detail: interfaces, egress IP, geolocation, default routes, platform connectivity |
+| GET | `/api/v1/network/egress-lookups` | Per-provider egress lookup details |
+| POST | `/api/v1/network/nat/run` | Trigger NAT type detection |
 
-1. Start with the current overall network state from `summary`.
-2. Add the key findings the user asked for, such as egress IP, NAT type, unreachable targets, or busiest NIC.
-3. Mention if data is stale, incomplete, or still being refreshed.
+### Interfaces & realtime throughput
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/network/realtime` | Per-interface realtime throughput (bytes/sec) |
+
+### Per-app traffic
+
+Cumulative upload/download traffic grouped by bridge/app identity.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic, sorted by total bytes |
+
+### Traceroute
+
+Run a traceroute to a target host. Returns each hop's IP, latency, and geolocation.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/diagnostics/trace?host=<host>` | Start a traceroute; returns the full result when complete |
+| GET | `/api/v1/diagnostics/trace/task` | Poll an in-progress trace task for intermediate results |
+
+### Speed tests
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/speed/config` | Current speed-test configuration |
+| POST | `/api/v1/speed/broadband/start` | Start a background broadband speed test |
+| GET | `/api/v1/speed/broadband/task` | Poll broadband test progress and realtime speed |
+| POST | `/api/v1/speed/broadband/cancel` | Cancel a running broadband test |
+| POST | `/api/v1/speed/broadband/run` | Run a synchronous broadband test (blocks until done) |
+| GET | `/api/v1/speed/broadband/history` | Broadband speed-test history |
+| GET | `/api/v1/speed/local/history` | LAN transfer speed-test history |
+| GET | `/api/v1/speed/local/ping` | Lightweight ping endpoint for LAN transfer tests |
+| GET | `/api/v1/speed/local/download?sec=<n>` | LAN download payload (by duration) |
+| GET | `/api/v1/speed/local/download?mb=<n>` | LAN download payload (by size) |
+| POST | `/api/v1/speed/local/upload` | LAN upload target |
+| POST | `/api/v1/speed/local/result` | Persist a LAN transfer test result |
+
+### History & metrics
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/timeseries?limit=300` | Recent timeseries history |
+| GET | `/metrics` | Prometheus-style raw metrics |
+
+### Settings & refresh control
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/settings` | Current settings (read-only) |
+| GET | `/api/v1/auto-refresh` | Auto-refresh state (enabled, interval seconds) |
+| GET | `/api/v1/settings/refresh-interval` | Current refresh interval |
+| POST | `/api/v1/probe/run` | Trigger a full probe (website checks, egress IP, NAT, etc.) |
+| POST | `/api/v1/auto-refresh` | Set auto-refresh. Body: `{"enabled": true, "interval_sec": 30}` |
+| POST | `/api/v1/settings/refresh-interval` | Update refresh interval. Body: `{"interval_sec": 30}` |
+
+## Notes
+
+- **Prefer `summary`**: it's the combined snapshot and covers most use cases in a single call.
+- **Data may be stale**: Netwatch does not auto-refresh external probes by default. If `summary` is outdated or `ready` is `false`, call `POST /api/v1/probe/run` first.
+- **Read-only by default**: use GET for queries; only use POST when explicitly triggering a probe or speed test.
+- **Connectivity reporting**: distinguish domestic vs. global targets; quote observed values, not inferences.
+- **Egress IP reporting**: use the returned IP and geolocation directly; do not infer from interface names.
+- **App traffic reporting**: highlight the largest consumers by total bytes; note the sort basis (upload/download/total).
+- **Traceroute is async**: `GET /diagnostics/trace?host=<host>` starts a background task; use `/diagnostics/trace/task` to poll intermediate progress.

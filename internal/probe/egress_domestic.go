@@ -125,24 +125,23 @@ func isCNIPv6(ip net.IP) bool {
 
 func lookupDomesticIPVersion(ctx context.Context, version int) DomesticIPEntry {
 	if version == 4 {
-		return lookupDomesticIPv4ViaIPInfo(ctx)
+		return lookupDomesticIPv4ViaCipCC(ctx)
 	}
 	return lookupDomesticIPv6ViaZXINC(ctx)
 }
 
-// lookupDomesticIPv4ViaIPInfo calls https://ipinfo.io/json (the fixed
-// "domestic" data source per user request) and packages the result as a
-// DomesticIPEntry. ipinfo.io reaches us over the box's default IPv4 route,
+// lookupDomesticIPv4ViaCipCC calls http://cip.cc and packages the result as a
+// DomesticIPEntry. cip.cc reaches us over the box's default IPv4 route,
 // so the IP it sees is the actual v4 egress.
-func lookupDomesticIPv4ViaIPInfo(ctx context.Context) DomesticIPEntry {
-	entry := DomesticIPEntry{Source: "ipinfo.io"}
-	out, err := fetchIPInfo(ctx)
+func lookupDomesticIPv4ViaCipCC(ctx context.Context) DomesticIPEntry {
+	entry := DomesticIPEntry{Source: "cip.cc"}
+	out, err := fetchCipCC(ctx)
 	if err != nil {
 		entry.Error = err.Error()
 		return entry
 	}
 	if net.ParseIP(out.IP).To4() == nil {
-		entry.Error = "ipinfo.io 未返回 IPv4"
+		entry.Error = "cip.cc 未返回 IPv4"
 		return entry
 	}
 	entry.IP = out.IP
@@ -242,7 +241,7 @@ func fetchZXINCLocation(ctx context.Context, ip string) (string, string, error) 
 	}
 	req.Header.Set("User-Agent", zxincUserAgent)
 
-	resp, err := egressHTTPClient.Do(req)
+	resp, err := domesticHTTPClient.Do(req)
 	if err != nil {
 		return "", "", err
 	}

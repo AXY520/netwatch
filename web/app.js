@@ -16,7 +16,7 @@ const state = {
             },
             settings: {
                 refresh_interval_sec: 10,
-                auto_refresh_enabled: true,
+                auto_refresh_enabled: false,
                 broadband_domestic_only: true,
                 nic_realtime_enabled: true,
                 nic_realtime_interval_sec: 1
@@ -26,6 +26,7 @@ const state = {
             broadbandPoller: null,
             transferAbortController: null,
             nicRealtimeInterval: null,
+            refreshTimer: null,
             sse: null,
             initialized: false,
             settingsInitialized: false,
@@ -457,12 +458,29 @@ function initTheme() {
             refreshProxyDisplay();
         }
 
-        function startTimer() { /* timer bar removed; auto-refresh handled by backend toggle */ }
+        function startAutoRefreshTimer() {
+            stopAutoRefreshTimer();
+            if (!state.settings.auto_refresh_enabled) return;
+            const sec = Math.max(5, parseInt(state.settings.refresh_interval_sec, 10) || 10);
+            state.refreshTimer = setInterval(() => {
+                if (!document.hidden) loadSummary(false, true);
+            }, sec * 1000);
+        }
 
-        async function loadSummary(showOverlay = false) {
+        function stopAutoRefreshTimer() {
+            if (state.refreshTimer) {
+                clearInterval(state.refreshTimer);
+                state.refreshTimer = null;
+            }
+        }
+
+        async function loadSummary(showOverlay = false, refresh = false) {
             if (showOverlay) elements.overlay.style.display = 'flex';
             try {
-                const response = await fetch('/api/v1/summary', { cache: 'no-store' });
+                // refresh=true 时调用 probe/run 触发实际探测，否则只读缓存
+                const url = refresh ? '/api/v1/probe/run' : '/api/v1/summary';
+                const method = refresh ? 'POST' : 'GET';
+                const response = await fetch(url, { method, cache: 'no-store' });
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
                 }
@@ -917,8 +935,8 @@ function initTheme() {
             bindControls();
             resetBroadbandMetrics();
             resetTransferMetrics();
-            loadSpeedConfig().then(() => loadSummary(true)).then(() => loadSpeedHistory()).finally(() => {
-                startTimer();
+            loadSpeedConfig().then(() => loadSummary(true, true)).then(() => loadSpeedHistory()).finally(() => {
+                startAutoRefreshTimer();
                 updateWindowControls();
                 if (!state.summary || !state.summary.ready) {
                     if (maxRetries > 0) {
@@ -1189,11 +1207,13 @@ function initTheme() {
                     statusEl.textContent = '无数据';
                     return;
                 }
-                listEl.innerHTML = data.nics.map(n => `
+                listEl.innerHTML = data.nics.map(n => {
+                    const isUp = n.oper_state ? n.oper_state === 'up' : n.present;
+                    return `
                     <div class="nic-realtime-item">
                         <div class="nic-realtime-head">
                             <span class="nic-realtime-name">${n.name}</span>
-                            <span class="nic-realtime-badge ${n.present ? 'online' : 'offline'}">${n.present ? 'UP' : 'DOWN'}</span>
+                            <span class="nic-realtime-badge ${isUp ? 'online' : 'offline'}">${isUp ? 'UP' : 'DOWN'}</span>
                         </div>
                         <div class="nic-realtime-rows">
                             <div class="nic-realtime-cell">
@@ -1206,8 +1226,8 @@ function initTheme() {
                             </div>
                         </div>
                         <div class="nic-realtime-total">累计 ↓ ${formatBytes(n.rx_total)} / ↑ ${formatBytes(n.tx_total)}</div>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
                 statusEl.textContent = `采样 ${data.timestamp || ''}`;
             };
 
@@ -1465,6 +1485,7 @@ function initTheme() {
                 state.settings = { ...state.settings, ...payload };
                 state.refreshInterval = payload.refresh_interval_sec;
                 applySettingsToForm();
+                startAutoRefreshTimer();
                 state.nicRealtimeInitialized = false;
                 initNICRealtime();
                 showToast('设置已保存', 'success');
@@ -1479,6 +1500,16 @@ function initTheme() {
             state.initialized = true;
             initTheme();
             initWithRetry();
+
+            // 页面可见性变化：隐藏时暂停定时刷新，可见时恢复
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    stopAutoRefreshTimer();
+                } else {
+                    loadSummary(false, true);
+                    startAutoRefreshTimer();
+                }
+            });
         }
 
         setTimeout(boot, 100);

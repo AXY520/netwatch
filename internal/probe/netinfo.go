@@ -65,31 +65,22 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 	if lzcsdk.Available() {
 		ns, err := lzcsdk.FetchNetworkStatus(ctx)
 		if err != nil {
-			log.Printf("lzc-sdk network status: %v", err)
+			log.Printf("[netwatch] sdk FetchNetworkStatus failed: %v", err)
 		} else {
 			sdkStatus = ns
 			sdkOK = true
+			log.Printf("[netwatch] sdk ok: hasInternet=%v wired=%s wireless=%s connectivity=%s wifi=%s",
+				ns.HasInternet, ns.WiredStatus, ns.WirelessStatus, ns.Connectivity, ns.Wifi.SSID)
 		}
+	} else {
+		log.Printf("[netwatch] sdk not available (socket or certs missing)")
 	}
 
 	interfaces := collectInterfaces(s.cfg.MonitoredNICs, sdkStatus, sdkOK)
-	egressIPv4 := fetchPublicIP(ctx, s.cfg.PublicIPv4Endpoint, "tcp4", s.cfg.HTTPTimeout)
-	egressIPv6 := fetchPublicIP(ctx, s.cfg.PublicIPv6Endpoint, "tcp6", s.cfg.HTTPTimeout)
 
-	var egressIPv4Region EgressLocation
-	var egressIPv6Region EgressLocation
-	locationTimeout := s.cfg.HTTPTimeout
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		egressIPv4Region = lookupIPLocation(ctx, egressIPv4, locationTimeout)
-	}()
-	go func() {
-		defer wg.Done()
-		egressIPv6Region = lookupIPLocation(ctx, egressIPv6, locationTimeout)
-	}()
-	wg.Wait()
+	// 公网 IP + 地理位置查询（api.ipify.org / ipinfo.io 等）成本高且结果稳定，
+	// 缓存 5 分钟避免每轮 auto-refresh 都打外部 API。
+	egressIPv4, egressIPv6, egressIPv4Region, egressIPv6Region := s.getPublicIPWithCache(ctx)
 
 	info := NetworkInfo{
 		GeneratedAt:      localTimestamp(),
@@ -132,6 +123,49 @@ func sanitizeHostname(hostname string) string {
 	return hostname
 }
 
+const publicIPCacheTTL = 5 * time.Minute
+
+// getPublicIPWithCache 返回缓存的公网 IP + 地理位置，缓存超过 5 分钟才重新查询。
+func (s *Service) getPublicIPWithCache(ctx context.Context) (string, string, EgressLocation, EgressLocation) {
+	s.publicIPMu.Lock()
+	cache := s.publicIPCache
+	if time.Since(cache.UpdatedAt) < publicIPCacheTTL && cache.IPv4 != "" {
+		s.publicIPMu.Unlock()
+		return cache.IPv4, cache.IPv6, cache.IPv4Region, cache.IPv6Region
+	}
+	s.publicIPMu.Unlock()
+
+	// 缓存过期或为空，重新查询
+	locationTimeout := s.cfg.HTTPTimeout
+	egressIPv4 := fetchPublicIP(ctx, s.cfg.PublicIPv4Endpoint, "tcp4", locationTimeout)
+	egressIPv6 := fetchPublicIP(ctx, s.cfg.PublicIPv6Endpoint, "tcp6", locationTimeout)
+
+	var v4Region, v6Region EgressLocation
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		v4Region = lookupIPLocation(ctx, egressIPv4, locationTimeout)
+	}()
+	go func() {
+		defer wg.Done()
+		v6Region = lookupIPLocation(ctx, egressIPv6, locationTimeout)
+	}()
+	wg.Wait()
+
+	s.publicIPMu.Lock()
+	s.publicIPCache = publicIPCacheData{
+		IPv4:       egressIPv4,
+		IPv6:       egressIPv6,
+		IPv4Region: v4Region,
+		IPv6Region: v6Region,
+		UpdatedAt:  time.Now(),
+	}
+	s.publicIPMu.Unlock()
+
+	return egressIPv4, egressIPv6, v4Region, v6Region
+}
+
 func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -167,6 +201,7 @@ func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK boo
 			Label:        meta.Label,
 			LinkType:     meta.LinkType,
 			Present:      true,
+			OperState:    readOperState(name),
 			MTU:          iface.MTU,
 			HardwareAddr: mac,
 			Flags:        interfaceFlags(iface.Flags),
@@ -212,19 +247,27 @@ func placeholderInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK
 // onto an InterfaceInfo based on its LinkType. The SDK exposes only one
 // link_speed field — assign it to whichever device is currently connected;
 // if both are connected, prefer wired.
+//
+// When the SDK says "connected" but the kernel operstate is "down" or the
+// interface has no IP addresses, the SDK status is overridden to "disconnected"
+// to avoid showing a stale or misleading state.
 func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK bool) InterfaceInfo {
 	if !sdkOK {
 		return info
 	}
+
+	kernelOperState := readOperState(info.Name)
+	hasAddrs := len(info.IPv4) > 0 || len(info.IPv6) > 0
+
 	switch info.LinkType {
 	case "wired":
-		info.DeviceStatus = sdkStatus.WiredStatus
-		if sdkStatus.WiredStatus == "connected" {
+		info.DeviceStatus = reconcileStatus(sdkStatus.WiredStatus, kernelOperState, hasAddrs)
+		if info.DeviceStatus == "connected" {
 			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
 		}
 	case "wifi":
-		info.DeviceStatus = sdkStatus.WirelessStatus
-		if sdkStatus.WirelessStatus == "connected" && sdkStatus.WiredStatus != "connected" {
+		info.DeviceStatus = reconcileStatus(sdkStatus.WirelessStatus, kernelOperState, hasAddrs)
+		if info.DeviceStatus == "connected" && reconcileStatus(sdkStatus.WiredStatus, "", false) != "connected" {
 			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
 		}
 		if sdkStatus.Wifi.SSID != "" {
@@ -233,6 +276,22 @@ func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK b
 		}
 	}
 	return info
+}
+
+// reconcileStatus cross-checks the SDK-reported status against kernel state.
+// If the SDK says "connected" but the kernel operstate is "down" or there are
+// no IP addresses, the interface is not truly connected.
+func reconcileStatus(sdkStatus, kernelOperState string, hasAddrs bool) string {
+	if sdkStatus != "connected" {
+		return sdkStatus
+	}
+	if kernelOperState == "down" {
+		return "disconnected"
+	}
+	if !hasAddrs {
+		return "disconnected"
+	}
+	return sdkStatus
 }
 
 // readMACFromSys reads MAC address from /sys/class/net/<iface>/address

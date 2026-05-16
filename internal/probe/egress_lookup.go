@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,17 +24,36 @@ var egressHTTPClient = &http.Client{
 	},
 }
 
+// domesticHTTPClient is used for domestic endpoints (cip.cc, zxinc).
+// It forces IPv4 to avoid Go's happy-eyeballs trying IPv6 first in containers
+// where IPv6 routing may be broken, and keeps a shorter timeout.
+var domesticHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSHandshakeTimeout:   6 * time.Second,
+		ResponseHeaderTimeout: 8 * time.Second,
+		ForceAttemptHTTP2:     false,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Force IPv4 for domestic endpoints — containers often have
+			// broken IPv6 routing but DNS still returns AAAA records.
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp4", addr)
+		},
+	},
+}
+
 type egressProvider struct {
 	name  string
 	scope string
 	fetch func(ctx context.Context) (EgressLookup, error)
 }
 
-// Egress lookup uses fixed endpoints per user request:
-//   - domestic perspective → https://ipinfo.io/json
+// Egress lookup uses fixed endpoints:
+//   - domestic perspective → http://cip.cc (纯文本，国内可靠)
 //   - global   perspective → http://ip-api.com/json
 var egressProviders = []egressProvider{
-	{name: "ipinfo.io", scope: "domestic", fetch: fetchIPInfo},
+	{name: "cip.cc", scope: "domestic", fetch: fetchCipCC},
 	{name: "ip-api.com", scope: "global", fetch: fetchIPAPI},
 }
 
@@ -95,36 +115,72 @@ func isMainlandChina(country string) bool {
 	return strings.Contains(c, "中国") || strings.Contains(c, "China") || strings.EqualFold(c, "CN")
 }
 
-// --- ipinfo.io (domestic) ---
+// --- cip.cc (domestic) ---
 
-type ipinfoResponse struct {
-	IP       string `json:"ip"`
-	City     string `json:"city"`
-	Region   string `json:"region"`
-	Country  string `json:"country"` // ISO-2 like "CN"
-	Org      string `json:"org"`     // "AS9808 China Mobile ..."
-	Hostname string `json:"hostname"`
-}
-
-func fetchIPInfo(ctx context.Context) (EgressLookup, error) {
-	var p ipinfoResponse
-	if err := httpGetJSON(ctx, "https://ipinfo.io/json", &p); err != nil {
+// fetchCipCC 查询 https://cip.cc 获取国内出口 IP 信息。
+// 返回格式为纯文本：
+//
+//	IP	: 1.2.3.4
+//	地址	: 中国 湖北 武汉
+//	运营商	: 联通
+func fetchCipCC(ctx context.Context) (EgressLookup, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://cip.cc", nil)
+	if err != nil {
 		return EgressLookup{}, err
 	}
-	ip := strings.TrimSpace(p.IP)
-	if ip == "" {
-		return EgressLookup{}, fmt.Errorf("ipinfo.io: empty ip")
+	req.Header.Set("User-Agent", "netwatch/1.0")
+
+	resp, err := domesticHTTPClient.Do(req)
+	if err != nil {
+		return EgressLookup{}, err
 	}
-	out := EgressLookup{
-		IP:      ip,
-		Country: p.Country,
-		Region:  p.Region,
-		City:    p.City,
-		ISP:     p.Org,
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return EgressLookup{}, fmt.Errorf("cip.cc: HTTP %d", resp.StatusCode)
 	}
-	// ipinfo.io 的 country 是 ISO-2 (例如 "CN")，转个直观写法
-	if strings.EqualFold(p.Country, "CN") {
-		out.Country = "中国"
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return EgressLookup{}, err
+	}
+
+	return parseCipCCResponse(string(body))
+}
+
+func parseCipCCResponse(text string) (EgressLookup, error) {
+	var out EgressLookup
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		switch {
+		case key == "IP":
+			out.IP = val
+		case strings.HasPrefix(key, "地址"):
+			// "中国 湖北 武汉" → Country="中国", Region="湖北", City="武汉"
+			locParts := strings.Fields(val)
+			if len(locParts) >= 1 {
+				out.Country = locParts[0]
+			}
+			if len(locParts) >= 2 {
+				out.Region = locParts[1]
+			}
+			if len(locParts) >= 3 {
+				out.City = locParts[2]
+			}
+		case strings.HasPrefix(key, "运营商"):
+			out.ISP = val
+		}
+	}
+	if out.IP == "" {
+		return EgressLookup{}, fmt.Errorf("cip.cc: empty ip")
 	}
 	return out, nil
 }

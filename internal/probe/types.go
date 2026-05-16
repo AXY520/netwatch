@@ -140,6 +140,7 @@ type InterfaceInfo struct {
 	Label        string   `json:"label,omitempty"`
 	LinkType     string   `json:"link_type,omitempty"` // "wired" / "wifi"
 	Present      bool     `json:"present"`
+	OperState    string   `json:"oper_state,omitempty"` // "up", "down", "unknown" from kernel
 	MTU          int      `json:"mtu"`
 	HardwareAddr string   `json:"hardware_addr,omitempty"`
 	Flags        []string `json:"flags,omitempty"`

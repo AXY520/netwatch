@@ -16,6 +16,14 @@ import (
 
 const maxHistoryItems = 3
 
+type publicIPCacheData struct {
+	IPv4       string
+	IPv6       string
+	IPv4Region EgressLocation
+	IPv6Region EgressLocation
+	UpdatedAt  time.Time
+}
+
 type Service struct {
 	cfg                  Config
 	mu                   sync.RWMutex
@@ -37,6 +45,8 @@ type Service struct {
 	egressCache          EgressLookupResult
 	egressMu             sync.Mutex
 	egressInflight       bool
+	publicIPCache        publicIPCacheData
+	publicIPMu           sync.Mutex
 	traceMu              sync.Mutex
 	traceTask            TraceResult
 	traceCancel          context.CancelFunc
@@ -49,7 +59,7 @@ func NewService(cfg Config) *Service {
 		alert:      newAlertState(),
 		nicStats:   newNICStatsTracker(cfg.MonitoredNICs),
 		nicStop:    make(chan struct{}),
-		autoRefresh: true,
+		autoRefresh: false,
 	}
 	s.loadHistory()
 	if saved, ok := loadMutableSettings(cfg.DataDir); ok {
@@ -61,9 +71,7 @@ func NewService(cfg Config) *Service {
 
 func (s *Service) Start(baseCtx context.Context) {
 	startCtx, cancelStart := context.WithCancel(baseCtx)
-	// 首轮探测异步执行，不阻塞 HTTP server 启动
-	go s.refreshFast(startCtx)
-	go s.refreshNAT(startCtx)
+	// 不再主动发起外部请求；首次数据由前端打开页面时触发
 
 	go func() {
 		for {
@@ -107,6 +115,12 @@ func (s *Service) SetAutoRefresh(enabled bool) bool {
 }
 
 func (s *Service) Refresh(ctx context.Context) Summary {
+	// 手动刷新时清除公网 IP 缓存，强制重新查询
+	s.publicIPMu.Lock()
+	s.publicIPCache = publicIPCacheData{}
+	s.publicIPMu.Unlock()
+	// 同时清除出口 IP 查询缓存
+	s.RefreshEgressLookups(ctx)
 	s.refreshFast(ctx)
 	return s.GetSummary()
 }
@@ -390,6 +404,13 @@ func (s *Service) GetEgressLookups(ctx context.Context) EgressLookupResult {
 		return cache
 	}
 	return s.RefreshEgressLookups(ctx)
+}
+
+// ClearPublicIPCache 清除公网 IP 缓存，下次 ProbeNetworkInfo 会重新查询。
+func (s *Service) ClearPublicIPCache() {
+	s.publicIPMu.Lock()
+	s.publicIPCache = publicIPCacheData{}
+	s.publicIPMu.Unlock()
 }
 
 // RefreshEgressLookups 强制立刻刷新并更新缓存。

@@ -21,9 +21,10 @@ const (
 )
 
 var (
-	dialOnce sync.Once
-	conn     *grpc.ClientConn
-	dialErr  error
+	dialMu       sync.Mutex
+	conn         *grpc.ClientConn
+	dialErr      error
+	dialLastFail time.Time
 )
 
 // Available reports whether the lzc-apis socket and app certificates are
@@ -47,25 +48,50 @@ func Available() bool {
 // the `*.lzcapp` lzcdns name — every dial then times out as
 // "context deadline exceeded". The unix socket path works regardless of
 // network mode and is the right transport for system-side queries.
+//
+// 失败后 30 秒内不重试，避免频繁日志和无效调用。
 func dial() (*grpc.ClientConn, error) {
-	dialOnce.Do(func() {
-		if !Available() {
-			dialErr = errors.New("lzc-sdk: socket or app certs not present")
-			return
-		}
-		cred, err := gohelper.BuildClientCredOption(gohelper.CAPath, gohelper.APPKeyPath, gohelper.APPCertPath)
-		if err != nil {
-			dialErr = fmt.Errorf("lzc-sdk build cred: %w", err)
-			return
-		}
-		c, err := grpc.NewClient("unix://"+apiSocketPath, cred)
-		if err != nil {
-			dialErr = fmt.Errorf("lzc-sdk dial: %w", err)
-			return
-		}
-		conn = c
-	})
-	return conn, dialErr
+	dialMu.Lock()
+	defer dialMu.Unlock()
+
+	// 已有连接且无错误，直接返回
+	if conn != nil && dialErr == nil {
+		return conn, nil
+	}
+	// 失败后 30 秒冷却期内不重试
+	if dialErr != nil && time.Since(dialLastFail) < 30*time.Second {
+		return nil, dialErr
+	}
+
+	if !Available() {
+		dialErr = errors.New("lzc-sdk: socket or app certs not present")
+		dialLastFail = time.Now()
+		return nil, dialErr
+	}
+	cred, err := gohelper.BuildClientCredOption(gohelper.CAPath, gohelper.APPKeyPath, gohelper.APPCertPath)
+	if err != nil {
+		dialErr = fmt.Errorf("lzc-sdk build cred: %w", err)
+		dialLastFail = time.Now()
+		return nil, dialErr
+	}
+	c, err := grpc.NewClient("unix://"+apiSocketPath, cred)
+	if err != nil {
+		dialErr = fmt.Errorf("lzc-sdk dial: %w", err)
+		dialLastFail = time.Now()
+		return nil, dialErr
+	}
+	conn = c
+	dialErr = nil
+	return conn, nil
+}
+
+// markStale 标记当前连接为失效，下次 dial() 会重新建立连接。
+func markStale() {
+	dialMu.Lock()
+	conn = nil
+	dialErr = errors.New("lzc-sdk: connection marked stale")
+	dialLastFail = time.Time{} // 立即允许重试
+	dialMu.Unlock()
 }
 
 // NetStatus is a flattened view of sys.NetworkManager.Status() plus a
@@ -90,6 +116,7 @@ type WifiInfo struct {
 
 // FetchNetworkStatus calls Status() and Connectivity() concurrently.
 // 2s per RPC; failures are returned but partial results still populate the struct.
+// 连接错误时自动标记 stale，下次调用会重连。
 func FetchNetworkStatus(ctx context.Context) (NetStatus, error) {
 	cc, err := dial()
 	if err != nil {
@@ -148,10 +175,28 @@ func FetchNetworkStatus(ctx context.Context) (NetStatus, error) {
 	}()
 	wg.Wait()
 
-	if len(errs) > 0 && out.WiredStatus == "" && out.WirelessStatus == "" && out.Connectivity == "" {
-		return out, fmt.Errorf("lzc-sdk: %s", strings.Join(errs, "; "))
+	if len(errs) > 0 {
+		// 两个 RPC 都失败说明连接可能断了，标记 stale 允许重连
+		if len(errs) >= 2 || isConnectionError(errs) {
+			markStale()
+		}
+		if out.WiredStatus == "" && out.WirelessStatus == "" && out.Connectivity == "" {
+			return out, fmt.Errorf("lzc-sdk: %s", strings.Join(errs, "; "))
+		}
 	}
 	return out, nil
+}
+
+func isConnectionError(errs []string) bool {
+	for _, e := range errs {
+		el := strings.ToLower(e)
+		if strings.Contains(el, "connection") || strings.Contains(el, "broken pipe") ||
+			strings.Contains(el, "eof") || strings.Contains(el, "unavailable") ||
+			strings.Contains(el, "transport is closing") {
+			return true
+		}
+	}
+	return false
 }
 
 func deviceStatusName(s syspb.NetworkDeviceStatus) string {
@@ -192,6 +237,9 @@ func ListApps(ctx context.Context) (map[string]AppInfo, error) {
 	defer cancel()
 	resp, err := cli.QueryApplication(c, &syspb.QueryApplicationRequest{})
 	if err != nil {
+		if isConnectionError([]string{err.Error()}) {
+			markStale()
+		}
 		return nil, err
 	}
 	out := make(map[string]AppInfo, len(resp.InfoList))

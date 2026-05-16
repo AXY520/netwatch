@@ -12,6 +12,7 @@ import (
 type NICThroughput struct {
 	Name      string `json:"name"`
 	Present   bool   `json:"present"`
+	OperState string `json:"oper_state"` // "up", "down", "unknown", etc. from /sys/class/net/<name>/operstate
 	RxBps     int64  `json:"rx_bps"`
 	TxBps     int64  `json:"tx_bps"`
 	RxTotal   int64  `json:"rx_total"`
@@ -115,6 +116,7 @@ func (t *nicStatsTracker) sample() {
 		out := NICThroughput{
 			Name:      name,
 			Present:   ok,
+			OperState: readOperState(name),
 			Timestamp: now.Format(time.DateTime),
 		}
 		if !ok {
@@ -154,6 +156,16 @@ func (t *nicStatsTracker) snapshot() RealtimeNetStats {
 		}
 	}
 	return out
+}
+
+// readOperState reads /sys/class/net/<name>/operstate and returns the lowercase value.
+// Returns "unknown" if the file doesn't exist or can't be read.
+func readOperState(name string) string {
+	data, err := os.ReadFile("/sys/class/net/" + name + "/operstate")
+	if err != nil {
+		return "unknown"
+	}
+	return strings.ToLower(strings.TrimSpace(string(data)))
 }
 
 func readProcNetDev() (map[string]nicCounters, error) {
