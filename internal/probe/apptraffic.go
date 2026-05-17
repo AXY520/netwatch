@@ -15,6 +15,24 @@ import (
 	"netwatch/internal/lzcsdk"
 )
 
+// sanitizeIconURL converts SDK icon URLs like "https://$boxdomain/sys/icons/X.png"
+// to relative paths "/sys/icons/X.png" so they work from any access domain.
+func sanitizeIconURL(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	// Handle placeholder $boxdomain
+	s := strings.Replace(raw, "$boxdomain", "", -1)
+	// Strip scheme + host if present
+	if idx := strings.Index(s, "/sys/icons/"); idx >= 0 {
+		return s[idx:]
+	}
+	if strings.HasPrefix(s, "/") {
+		return s
+	}
+	return raw
+}
+
 // AppBridgeStats describes traffic counters for a single lzc application
 // docker network bridge as seen from the host network namespace.
 //
@@ -24,14 +42,26 @@ import (
 // "this application's traffic" — though host-network-mode app services bypass
 // the bridge entirely and won't be counted here.
 type AppBridgeStats struct {
-	Bridge   string `json:"bridge"`
-	AppID    string `json:"app_id,omitempty"`
-	AppTitle string `json:"app_title,omitempty"`
-	Project  string `json:"project,omitempty"`
-	SubnetV4 string `json:"subnet_v4,omitempty"`
-	SubnetV6 string `json:"subnet_v6,omitempty"`
-	RxBytes  uint64 `json:"rx_bytes"`
-	TxBytes  uint64 `json:"tx_bytes"`
+	Bridge         string `json:"bridge"`
+	AppID          string `json:"app_id,omitempty"`
+	AppTitle       string `json:"app_title,omitempty"`
+	Project        string `json:"project,omitempty"`
+	SubnetV4       string `json:"subnet_v4,omitempty"`
+	SubnetV6       string `json:"subnet_v6,omitempty"`
+	RxBytes        uint64 `json:"rx_bytes"`
+	TxBytes        uint64 `json:"tx_bytes"`
+	RxPackets      uint64 `json:"rx_packets"`
+	TxPackets      uint64 `json:"tx_packets"`
+	RxErrors       uint64 `json:"rx_errors"`
+	TxErrors       uint64 `json:"tx_errors"`
+	RxDropped      uint64 `json:"rx_dropped"`
+	TxDropped      uint64 `json:"tx_dropped"`
+	ContainerCount int    `json:"container_count,omitempty"`
+	RunningCount   int    `json:"running_count,omitempty"`
+	Domain         string `json:"domain,omitempty"`
+	Icon           string `json:"icon,omitempty"`
+	StatusText     string `json:"status_text,omitempty"`
+	CreatedAt      int64  `json:"created_at,omitempty"`
 }
 
 type AppTrafficSnapshot struct {
@@ -100,9 +130,18 @@ func CollectAppTraffic() AppTrafficSnapshot {
 		if !strings.HasPrefix(name, lzcBridgePrefix) {
 			continue
 		}
-		stats := AppBridgeStats{Bridge: name}
-		stats.RxBytes = readSysCounter(filepath.Join(sysClassNetDir, name, "statistics", "rx_bytes"))
-		stats.TxBytes = readSysCounter(filepath.Join(sysClassNetDir, name, "statistics", "tx_bytes"))
+		statsPath := filepath.Join(sysClassNetDir, name, "statistics")
+		stats := AppBridgeStats{
+			Bridge:    name,
+			RxBytes:   readSysCounter(filepath.Join(statsPath, "rx_bytes")),
+			TxBytes:   readSysCounter(filepath.Join(statsPath, "tx_bytes")),
+			RxPackets: readSysCounter(filepath.Join(statsPath, "rx_packets")),
+			TxPackets: readSysCounter(filepath.Join(statsPath, "tx_packets")),
+			RxErrors:  readSysCounter(filepath.Join(statsPath, "rx_errors")),
+			TxErrors:  readSysCounter(filepath.Join(statsPath, "tx_errors")),
+			RxDropped: readSysCounter(filepath.Join(statsPath, "rx_dropped")),
+			TxDropped: readSysCounter(filepath.Join(statsPath, "tx_dropped")),
+		}
 		if addrs, ok := addrByName[name]; ok {
 			stats.SubnetV4 = addrs.v4
 			stats.SubnetV6 = addrs.v6
@@ -110,11 +149,23 @@ func CollectAppTraffic() AppTrafficSnapshot {
 		if info, ok := bridgeMap[name]; ok {
 			stats.AppID = info.AppID
 			stats.Project = info.Project
+			stats.ContainerCount = info.ContainerCount
+			stats.RunningCount = info.RunningCount
+			stats.StatusText = info.StatusText
+			stats.CreatedAt = info.CreatedAt
 			// 优先使用本地 package.yml 读到的中文 name；SDK 兜底
 			if title, ok := localTitles[info.AppID]; ok && title != "" {
 				stats.AppTitle = title
 			} else if app, ok := appMap[info.AppID]; ok && app.Title != "" && app.Title != info.AppID {
 				stats.AppTitle = app.Title
+			}
+			if app, ok := appMap[info.AppID]; ok {
+				if app.Domain != "" {
+					stats.Domain = app.Domain
+				}
+				if app.Icon != "" {
+					stats.Icon = sanitizeIconURL(app.Icon)
+				}
 			}
 		}
 		snap.Bridges = append(snap.Bridges, stats)

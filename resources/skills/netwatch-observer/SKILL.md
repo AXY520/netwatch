@@ -73,7 +73,8 @@ Cumulative upload/download traffic grouped by bridge/app identity.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic, sorted by total bytes |
+| GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic with packets/errors/dropped, container count, domain |
+| GET | `/api/v1/network/app-traffic/history?bridge=<name>&limit=300` | Traffic history (rx/tx bytes over time) for a specific bridge |
 
 ### Traceroute
 

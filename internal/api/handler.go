@@ -49,6 +49,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
 	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
+	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
+	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 }
 
@@ -306,4 +308,36 @@ func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleAppTraffic(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, probe.CollectAppTraffic())
+}
+
+func (h *Handler) handleAppTrafficHistory(w http.ResponseWriter, r *http.Request) {
+	bridge := r.URL.Query().Get("bridge")
+	if bridge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bridge parameter required"})
+		return
+	}
+	limit := 300
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	writeJSON(w, http.StatusOK, h.service.GetAppTrafficHistory(bridge, limit))
+}
+
+func (h *Handler) handlePersistentTrafficBridges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Bridge  string `json:"bridge"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Bridge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	settings := h.service.TogglePersistentTrafficBridge(body.Bridge, body.Enabled)
+	writeJSON(w, http.StatusOK, settings)
 }

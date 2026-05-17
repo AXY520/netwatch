@@ -148,12 +148,12 @@
                     <span>应用流量</span>
                     <div class="title-tools">
                         <span id="app-traffic-status" class="placeholder">等待采样</span>
+                        <button id="traffic-settings-btn">设置</button>
                         <button id="app-traffic-refresh-btn">刷新</button>
                     </div>
                 </div>
-                <!-- <div class="note" id="app-traffic-note">按 lzc-br-* 网桥统计的累计流量。host 网络模式下的应用容器(如 netwatch 自己)不通过网桥，所以不在此处计入。</div> -->
                 <table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none">应用<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none">下行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none">上行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending">合计<span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
+                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none">应用<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none">下行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none">上行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending">合计<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-detail"></th></tr></thead>
                     <tbody></tbody>
                 </table>
             </section>
@@ -328,8 +328,90 @@
                 </label>
                 <div class="note">这里显示的是宿主机该网卡的总出入流量，浏览器、微信、代理软件、后台应用都会计入。</div>
             </div>
+
         </div>
     </section>
+    <section class="floating-window" id="app-detail-window">
+        <div class="window-head">
+            <div class="window-title" id="app-detail-title">应用详情</div>
+            <div class="window-actions">
+                <button id="close-app-detail-window">关闭</button>
+            </div>
+        </div>
+        <div class="window-body">
+            <div class="app-detail-stats" id="app-detail-stats"></div>
+            <div class="app-detail-chart-section">
+                <div class="app-detail-chart-header">
+                    <span class="app-detail-chart-title">流量趋势</span>
+                    <span class="app-detail-chart-legend"><span class="legend-rx"></span> 下行 <span class="legend-tx"></span> 上行</span>
+                </div>
+                <div id="app-traffic-chart"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="floating-window" id="traffic-settings-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title">流量采样设置</div>
+                <div class="note">配置流量趋势采样、刷新间隔和单独应用采样频率。</div>
+            </div>
+            <div class="window-actions">
+                <button id="ts-save-btn">保存</button>
+                <button id="close-traffic-settings-window">关闭</button>
+            </div>
+        </div>
+        <div class="settings-layout" style="padding: 1rem 1.2rem">
+            <div class="settings-section">
+                <div class="table-subtitle">采样控制</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="ts-sampling-enabled">
+                    <span>启用流量趋势采样</span>
+                </label>
+                <label class="settings-field">
+                    <span>全局采样间隔</span>
+                    <select id="ts-global-interval">
+                        <option value="10">10 秒</option>
+                        <option value="30">30 秒</option>
+                        <option value="60" selected>60 秒</option>
+                        <option value="120">120 秒</option>
+                        <option value="300">300 秒</option>
+                    </select>
+                </label>
+            </div>
+            <div class="settings-section">
+                <div class="table-subtitle">详情页刷新</div>
+                <label class="settings-field">
+                    <span>详情页刷新间隔</span>
+                    <select id="ts-detail-interval">
+                        <option value="1">1 秒</option>
+                        <option value="2">2 秒</option>
+                        <option value="3">3 秒</option>
+                        <option value="5">5 秒</option>
+                        <option value="10" selected>10 秒</option>
+                        <option value="30">30 秒</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span>趋势图时间轴标签密度</span>
+                    <select id="ts-chart-label-interval">
+                        <option value="0" selected>自动</option>
+                        <option value="3">每 3 个点</option>
+                        <option value="5">每 5 个点</option>
+                        <option value="10">每 10 个点</option>
+                        <option value="20">每 20 个点</option>
+                    </select>
+                </label>
+                <div class="note">详情页打开后，流量统计和趋势图按此间隔自动刷新。</div>
+            </div>
+        </div>
+        <div style="padding: 0 1.2rem 1rem">
+            <div class="table-subtitle" style="margin-bottom:0.5rem">单独采样间隔</div>
+            <div class="note" style="margin-bottom:0.5rem">对特定应用设置独立的采样频率，覆盖全局间隔。</div>
+            <div id="ts-per-app-list" class="ts-per-app-list"></div>
+        </div>
+    </section>
+
     <script src="/speedtest.js"></script>
     <script src="/app.js"></script>
 </body>

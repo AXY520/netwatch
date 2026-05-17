@@ -50,22 +50,38 @@ type Service struct {
 	traceMu              sync.Mutex
 	traceTask            TraceResult
 	traceCancel          context.CancelFunc
+	appTrafficHistory        *appTrafficHistoryStore
+	appTrafficStop           chan struct{}
+	appDetailIntervalSec     int
+	chartTimeLabelInterval   int
+	trafficSamplingEnabled   bool
+	trafficSamplingInterval  int // seconds
+	perAppSamplingInterval   map[string]int
+	persistentTrafficBridges []string
 }
 
 func NewService(cfg Config) *Service {
 	s := &Service{
-		cfg:        cfg,
-		timeseries: newTimeseriesStore(cfg.DataDir),
-		alert:      newAlertState(),
-		nicStats:   newNICStatsTracker(cfg.MonitoredNICs),
-		nicStop:    make(chan struct{}),
-		autoRefresh: false,
+		cfg:               cfg,
+		timeseries:        newTimeseriesStore(cfg.DataDir),
+		alert:             newAlertState(),
+		nicStats:          newNICStatsTracker(cfg.MonitoredNICs),
+		nicStop:           make(chan struct{}),
+		autoRefresh:       false,
+		appTrafficHistory:        newAppTrafficHistoryStore(cfg.DataDir),
+		appTrafficStop:           make(chan struct{}),
+		appDetailIntervalSec:     10,
+		chartTimeLabelInterval:   0,
+		trafficSamplingEnabled:   true,
+		trafficSamplingInterval:  60,
+		perAppSamplingInterval:   make(map[string]int),
 	}
 	s.loadHistory()
 	if saved, ok := loadMutableSettings(cfg.DataDir); ok {
 		s.applyMutableSettings(saved, false)
 	}
 	s.nicStats.start(s.nicStop)
+	s.startAppTrafficSampling()
 	return s
 }
 
@@ -349,15 +365,29 @@ func (s *Service) GetTimeseries(limit int) []TimeseriesPoint {
 func (s *Service) GetMutableSettings() MutableSettings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	appDetailSec := s.appDetailIntervalSec
+	if appDetailSec <= 0 {
+		appDetailSec = 10
+	}
+	perApp := make(map[string]int, len(s.perAppSamplingInterval))
+	for k, v := range s.perAppSamplingInterval {
+		perApp[k] = v
+	}
 	return MutableSettings{
-		RefreshIntervalSec:     int(s.cfg.RefreshInterval / time.Second),
-		AutoRefreshEnabled:     s.autoRefresh,
-		NICRealtimeEnabled:     s.nicStats.enabled(),
-		NICRealtimeIntervalSec: s.nicStats.intervalSeconds(),
-		BroadbandDomesticOnly:  s.cfg.BroadbandDomesticOnly,
-		DomesticSites:          append([]SiteTarget(nil), s.cfg.DomesticSites...),
-		GlobalSites:            append([]SiteTarget(nil), s.cfg.GlobalSites...),
-		AlertWebhookURL:        s.alertWebhookURL,
+		RefreshIntervalSec:         int(s.cfg.RefreshInterval / time.Second),
+		AutoRefreshEnabled:         s.autoRefresh,
+		NICRealtimeEnabled:         s.nicStats.enabled(),
+		NICRealtimeIntervalSec:     s.nicStats.intervalSeconds(),
+		AppDetailIntervalSec:       appDetailSec,
+		ChartTimeLabelInterval:     s.chartTimeLabelInterval,
+		BroadbandDomesticOnly:      s.cfg.BroadbandDomesticOnly,
+		TrafficSamplingEnabled:     s.trafficSamplingEnabled,
+		TrafficSamplingIntervalSec: s.trafficSamplingInterval,
+		PerAppSamplingInterval:     perApp,
+		PersistentTrafficBridges:   append([]string(nil), s.persistentTrafficBridges...),
+		DomesticSites:              append([]SiteTarget(nil), s.cfg.DomesticSites...),
+		GlobalSites:                append([]SiteTarget(nil), s.cfg.GlobalSites...),
+		AlertWebhookURL:            s.alertWebhookURL,
 	}
 }
 
@@ -380,6 +410,21 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 		s.cfg.GlobalSites = in.GlobalSites
 	}
 	s.alertWebhookURL = in.AlertWebhookURL
+	if in.AppDetailIntervalSec >= 1 {
+		s.appDetailIntervalSec = in.AppDetailIntervalSec
+	}
+	s.chartTimeLabelInterval = in.ChartTimeLabelInterval
+	s.trafficSamplingEnabled = in.TrafficSamplingEnabled
+	if in.TrafficSamplingIntervalSec >= 5 {
+		s.trafficSamplingInterval = in.TrafficSamplingIntervalSec
+	}
+	if in.PerAppSamplingInterval != nil {
+		s.perAppSamplingInterval = make(map[string]int, len(in.PerAppSamplingInterval))
+		for k, v := range in.PerAppSamplingInterval {
+			s.perAppSamplingInterval[k] = v
+		}
+	}
+	s.persistentTrafficBridges = append([]string(nil), in.PersistentTrafficBridges...)
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()
 
@@ -980,4 +1025,93 @@ func (s *Service) pushLocalTransferHistory(result LocalTransferResult) {
 		s.localTransferHistory = s.localTransferHistory[:maxHistoryItems]
 	}
 	s.saveLocalTransferHistory()
+}
+
+func (s *Service) startAppTrafficSampling() {
+	go func() {
+		lastSampled := make(map[string]time.Time)
+		for {
+			enabled, interval, perApp, persistent := s.getTrafficSamplingConfig()
+			if !enabled {
+				// Wait and re-check
+				select {
+				case <-s.appTrafficStop:
+					return
+				case <-time.After(5 * time.Second):
+					continue
+				}
+			}
+
+			now := time.Now()
+			s.appTrafficHistory.sampleWithTiming(persistent, lastSampled, now, interval, perApp)
+
+			// Sleep until the next bridge needs sampling
+			sleep := time.Duration(interval) * time.Second
+			for _, iv := range perApp {
+				if iv > 0 {
+					d := time.Duration(iv) * time.Second
+					if d < sleep {
+						sleep = d
+					}
+				}
+			}
+			if sleep < 1*time.Second {
+				sleep = 1 * time.Second
+			}
+
+			select {
+			case <-s.appTrafficStop:
+				return
+			case <-time.After(sleep):
+			}
+		}
+	}()
+}
+
+func (s *Service) getTrafficSamplingConfig() (enabled bool, interval int, perApp map[string]int, persistent []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	enabled = s.trafficSamplingEnabled
+	interval = s.trafficSamplingInterval
+	if interval < 5 {
+		interval = 60
+	}
+	perApp = make(map[string]int, len(s.perAppSamplingInterval))
+	for k, v := range s.perAppSamplingInterval {
+		perApp[k] = v
+	}
+	persistent = append([]string(nil), s.persistentTrafficBridges...)
+	return
+}
+
+func (s *Service) getPersistentTrafficBridges() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.persistentTrafficBridges...)
+}
+
+func (s *Service) TogglePersistentTrafficBridge(bridge string, enabled bool) MutableSettings {
+	s.mu.Lock()
+	found := false
+	for i, b := range s.persistentTrafficBridges {
+		if b == bridge {
+			found = true
+			if !enabled {
+				s.persistentTrafficBridges = append(s.persistentTrafficBridges[:i], s.persistentTrafficBridges[i+1:]...)
+			}
+			break
+		}
+	}
+	if enabled && !found {
+		s.persistentTrafficBridges = append(s.persistentTrafficBridges, bridge)
+	}
+	dataDir := s.cfg.DataDir
+	s.mu.Unlock()
+
+	_ = saveMutableSettings(dataDir, s.GetMutableSettings())
+	return s.GetMutableSettings()
+}
+
+func (s *Service) GetAppTrafficHistory(bridge string, limit int) []AppTrafficPoint {
+	return s.appTrafficHistory.snapshot(bridge, limit)
 }

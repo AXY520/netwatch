@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -138,32 +137,6 @@ func lookupIPAPI(ctx context.Context, ip string) string {
 	return strings.Join(parts, " ")
 }
 
-func fetchGlobalEgress(ctx context.Context) (EgressLookup, error) {
-	type fetcher func(context.Context) (EgressLookup, error)
-	sources := []struct {
-		name string
-		fn   fetcher
-	}{
-		{name: "IP.SB", fn: fetchIPSB},
-		{name: "ipwho.is", fn: fetchIPWhoIs},
-	}
-
-	var lastErr error
-	for _, source := range sources {
-		out, err := source.fn(ctx)
-		if err == nil && strings.TrimSpace(out.IP) != "" {
-			out.Provider = source.name
-			return out, nil
-		}
-		if err != nil {
-			lastErr = fmt.Errorf("%s: %w", source.name, err)
-		}
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no global source available")
-	}
-	return EgressLookup{}, lastErr
-}
 
 func isPrivateIPv4(ip net.IP) bool {
 	v4 := ip.To4()
@@ -214,60 +187,3 @@ func isPrivateIPv6(ip net.IP) bool {
 	return false
 }
 
-func fetchIPSB(ctx context.Context) (EgressLookup, error) {
-	var r struct {
-		IP              string `json:"ip"`
-		City            string `json:"city"`
-		Region          string `json:"region"`
-		Country         string `json:"country"`
-		ISP             string `json:"isp"`
-		ASNOrganization string `json:"asn_organization"`
-		ASN             int    `json:"asn"`
-	}
-	if err := httpGetJSON(ctx, "https://api.ip.sb/geoip", &r); err != nil {
-		return EgressLookup{}, err
-	}
-	out := EgressLookup{
-		IP:      r.IP,
-		Country: r.Country,
-		Region:  r.Region,
-		City:    r.City,
-		ISP:     firstNonEmpty(r.ISP, r.ASNOrganization),
-	}
-	if r.ASN > 0 {
-		out.ASN = fmt.Sprintf("AS%d", r.ASN)
-	}
-	return out, nil
-}
-
-func fetchIPWhoIs(ctx context.Context) (EgressLookup, error) {
-	var r struct {
-		IP      string `json:"ip"`
-		Success bool   `json:"success"`
-		City    string `json:"city"`
-		Region  string `json:"region"`
-		Country string `json:"country"`
-		Connection struct {
-			ASN  int    `json:"asn"`
-			Org  string `json:"org"`
-			ISP  string `json:"isp"`
-		} `json:"connection"`
-	}
-	if err := httpGetJSON(ctx, "https://ipwho.is/", &r); err != nil {
-		return EgressLookup{}, err
-	}
-	if !r.Success {
-		return EgressLookup{}, fmt.Errorf("query failed")
-	}
-	out := EgressLookup{
-		IP:      r.IP,
-		Country: r.Country,
-		Region:  r.Region,
-		City:    r.City,
-		ISP:     firstNonEmpty(r.Connection.ISP, r.Connection.Org),
-	}
-	if r.Connection.ASN > 0 {
-		out.ASN = fmt.Sprintf("AS%d", r.Connection.ASN)
-	}
-	return out, nil
-}

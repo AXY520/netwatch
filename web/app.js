@@ -19,7 +19,13 @@ const state = {
                 auto_refresh_enabled: false,
                 broadband_domestic_only: true,
                 nic_realtime_enabled: true,
-                nic_realtime_interval_sec: 1
+                nic_realtime_interval_sec: 1,
+                app_detail_interval_sec: 10,
+                chart_time_label_interval: 0,
+                traffic_sampling_enabled: true,
+                traffic_sampling_interval_sec: 60,
+                per_app_sampling_interval: {},
+                persistent_traffic_bridges: []
             },
             activeWindow: null,
             runningTest: null,
@@ -843,6 +849,7 @@ function initTheme() {
             elements.settingsWindow.classList.remove('active');
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
+            document.getElementById('traffic-settings-window')?.classList.remove('active');
 
             if (name === 'settings') {
                 elements.settingsWindow.classList.add('active');
@@ -869,7 +876,10 @@ function initTheme() {
             elements.settingsWindow.classList.remove('active');
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
+            document.getElementById('app-detail-window')?.classList.remove('active');
+            document.getElementById('traffic-settings-window')?.classList.remove('active');
             elements.backdrop.classList.remove('active');
+            stopDetailRefresh();
             state.activeWindow = null;
             updateWindowControls();
         }
@@ -919,6 +929,11 @@ function initTheme() {
             elements.backdrop.addEventListener('click', closeCurrentWindow);
             elements.closeTraceWindow?.addEventListener('click', closeTraceWindow);
             elements.traceBackdrop?.addEventListener('click', closeTraceWindow);
+            document.getElementById('close-app-detail-window')?.addEventListener('click', () => {
+                document.getElementById('app-detail-window')?.classList.remove('active');
+                elements.backdrop.classList.remove('active');
+                stopDetailRefresh();
+            });
             elements.runBroadbandTest.addEventListener('click', startBroadbandTest);
             elements.runTransferTest.addEventListener('click', runTransferTest);
             elements.saveSettings?.addEventListener('click', saveSettings);
@@ -935,19 +950,36 @@ function initTheme() {
             bindControls();
             resetBroadbandMetrics();
             resetTransferMetrics();
-            loadSpeedConfig().then(() => loadSummary(true, true)).then(() => loadSpeedHistory()).finally(() => {
+
+            // Phase 1: load cached data immediately (fast, no overlay)
+            Promise.all([
+                loadSpeedConfig(),
+                loadSummary(false, false),
+                loadSpeedHistory(),
+                loadSettings()
+            ]).then(() => {
                 startAutoRefreshTimer();
                 updateWindowControls();
+                initNICRealtime();
+                // Re-render traffic table now that settings are loaded
+                if (state.appTrafficInitialized) {
+                    const btn = document.getElementById('app-traffic-refresh-btn');
+                    if (btn) btn.click();
+                }
+            });
+
+            // Phase 2: trigger actual probes in background (slow, no blocking)
+            loadSummary(false, true).then(() => {
                 if (!state.summary || !state.summary.ready) {
                     if (maxRetries > 0) {
                         setTimeout(() => initWithRetry(maxRetries - 1), 2000);
                     }
                 }
             });
+
             initSSE();
             initTrace();
             initAutoRefreshToggle();
-            initNICRealtime();
             initEgressLookups();
             initAppTraffic();
         }
@@ -1115,28 +1147,35 @@ function initTheme() {
                 const list = Array.isArray(data.bridges) ? [...data.bridges] : [];
                 updateSortHeaders();
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" class="placeholder">未发现 lzc-br-* 网桥（容器需要 host 网络模式）</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="5" class="placeholder">未发现 lzc-br-* 网桥（容器需要 host 网络模式）</td></tr>';
                 } else {
                     const { key, direction } = state.appTrafficSort;
                     list.sort((a, b) => compareAppTraffic(a, b, key, direction));
                     tbody.innerHTML = list.map(b => {
                         const total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
-                        let appCell;
+                        const title = b.app_title || shortAppName(b.app_id) || b.bridge;
+                        const iconHtml = b.icon ? `<img class="app-icon" src="${b.icon}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
+                        const statusLine = b.status_text ? `<div class="app-status-text">${b.status_text}</div>` : '';
+                        let nameHtml;
                         if (b.app_title) {
-                            appCell = `<strong>${b.app_title}</strong>`;
+                            nameHtml = `<strong>${b.app_title}</strong>${statusLine}`;
                         } else if (b.app_id) {
-                            appCell = `<strong>${shortAppName(b.app_id)}</strong><br><small style="color:var(--text-muted)">${b.app_id}</small>`;
+                            nameHtml = `<strong>${shortAppName(b.app_id)}</strong>${statusLine}<div class="app-status-text">${b.app_id}</div>`;
                         } else if (b.project) {
-                            appCell = `<small style="color:var(--text-muted)">${b.project}</small>`;
+                            nameHtml = `<small style="color:var(--text-muted)">${b.project}</small>`;
                         } else {
-                            appCell = `<small style="color:var(--text-muted)">${b.bridge}</small>`;
+                            nameHtml = `<small style="color:var(--text-muted)">${b.bridge}</small>`;
                         }
+                        const detailBtn = state.settings.traffic_sampling_enabled
+                            ? `<button type="button" class="btn-detail" data-bridge="${b.bridge}" data-title="${title}">详情</button>`
+                            : '';
                         return `
                             <tr>
-                                <td class="col-app">${appCell}</td>
+                                <td class="col-app"><div class="app-cell">${iconHtml}<div class="app-cell-info">${nameHtml}</div></div></td>
                                 <td class="col-rx">${formatBytes(b.rx_bytes || 0)}</td>
                                 <td class="col-tx">${formatBytes(b.tx_bytes || 0)}</td>
                                 <td class="col-total">${formatBytes(total)}</td>
+                                <td class="col-detail">${detailBtn}</td>
                             </tr>
                         `;
                     }).join('');
@@ -1172,9 +1211,250 @@ function initTheme() {
                 });
             });
 
+            // Detail button delegation
+            tbody.addEventListener('click', (e) => {
+                const detailBtn = e.target.closest('.btn-detail');
+                if (detailBtn) {
+                    openAppDetailWindow(detailBtn.dataset.bridge, detailBtn.dataset.title, latestTrafficData);
+                }
+            });
+
             updateSortHeaders();
             if (btn) btn.addEventListener('click', load);
             await load();
+
+            // --- Traffic settings floating window ---
+            const settingsBtn = document.getElementById('traffic-settings-btn');
+            const trafficSettingsWindow = document.getElementById('traffic-settings-window');
+            const closeTrafficSettingsBtn = document.getElementById('close-traffic-settings-window');
+
+            function populateTrafficSettings() {
+                const el = (id) => document.getElementById(id);
+                if (el('ts-sampling-enabled')) el('ts-sampling-enabled').checked = !!state.settings.traffic_sampling_enabled;
+                if (el('ts-global-interval')) el('ts-global-interval').value = String(state.settings.traffic_sampling_interval_sec || 60);
+                if (el('ts-detail-interval')) el('ts-detail-interval').value = String(state.settings.app_detail_interval_sec || 10);
+                if (el('ts-chart-label-interval')) el('ts-chart-label-interval').value = String(state.settings.chart_time_label_interval || 0);
+                const perAppList = el('ts-per-app-list');
+                if (perAppList && latestTrafficData?.bridges) {
+                    const perApp = state.settings.per_app_sampling_interval || {};
+                    perAppList.innerHTML = latestTrafficData.bridges.map(b => {
+                        const title = b.app_title || shortAppName(b.app_id) || b.bridge;
+                        const currentVal = perApp[b.bridge] || '';
+                        const options = [
+                            { v: '', l: '跟随全局' },
+                            { v: '10', l: '10 秒' },
+                            { v: '30', l: '30 秒' },
+                            { v: '60', l: '60 秒' },
+                            { v: '120', l: '120 秒' },
+                            { v: '300', l: '300 秒' },
+                        ].map(o => `<option value="${o.v}" ${String(currentVal) === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
+                        return `<div class="ts-per-app-item" data-bridge="${b.bridge}">
+                            <span class="ts-app-name" title="${b.bridge}">${title}</span>
+                            <select class="ts-per-app-select">${options}</select>
+                        </div>`;
+                    }).join('');
+                }
+            }
+
+            function openTrafficSettings() {
+                if (!trafficSettingsWindow) return;
+                populateTrafficSettings();
+                trafficSettingsWindow.classList.add('active');
+                document.getElementById('window-backdrop').classList.add('active');
+            }
+
+            async function saveTrafficSettings() {
+                const perApp = {};
+                const perAppList = document.getElementById('ts-per-app-list');
+                if (perAppList) {
+                    perAppList.querySelectorAll('.ts-per-app-item').forEach(item => {
+                        const bridge = item.dataset.bridge;
+                        const select = item.querySelector('.ts-per-app-select');
+                        if (select && select.value) {
+                            perApp[bridge] = parseInt(select.value, 10);
+                        }
+                    });
+                }
+                const el = (id) => document.getElementById(id);
+                const payload = {
+                    refresh_interval_sec: state.settings.refresh_interval_sec,
+                    auto_refresh_enabled: state.settings.auto_refresh_enabled,
+                    broadband_domestic_only: state.settings.broadband_domestic_only,
+                    nic_realtime_enabled: state.settings.nic_realtime_enabled,
+                    nic_realtime_interval_sec: state.settings.nic_realtime_interval_sec,
+                    app_detail_interval_sec: parseInt(el('ts-detail-interval')?.value || '10', 10) || 10,
+                    chart_time_label_interval: parseInt(el('ts-chart-label-interval')?.value || '0', 10) || 0,
+                    traffic_sampling_enabled: !!el('ts-sampling-enabled')?.checked,
+                    traffic_sampling_interval_sec: parseInt(el('ts-global-interval')?.value || '60', 10) || 60,
+                    per_app_sampling_interval: perApp,
+                    persistent_traffic_bridges: state.settings.persistent_traffic_bridges || []
+                };
+                try {
+                    const resp = await fetch('/api/v1/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!resp.ok) throw new Error('save failed');
+                    const saved = await resp.json();
+                    state.settings = { ...state.settings, ...saved };
+                    trafficSettingsWindow.classList.remove('active');
+                    document.getElementById('window-backdrop').classList.remove('active');
+                    // Re-render traffic to show/hide detail buttons
+                    if (latestTrafficData) renderTraffic(latestTrafficData);
+                    showToast('流量设置已保存', 'success');
+                } catch (e) {
+                    showToast('保存失败: ' + e.message, 'error');
+                }
+            }
+
+            if (settingsBtn) settingsBtn.addEventListener('click', openTrafficSettings);
+            if (closeTrafficSettingsBtn) closeTrafficSettingsBtn.addEventListener('click', () => {
+                trafficSettingsWindow?.classList.remove('active');
+                document.getElementById('window-backdrop').classList.remove('active');
+            });
+            if (document.getElementById('ts-save-btn')) document.getElementById('ts-save-btn').addEventListener('click', saveTrafficSettings);
+        }
+
+        // --- App detail floating window ---
+        let appDetailRefreshTimer = null;
+
+        async function openAppDetailWindow(bridge, title, trafficData) {
+            const win = document.getElementById('app-detail-window');
+            const backdrop = document.getElementById('window-backdrop');
+            if (!win) return;
+
+            document.getElementById('app-detail-title').textContent = title || bridge;
+
+            // Initial stats render
+            renderDetailStats(bridge, trafficData);
+
+            // Show window
+            win.classList.add('active');
+            backdrop.classList.add('active');
+
+            // Chart container
+            const chartEl = document.getElementById('app-traffic-chart');
+
+            // Fetch and draw immediately
+            await refreshDetailChart(bridge, chartEl);
+
+            // Auto-refresh while window is open, using user-configured interval
+            stopDetailRefresh();
+            const intervalSec = Math.max(1, Number.parseInt(state.settings.app_detail_interval_sec, 10) || 10);
+            appDetailRefreshTimer = setInterval(async () => {
+                if (!win.classList.contains('active')) {
+                    stopDetailRefresh();
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
+                    const data = await resp.json();
+                    renderDetailStats(bridge, data);
+                } catch (_) {}
+                refreshDetailChart(bridge, chartEl);
+            }, intervalSec * 1000);
+        }
+
+        function renderDetailStats(bridge, trafficData) {
+            const statsEl = document.getElementById('app-detail-stats');
+            const b = trafficData?.bridges?.find(x => x.bridge === bridge);
+            if (!b) {
+                statsEl.innerHTML = '<div class="placeholder">无数据</div>';
+                return;
+            }
+            const rx = b.rx_bytes || 0;
+            const tx = b.tx_bytes || 0;
+            const f = (n) => (n || 0).toLocaleString();
+            statsEl.innerHTML =
+                `<div class="app-detail-row app-detail-row-main">` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">下行总计</span><span class="app-detail-stat-value">${formatBytes(rx)}</span></div>` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">上行总计</span><span class="app-detail-stat-value">${formatBytes(tx)}</span></div>` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">合计</span><span class="app-detail-stat-value">${formatBytes(rx + tx)}</span></div>` +
+                `</div>` +
+                `<div class="app-detail-row">` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">收包</span><span class="app-detail-stat-value">${f(b.rx_packets)}</span></div>` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">发包</span><span class="app-detail-stat-value">${f(b.tx_packets)}</span></div>` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">收包丢弃</span><span class="app-detail-stat-value">${f(b.rx_dropped)}</span></div>` +
+                    `<div class="app-detail-stat"><span class="app-detail-stat-label">发包丢弃</span><span class="app-detail-stat-value">${f(b.tx_dropped)}</span></div>` +
+                `</div>`;
+        }
+
+        function stopDetailRefresh() {
+            if (appDetailRefreshTimer) {
+                clearInterval(appDetailRefreshTimer);
+                appDetailRefreshTimer = null;
+            }
+        }
+
+        async function refreshDetailChart(bridge, container) {
+            try {
+                const resp = await fetch(`/api/v1/network/app-traffic/history?bridge=${encodeURIComponent(bridge)}&limit=300`);
+                const points = await resp.json();
+                renderTrafficSVG(container, points);
+            } catch (e) {
+                container.innerHTML = '<div class="placeholder" style="padding:2rem">加载失败</div>';
+            }
+        }
+
+        function renderTrafficSVG(container, points) {
+            if (!points || points.length < 2) {
+                container.innerHTML = '<div class="placeholder" style="padding:2rem">数据不足，等待采样...</div>';
+                return;
+            }
+
+            // Compute deltas (rate) since points are cumulative
+            const deltas = [];
+            for (let i = 1; i < points.length; i++) {
+                deltas.push({
+                    ts: points[i].timestamp || '',
+                    rx: Math.max(0, points[i].rx_bytes - points[i - 1].rx_bytes),
+                    tx: Math.max(0, points[i].tx_bytes - points[i - 1].tx_bytes),
+                });
+            }
+
+            const W = container.clientWidth || 560;
+            const H = Math.max(240, Math.round(W * 0.45));
+            const pad = { top: 16, right: 12, bottom: 28, left: 48 };
+            const cw = W - pad.left - pad.right;
+            const ch = H - pad.top - pad.bottom;
+            const maxVal = Math.max(1, ...deltas.map(d => Math.max(d.rx, d.tx)));
+
+            const xS = (i) => pad.left + (i / Math.max(1, deltas.length - 1)) * cw;
+            const yS = (v) => pad.top + ch - (v / maxVal) * ch;
+
+            let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
+
+            // Grid
+            for (let i = 0; i <= 4; i++) {
+                const y = pad.top + (ch / 4) * i;
+                svg += `<line x1="${pad.left}" y1="${y}" x2="${pad.left + cw}" y2="${y}" stroke="rgba(128,128,128,0.15)" stroke-width="1"/>`;
+                const val = maxVal * (1 - i / 4);
+                svg += `<text x="${pad.left - 6}" y="${y + 4}" fill="#888" font-size="10" text-anchor="end">${formatBytes(val)}</text>`;
+            }
+
+            // X labels
+            const configuredStep = Number.parseInt(state.settings.chart_time_label_interval, 10) || 0;
+            const step = configuredStep > 0 ? configuredStep : Math.max(1, Math.floor(deltas.length / 5));
+            for (let i = 0; i < deltas.length; i += step) {
+                const x = xS(i);
+                const short = (deltas[i].ts.length > 10) ? deltas[i].ts.slice(11, 16) : deltas[i].ts;
+                svg += `<text x="${x}" y="${H - 6}" fill="#888" font-size="10" text-anchor="middle">${short}</text>`;
+            }
+
+            // Build polyline points
+            let rxPts = '', txPts = '';
+            for (let i = 0; i < deltas.length; i++) {
+                const x = xS(i);
+                rxPts += `${x},${yS(deltas[i].rx)} `;
+                txPts += `${x},${yS(deltas[i].tx)} `;
+            }
+
+            svg += `<polyline points="${rxPts.trim()}" fill="none" stroke="#2196F3" stroke-width="2"/>`;
+            svg += `<polyline points="${txPts.trim()}" fill="none" stroke="#4CAF50" stroke-width="2"/>`;
+            svg += `</svg>`;
+
+            container.innerHTML = svg;
         }
 
         function formatBytes(n) {
@@ -1433,7 +1713,13 @@ function initTheme() {
                     auto_refresh_enabled: !!autoData.enabled,
                     broadband_domestic_only: !!settingsData.broadband_domestic_only,
                     nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
-                    nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1
+                    nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
+                    app_detail_interval_sec: settingsData.app_detail_interval_sec || 10,
+                    chart_time_label_interval: settingsData.chart_time_label_interval || 0,
+                    traffic_sampling_enabled: settingsData.traffic_sampling_enabled !== false,
+                    traffic_sampling_interval_sec: settingsData.traffic_sampling_interval_sec || 60,
+                    per_app_sampling_interval: settingsData.per_app_sampling_interval || {},
+                    persistent_traffic_bridges: settingsData.persistent_traffic_bridges || []
                 };
                 applySettingsToForm();
             } catch (error) {
@@ -1469,7 +1755,13 @@ function initTheme() {
                 auto_refresh_enabled: !!elements.settingAutoRefreshEnabled?.checked,
                 broadband_domestic_only: !!elements.settingBroadbandDomesticOnly?.checked,
                 nic_realtime_enabled: !!elements.settingNICRealtimeEnabled?.checked,
-                nic_realtime_interval_sec: parseInt(elements.settingNICRealtimeIntervalSec?.value || '1', 10) || 1
+                nic_realtime_interval_sec: parseInt(elements.settingNICRealtimeIntervalSec?.value || '1', 10) || 1,
+                app_detail_interval_sec: state.settings.app_detail_interval_sec,
+                chart_time_label_interval: state.settings.chart_time_label_interval,
+                traffic_sampling_enabled: state.settings.traffic_sampling_enabled,
+                traffic_sampling_interval_sec: state.settings.traffic_sampling_interval_sec,
+                per_app_sampling_interval: state.settings.per_app_sampling_interval,
+                persistent_traffic_bridges: state.settings.persistent_traffic_bridges
             };
 
             try {

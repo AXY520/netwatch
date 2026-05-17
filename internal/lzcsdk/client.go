@@ -223,6 +223,7 @@ type AppInfo struct {
 	AppID  string
 	Title  string // 用户可见的应用名（如 "网络监测"）；缺省时回落到 AppID
 	Domain string
+	Icon   string // 图标 URL，如 https://$boxdomain/sys/icons/$appid.png
 }
 
 // ListApps queries the PackageManager for installed applications. Returns
@@ -252,6 +253,7 @@ func ListApps(ctx context.Context) (map[string]AppInfo, error) {
 			AppID:  a.Appid,
 			Title:  title,
 			Domain: a.GetDomain(),
+			Icon:   a.GetIcon(),
 		}
 	}
 	return out, nil

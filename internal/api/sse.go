@@ -41,7 +41,11 @@ func BasicAuth(next http.Handler) http.Handler {
 func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		// Fallback: return current summary as a single JSON response so the
+		// client can fall back to polling instead of getting a 500 error.
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(h.service.GetSummary())
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -52,9 +56,19 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ch, unsub := h.service.Subscribe()
 	defer unsub()
 
-	if initial, err := json.Marshal(h.service.GetSummary()); err == nil {
-		fmt.Fprintf(w, "event: summary\ndata: %s\n\n", initial)
+	writeEvent := func(data []byte) bool {
+		_, err := fmt.Fprintf(w, "event: summary\ndata: %s\n\n", data)
+		if err != nil {
+			return false
+		}
 		flusher.Flush()
+		return true
+	}
+
+	if initial, err := json.Marshal(h.service.GetSummary()); err == nil {
+		if !writeEvent(initial) {
+			return
+		}
 	}
 
 	ctx := r.Context()
@@ -70,8 +84,9 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "event: summary\ndata: %s\n\n", body)
-			flusher.Flush()
+			if !writeEvent(body) {
+				return
+			}
 		}
 	}
 }

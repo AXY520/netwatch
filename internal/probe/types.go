@@ -79,6 +79,16 @@ type MutableSettings struct {
 	DomesticSites          []SiteTarget `json:"domestic_sites"`
 	GlobalSites            []SiteTarget `json:"global_sites"`
 	AlertWebhookURL        string       `json:"alert_webhook_url"`
+
+	// Traffic sampling settings
+	TrafficSamplingEnabled     bool           `json:"traffic_sampling_enabled"`
+	TrafficSamplingIntervalSec int            `json:"traffic_sampling_interval_sec"`
+	PerAppSamplingInterval     map[string]int `json:"per_app_sampling_interval,omitempty"` // bridge → interval sec
+	PersistentTrafficBridges   []string       `json:"persistent_traffic_bridges,omitempty"`
+
+	// App detail settings
+	AppDetailIntervalSec   int `json:"app_detail_interval_sec"`
+	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
 }
 
 type EgressLookup struct {
