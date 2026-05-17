@@ -1006,14 +1006,14 @@ function initTheme() {
             const domesticEl = document.getElementById('egress-domestic-list');
             const globalEl = document.getElementById('egress-global-list');
             const statusEl = document.getElementById('egress-status');
-            if (!domesticEl || !globalEl) return;
+            if (!globalEl) return;
 
             const itemHTML = (lu) => {
                 if (lu.error) {
                     return `
                         <div class="egress-item error">
                             <span class="egress-provider">${lu.provider}</span>
-                            <span class="egress-duration">${lu.duration_ms} ms</span>
+                            <span class="egress-duration">${Number.isFinite(lu.duration_ms) && lu.duration_ms > 0 ? `${lu.duration_ms} ms` : ''}</span>
                             <span class="egress-meta">错误：${lu.error}</span>
                         </div>`;
                 }
@@ -1023,15 +1023,28 @@ function initTheme() {
                     <div class="egress-item">
                         <span class="egress-provider">${lu.provider}</span>
                         <span class="egress-ip">${lu.ip || '--'}</span>
-                        <span class="egress-duration">${lu.duration_ms} ms</span>
+                        <span class="egress-duration">${Number.isFinite(lu.duration_ms) && lu.duration_ms > 0 ? `${lu.duration_ms} ms` : ''}</span>
                         <span class="egress-meta">${meta || '—'}</span>
                     </div>`;
             };
 
-            const dom = (data.lookups || []).filter(x => x.scope === 'domestic').map(itemHTML).join('');
-            const glb = (data.lookups || []).filter(x => x.scope === 'global').map(itemHTML).join('');
-            domesticEl.innerHTML = dom || '<div class="egress-item"><small>无数据</small></div>';
-            globalEl.innerHTML = glb || '<div class="egress-item"><small>无数据</small></div>';
+            const lookup = (data.lookups || []).find(x => x.scope === 'global' && (x.ip || x.error));
+            const domestic = data.domestic_ip?.ipv4 || {};
+            if (domesticEl) {
+                domesticEl.innerHTML = domestic.ip
+                    ? itemHTML({
+                        provider: domestic.source || 'domestic',
+                        ip: domestic.ip,
+                        duration_ms: 0,
+                        country: '',
+                        region: domestic.location,
+                        city: '',
+                        isp: domestic.isp,
+                        error: domestic.error
+                    })
+                    : '<div class="egress-item"><small>无数据</small></div>';
+            }
+            globalEl.innerHTML = lookup ? itemHTML(lookup) : '<div class="egress-item"><small>无数据</small></div>';
             statusEl.textContent = data.generated_at ? `查询于 ${data.generated_at}` : '等待查询';
             renderDomesticIPSnapshot(data.domestic_ip || {});
             refreshProxyDisplay();

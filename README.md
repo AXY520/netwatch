@@ -20,18 +20,38 @@ docker compose up --build
 或者直接本地运行：
 
 ```bash
-/root/go/bin/go run ./cmd/server
+go run ./cmd/server
 ```
 
 默认监听 `http://localhost:8080`。
 LPK 打包版本默认由微服入口转发到内部代理，再代理到 host 网络里的 `23087`。
 
+## 部署
+
+Linux / macOS:
+
+```bash
+./deploy.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\deploy.ps1
+```
+
+Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于打包 `mtr` 和相关 Linux 依赖；本机需要能运行 `docker` 和 `lzc-cli`。只打包不安装：
+
+```powershell
+.\deploy.ps1 -BuildOnly
+```
+
 ## 页面行为
 
-- 容器启动时立即执行首轮探测
-- 后台每 10 秒自动执行一次快速探测
+- 前端打开页面时会触发首轮探测
+- 后台自动刷新默认关闭；开启后按 `REFRESH_INTERVAL_SEC` 配置的间隔执行快速探测，默认 10 秒
 - 主界面“快速刷新”只刷新网站延迟、出口 IP、出口地区和本机网络信息
-- `NAT` 检测独立运行，首轮启动后后台执行一次，并且支持单独手动刷新
+- `NAT` 检测独立运行，支持单独手动刷新
 - 宽带测速与网页到本机传输测速采用悬浮二级窗口，且同一时间只允许打开一个
 - 测速历史会持久化写入 `/app/data`
 - 测速界面会显示实时阶段和进度，关闭窗口会立即停止测速
@@ -66,6 +86,7 @@ LPK 打包版本默认由微服入口转发到内部代理，再代理到 host �
 
 ## 配置项
 
+- Go 版本：`1.26.3`
 - `PORT`
 - `REFRESH_INTERVAL_SEC`
 - `DOMESTIC_SITES`
@@ -96,7 +117,7 @@ network_mode: host
 
 ```bash
 cd /root/.codex/netwatch
-/root/go/bin/go run ./cmd/server
+go run ./cmd/server
 ```
 
 打开 `http://127.0.0.1:8080` 即可。

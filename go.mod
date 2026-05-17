@@ -1,6 +1,6 @@
 module netwatch
 
-go 1.25.0
+go 1.26.3
 
 require (
 	gitee.com/linakesi/lzc-sdk v0.1.0

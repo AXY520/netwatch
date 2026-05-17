@@ -4,12 +4,14 @@ dist/
 # lzc-cli 临时构建/缓存目录
 .lzc-cli-build*/
 .lzc-cli-cache/
+.lzc-build.yml.deploy-backup
 
 # 偶然下载的外部 npm 文档，与项目无关
 /@lazycatcloud_lzc-file-pickers - npm.html
 
 # local scratch files
 test.html
+.codex-go/
 
 # editor / system
 .DS_Store

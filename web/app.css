@@ -219,6 +219,10 @@
             gap: .6rem;
         }
 
+        .egress-lookup-block {
+            margin-top: 1.25rem;
+        }
+
         .identity-ip-grid {
             margin-top: 1.25rem;
         }

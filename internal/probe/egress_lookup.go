@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// egressHTTPClient is used for global/external endpoints (ip.sb, ipwho.is).
+// egressHTTPClient is used for external egress lookup endpoints.
 // Respects HTTP_PROXY so it goes through the proxy if configured.
 var egressHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
@@ -49,23 +49,24 @@ type egressProvider struct {
 	fetch func(ctx context.Context) (EgressLookup, error)
 }
 
-// Egress lookup races multiple sources per scope:
-//   - domestic → cip.cc + ZXINC (first success wins)
-//   - global   → ip.sb + ipwho.is + ip-api.com (first success wins)
-var egressProviders = []egressProvider{
-	{name: "cip.cc", scope: "domestic", fetch: fetchCipCC},
+// International egress lookup probes several overseas sources but returns only
+// one result. In split-routing environments, different "what is my IP" APIs may
+// be classified differently by the upstream router; prefer a non-mainland
+// result when one is available, otherwise show the first valid result.
+var internationalEgressProviders = []egressProvider{
 	{name: "ip.sb", scope: "global", fetch: fetchIPSB},
 	{name: "ipwho.is", scope: "global", fetch: fetchIPWhoIs},
+	{name: "ipinfo.io", scope: "global", fetch: fetchIPInfo},
 }
 
-// LookupEgressIPs races all providers concurrently, total timeout 10s.
+// LookupEgressIPs returns one international egress result, total timeout 10s.
 func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	results := make([]EgressLookup, len(egressProviders))
+	candidates := make([]EgressLookup, len(internationalEgressProviders))
 	var wg sync.WaitGroup
-	for i, p := range egressProviders {
+	for i, p := range internationalEgressProviders {
 		wg.Add(1)
 		go func(i int, p egressProvider) {
 			defer wg.Done()
@@ -77,14 +78,37 @@ func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 			if err != nil {
 				lu.Error = err.Error()
 			}
-			results[i] = lu
+			candidates[i] = lu
 		}(i, p)
 	}
 	wg.Wait()
 	return EgressLookupResult{
 		GeneratedAt: localTimestamp(),
-		Lookups:     results,
+		Lookups:     []EgressLookup{pickInternationalEgress(candidates)},
 	}
+}
+
+func pickInternationalEgress(candidates []EgressLookup) EgressLookup {
+	var firstValid EgressLookup
+	var firstError EgressLookup
+	for _, item := range candidates {
+		if item.IP == "" {
+			if firstError.Provider == "" && item.Error != "" {
+				firstError = item
+			}
+			continue
+		}
+		if firstValid.Provider == "" {
+			firstValid = item
+		}
+		if !isMainlandChina(item.Country) {
+			return item
+		}
+	}
+	if firstValid.Provider != "" {
+		return firstValid
+	}
+	return firstError
 }
 
 func httpGetJSON(ctx context.Context, client *http.Client, url string, target any) error {
@@ -297,6 +321,26 @@ func fetchIPWhoIs(ctx context.Context) (EgressLookup, error) {
 		Region:  p.Region,
 		City:    p.City,
 		ISP:     isp,
+	}, nil
+}
+
+// --- ipinfo.io (global fallback) ---
+
+func fetchIPInfo(ctx context.Context) (EgressLookup, error) {
+	var p ipInfoResponse
+	if err := httpGetJSON(ctx, egressHTTPClient, "https://ipinfo.io/json", &p); err != nil {
+		return EgressLookup{}, err
+	}
+	ip := strings.TrimSpace(p.IP)
+	if ip == "" {
+		return EgressLookup{}, fmt.Errorf("ipinfo.io: empty ip")
+	}
+	return EgressLookup{
+		IP:      ip,
+		Country: p.Country,
+		Region:  p.Region,
+		City:    p.City,
+		ISP:     p.Org,
 	}, nil
 }
 
