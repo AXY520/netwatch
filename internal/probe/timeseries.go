@@ -33,13 +33,7 @@ func (t *timeseriesStore) append(point TimeseriesPoint) {
 	snapshot := append([]TimeseriesPoint(nil), t.points...)
 	t.mu.Unlock()
 
-	go func() {
-		body, err := json.Marshal(snapshot)
-		if err != nil {
-			return
-		}
-		_ = os.WriteFile(t.path, body, 0o644)
-	}()
+	_ = writeJSONFile(t.path, snapshot, false)
 }
 
 func (t *timeseriesStore) snapshot(limit int) []TimeseriesPoint {

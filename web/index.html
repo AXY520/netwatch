@@ -1,9 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" id="html-root">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NETWATCH // 网络诊断仪表盘</title>
+    <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
+    <script>
+        document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+    </script>
+    <script src="/i18n.js"></script>
+    <script src="/vendor/lazycat-sdk.js"></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -16,35 +21,37 @@
         <header>
             <div class="logo">NET<span>WATCH</span></div>
             <div class="controls">
-                <button id="theme-toggle" title="切换深浅模式">🌓</button>
-                <button id="open-settings-window">设置</button>
-                <button id="open-broadband-window">宽带测速</button>
-                <button id="open-transfer-window">传输测速</button>
-                <button id="refresh-btn">刷新</button>
+                <button id="theme-toggle" title="切换深浅模式" data-i18n-title="toggle_theme_title">🌓</button>
+                <button id="lang-toggle">🌐</button>
+                <button id="open-settings-window" data-i18n="settings_btn">设置</button>
+                <button id="open-broadband-window" data-i18n="broadband_btn">宽带测速</button>
+                <button id="open-transfer-window" data-i18n="transfer_btn">传输测速</button>
+                <a class="button-link" href="/lan.html" data-i18n="lan_devices_btn">局域网设备</a>
+                <button id="refresh-btn" data-i18n="refresh_btn">刷新</button>
             </div>
         </header>
 
         <main class="dashboard-grid">
             <section class="card connectivity-card">
                 <div class="card-title">
-                    <span>网站延迟检测</span>
+                    <span data-i18n="website_latency_chk">网站延迟检测</span>
                     <div class="title-tools">
                         <span id="website-status" class="placeholder"></span>
-                        <button id="website-refresh-btn">手动检测</button>
+                        <button id="website-refresh-btn" data-i18n="manual_check_btn">手动检测</button>
                     </div>
                 </div>
                 <div class="connectivity-split">
                     <div>
-                        <div class="table-subtitle">国内网站</div>
+                        <div class="table-subtitle" data-i18n="domestic_sites">国内网站</div>
                         <table class="data-table" id="domestic-table">
-                            <thead><tr><th>目标节点</th><th>状态</th><th>延迟</th></tr></thead>
+                            <thead><tr><th data-i18n="target_node">目标节点</th><th data-i18n="status_col">状态</th><th data-i18n="latency_col">延迟</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
                     <div>
-                        <div class="table-subtitle">国际网站</div>
+                        <div class="table-subtitle" data-i18n="global_sites">国际网站</div>
                         <table class="data-table" id="global-table">
-                            <thead><tr><th>目标节点</th><th>状态</th><th>延迟</th></tr></thead>
+                            <thead><tr><th data-i18n="target_node">目标节点</th><th data-i18n="status_col">状态</th><th data-i18n="latency_col">延迟</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
@@ -53,161 +60,173 @@
 
             <section class="card identity-egress-card" id="egress-lookups-card">
                 <div class="card-title">
-                    <span>网络身份与出口 IP</span>
+                    <span data-i18n="identity_egress_title">网络身份与出口 IP</span>
                     <div class="title-tools">
-                        <span id="egress-status" class="placeholder">等待查询</span>
-                        <button id="egress-refresh-btn">刷新</button>
+                        <span id="egress-status" class="placeholder" data-i18n="waiting">等待查询</span>
+                        <button id="egress-refresh-btn" data-i18n="refresh_btn">刷新</button>
                     </div>
                 </div>
 
                 <div class="identity-strip">
                     <div class="identity-strip-row">
-                        <span class="identity-strip-label">代理环境</span>
+                        <span class="identity-strip-label" data-i18n="proxy_env">代理环境</span>
                         <span class="identity-strip-value" id="proxy-inline-status">---</span>
                     </div>
                     <div class="identity-strip-row">
-                        <span class="identity-strip-label">默认网关</span>
+                        <span class="identity-strip-label" data-i18n="default_gateway">默认网关</span>
                         <span class="identity-strip-value" id="val-gw4">---</span>
                     </div>
                     <div class="identity-strip-row">
-                        <span class="identity-strip-label">平台连通性</span>
+                        <span class="identity-strip-label" data-i18n="platform_connectivity">平台连通性</span>
                         <span class="identity-strip-value" id="val-platform-connectivity">---</span>
                     </div>
                 </div>
 
                 <div class="connectivity-split identity-ip-grid">
                     <div class="identity-ip-card">
-                        <div class="table-subtitle">国内 IPv4</div>
+                        <div class="table-subtitle" data-i18n="domestic_ipv4">国内 IPv4</div>
                         <div class="identity-ip-main" id="domestic-ipv4-ip">---</div>
-                        <div class="identity-ip-meta" id="domestic-ipv4-location">等待查询</div>
+                        <div class="identity-ip-meta" id="domestic-ipv4-location" data-i18n="waiting">等待查询</div>
                     </div>
                     <div class="identity-ip-card">
-                        <div class="table-subtitle">国内 IPv6</div>
+                        <div class="table-subtitle" data-i18n="domestic_ipv6">国内 IPv6</div>
                         <div class="identity-ip-main" id="domestic-ipv6-ip">---</div>
-                        <div class="identity-ip-meta" id="domestic-ipv6-location">等待查询</div>
+                        <div class="identity-ip-meta" id="domestic-ipv6-location" data-i18n="waiting">等待查询</div>
                         <div class="identity-ip-badges">
-                            <span class="identity-badge" id="domestic-ipv6-port">高位端口: 未检测</span>
+                            <span class="identity-badge" id="domestic-ipv6-port" data-i18n="high_port_not_checked">高位端口未检测</span>
                         </div>
                     </div>
                 </div>
 
                 <div class="connectivity-split egress-lookup-block">
                     <div>
-                        <div class="table-subtitle">国内出口归属</div>
+                        <div class="table-subtitle" data-i18n="domestic_egress_title">国内出口归属</div>
                         <div id="egress-domestic-list" class="egress-list"></div>
                     </div>
                     <div>
-                        <div class="table-subtitle">国际出口归属</div>
+                        <div class="table-subtitle" data-i18n="global_egress_title">国际出口归属</div>
                         <div id="egress-global-list" class="egress-list"></div>
                     </div>
                 </div>
 
-                <span id="val-ipv4" style="display:none"></span>
-                <span id="val-ipv4-region" style="display:none"></span>
-                <span id="val-ipv6" style="display:none"></span>
-                <span id="val-ipv6-region" style="display:none"></span>
-                <span id="val-gw6" style="display:none"></span>
-                <span id="network-status" style="display:none"></span>
             </section>
 
             <section class="card trace-card">
                 <div class="card-title">
-                    <span>路径诊断</span>
+                    <span data-i18n="trace_title">路径诊断</span>
                 </div>
                 <div class="trace-toolbar">
-                    <input id="trace-host" placeholder="如 github.com" />
-                    <button id="trace-run">追踪</button>
+                    <input id="trace-host" placeholder="如 github.com" data-i18n-placeholder="trace_placeholder" />
+                    <button id="trace-run" data-i18n="trace_btn">追踪</button>
                 </div>
                 <div id="trace-summary" class="trace-summary">
-                    <span class="placeholder">输入目标后开始路径诊断</span>
+                    <span class="placeholder" data-i18n="trace_initial_hint">输入目标后开始路径诊断</span>
                 </div>
-                <button id="trace-details-btn" class="trace-details-btn" disabled>查看详细跳点</button>
+                <button id="trace-details-btn" class="trace-details-btn" disabled data-i18n="trace_details_btn">查看详细跳点</button>
             </section>
 
             <section class="card interfaces-card">
                 <div class="card-title">
-                    <span>网卡实时速率</span>
-                    <span class="placeholder" id="nic-realtime-status">等待采样</span>
+                    <span data-i18n="nic_realtime_title">网卡实时速率</span>
+                    <div class="title-tools">
+                        <span class="placeholder" id="nic-realtime-status" data-i18n="waiting_for_sample">等待采样</span>
+                        <button type="button" id="nic-realtime-refresh-btn" class="compact-btn" data-i18n="refresh_btn">刷新</button>
+                    </div>
                 </div>
                 <div id="nic-realtime-list" class="nic-realtime-list"></div>
             </section>
 
             <section class="card interfaces-card">
                 <div class="card-title">
-                    <span>硬件网卡接口详情</span>
+                    <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
                     <span class="placeholder"></span>
                 </div>
                 <table class="data-table interfaces-table-fixed" id="interfaces-table">
-                    <thead><tr><th class="col-iface">接口</th><th class="col-status">状态</th><th class="col-ipv4">IPv4 地址</th><th class="col-ipv6">IPv6 地址</th><th class="col-mac">MAC</th></tr></thead>
+                    <thead><tr><th class="col-iface" data-i18n="iface_col">接口</th><th class="col-status" data-i18n="status_col">状态</th><th class="col-ipv4" data-i18n="ipv4_col">IPv4 地址</th><th class="col-ipv6" data-i18n="ipv6_col">IPv6 地址</th><th class="col-mac">MAC</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </section>
 
             <section class="card interfaces-card">
                 <div class="card-title">
-                    <span>应用流量</span>
+                    <span data-i18n="app_traffic_title">应用流量</span>
                     <div class="title-tools">
-                        <span id="app-traffic-status" class="placeholder">等待采样</span>
-                        <button id="traffic-settings-btn">设置</button>
-                        <button id="app-traffic-refresh-btn">刷新</button>
+                        <span id="app-traffic-status" class="placeholder" data-i18n="waiting_for_sample">等待采样</span>
+                        <a class="button-link" id="traffic-analysis-link" href="/traffic.html" hidden data-i18n="traffic_analysis_btn">流量分析</a>
+                        <button id="traffic-settings-btn" data-i18n="settings_btn">设置</button>
+                        <button id="app-traffic-refresh-btn" data-i18n="refresh_btn">刷新</button>
                     </div>
                 </div>
                 <table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none">应用<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none">下行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none">上行<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending">合计<span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-detail"></th></tr></thead>
+                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="download">下行</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="upload">上行</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
                     <tbody></tbody>
                 </table>
             </section>
 
-            <section class="card connectivity-card" style="display:none" id="settings-card-legacy">
-                <input id="set-interval" type="hidden" />
-                <input id="set-webhook" type="hidden" />
-                <textarea id="set-domestic" style="display:none"></textarea>
-                <textarea id="set-global" style="display:none"></textarea>
-                <button id="settings-save" style="display:none"></button>
-            </section>
         </main>
     </div>
 
     <section class="floating-window" id="broadband-window">
         <div class="window-head">
             <div>
-                <div class="window-title">宽带测速</div>
-                <div class="note" id="broadband-note">测试中...</div>
+                <div class="window-title" data-i18n="broadband_window_title">宽带测速</div>
+                <div class="note" id="broadband-note" data-i18n="standby">等待测速开始</div>
             </div>
             <div class="window-actions">
-                <button id="run-broadband-test">开始测速</button>
-                <button id="close-broadband-window">关闭</button>
+                <button id="run-broadband-test" data-i18n="start_test_btn">开始测速</button>
+                <button id="close-broadband-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
         <div class="speedtest-layout">
             <div class="st-header">
                 <div class="st-stage-chip" id="broadband-primary-mode">Idle</div>
-                <div class="st-caption" id="broadband-primary-caption">等待测速开始</div>
+                <div class="st-caption" id="broadband-primary-caption" data-i18n="standby">等待测速开始</div>
             </div>
 
             <div class="st-dual">
                 <div class="st-panel download" id="broadband-panel-download">
-                    <div class="st-panel-head"><span>下载</span><span class="arrow">↓</span></div>
+                    <div class="st-panel-head"><span data-i18n="download">下载</span><span class="arrow">↓</span></div>
                     <div><span class="st-num" id="broadband-download">--</span><span class="st-unit">Mbps</span></div>
                 </div>
                 <div class="st-panel upload" id="broadband-panel-upload">
-                    <div class="st-panel-head"><span>上传</span><span class="arrow">↑</span></div>
+                    <div class="st-panel-head"><span data-i18n="upload">上传</span><span class="arrow">↑</span></div>
                     <div><span class="st-num" id="broadband-upload">--</span><span class="st-unit">Mbps</span></div>
                 </div>
             </div>
 
             <div class="st-meta">
-                <div class="st-chip"><div class="st-chip-label">延迟</div><div class="st-chip-value" id="broadband-latency">--</div></div>
-                <div class="st-chip"><div class="st-chip-label">抖动</div><div class="st-chip-value" id="broadband-jitter">--</div></div>
-                <div class="st-chip"><div class="st-chip-label">阶段</div><div class="st-chip-value" id="broadband-stage">待启动</div></div>
-                <div class="st-chip"><div class="st-chip-label">进度</div><div class="st-chip-value" id="broadband-progress">等待</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="broadband-latency">--</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="broadband-jitter">--</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="stage">阶段</div><div class="st-chip-value" id="broadband-stage">待启动</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="progress">进度</div><div class="st-chip-value" id="broadband-progress">等待</div></div>
             </div>
 
-            <span id="broadband-primary-speed" style="display:none"></span>
-            <span id="broadband-primary-unit" style="display:none"></span>
+            <div class="st-detail-grid" id="broadband-detail">
+                <div class="st-detail-card">
+                    <div class="st-detail-title" data-i18n="speedtest_node">测速节点</div>
+                    <div class="st-detail-row"><span data-i18n="node">节点</span><strong id="broadband-node-name">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="provider">运营商</span><strong id="broadband-node-provider">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="region">地区</span><strong id="broadband-node-region">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="source">来源</span><strong id="broadband-node-source">--</strong></div>
+                </div>
+                <div class="st-detail-card">
+                    <div class="st-detail-title" data-i18n="stage_duration">阶段耗时</div>
+                    <div class="st-detail-row"><span data-i18n="select_node">选节点</span><strong id="broadband-duration-node">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="latency_col">延迟</span><strong id="broadband-duration-latency">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="download">下载</span><strong id="broadband-duration-download">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="upload">上传</span><strong id="broadband-duration-upload">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="total_duration">总耗时</span><strong id="broadband-duration-total">--</strong></div>
+                </div>
+                <div class="st-detail-card">
+                    <div class="st-detail-title" data-i18n="failure_info">失败信息</div>
+                    <div class="st-detail-row"><span data-i18n="stage">阶段</span><strong id="broadband-failure-stage">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="reason">原因</span><strong id="broadband-failure-reason">--</strong></div>
+                </div>
+            </div>
+
         </div>
         <div class="window-head">
-            <div class="window-title">历史记录</div>
+            <div class="window-title" data-i18n="history_title">历史记录</div>
         </div>
         <div class="history-list" id="broadband-history"></div>
     </section>
@@ -215,43 +234,58 @@
     <section class="floating-window" id="transfer-window">
         <div class="window-head">
             <div>
-                <div class="window-title">网页与本机传输测速</div>
-                <div class="note" id="transfer-note">持续测量浏览器到本机服务的下载、上传、延迟和抖动。</div>
+                <div class="window-title" data-i18n="transfer_window_title">网页与本机传输测速</div>
+                <div class="note" id="transfer-note" data-i18n="transfer_note_desc">持续测量浏览器到本机服务的下载、上传、延迟和抖动。</div>
             </div>
             <div class="window-actions">
-                <button id="run-transfer-test">开始测速</button>
-                <button id="close-transfer-window">关闭</button>
+                <button id="run-transfer-test" data-i18n="start_test_btn">开始测速</button>
+                <button id="close-transfer-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
         <div class="speedtest-layout">
             <div class="st-header">
                 <div class="st-stage-chip" id="transfer-primary-mode">Idle</div>
-                <div class="st-caption" id="transfer-primary-caption">等待测速开始</div>
+                <div class="st-caption" id="transfer-primary-caption" data-i18n="standby">等待测速开始</div>
             </div>
 
             <div class="st-dual">
                 <div class="st-panel download" id="transfer-panel-download">
-                    <div class="st-panel-head"><span>下载</span><span class="arrow">↓</span></div>
+                    <div class="st-panel-head"><span data-i18n="download">下载</span><span class="arrow">↓</span></div>
                     <div><span class="st-num" id="transfer-download">--</span><span class="st-unit">Mbps</span></div>
                 </div>
                 <div class="st-panel upload" id="transfer-panel-upload">
-                    <div class="st-panel-head"><span>上传</span><span class="arrow">↑</span></div>
+                    <div class="st-panel-head"><span data-i18n="upload">上传</span><span class="arrow">↑</span></div>
                     <div><span class="st-num" id="transfer-upload">--</span><span class="st-unit">Mbps</span></div>
                 </div>
             </div>
 
             <div class="st-meta">
-                <div class="st-chip"><div class="st-chip-label">延迟</div><div class="st-chip-value" id="transfer-latency">--</div></div>
-                <div class="st-chip"><div class="st-chip-label">抖动</div><div class="st-chip-value" id="transfer-jitter">--</div></div>
-                <div class="st-chip"><div class="st-chip-label">阶段</div><div class="st-chip-value" id="transfer-stage">待启动</div></div>
-                <div class="st-chip"><div class="st-chip-label">进度</div><div class="st-chip-value" id="transfer-progress">等待</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="transfer-latency">--</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="transfer-jitter">--</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="stage">阶段</div><div class="st-chip-value" id="transfer-stage">待启动</div></div>
+                <div class="st-chip"><div class="st-chip-label" data-i18n="progress">进度</div><div class="st-chip-value" id="transfer-progress">等待</div></div>
             </div>
 
-            <span id="transfer-primary-speed" style="display:none"></span>
-            <span id="transfer-primary-unit" style="display:none"></span>
+            <div class="st-detail-grid" id="transfer-detail">
+                <div class="st-detail-card">
+                    <div class="st-detail-title" data-i18n="rtt_stats">RTT 统计</div>
+                    <div class="st-detail-row"><span data-i18n="min_rtt">最小</span><strong id="transfer-rtt-min">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="avg_rtt">平均</span><strong id="transfer-rtt-avg">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="max_rtt">最大</span><strong id="transfer-rtt-max">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="latency_jitter">抖动</span><strong id="transfer-rtt-jitter">--</strong></div>
+                </div>
+                <div class="st-detail-card">
+                    <div class="st-detail-title" data-i18n="current_transfer">本次传输</div>
+                    <div class="st-detail-row"><span data-i18n="download_data">下载数据</span><strong id="transfer-download-bytes">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="upload_data">上传数据</span><strong id="transfer-upload-bytes">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="total">合计</span><strong id="transfer-total-bytes">--</strong></div>
+                    <div class="st-detail-row"><span data-i18n="duration">耗时</span><strong id="transfer-duration">--</strong></div>
+                </div>
+            </div>
+
         </div>
         <div class="window-head">
-            <div class="window-title">历史记录</div>
+            <div class="window-title" data-i18n="history_title">历史记录</div>
         </div>
         <div class="history-list" id="transfer-history"></div>
     </section>
@@ -259,155 +293,194 @@
     <section class="floating-window" id="trace-window">
         <div class="window-head">
             <div>
-                <div class="window-title">路径详情</div>
-                <div class="note" id="trace-window-note">显示完整跳点列表与时延信息。</div>
+                <div class="window-title" data-i18n="trace_window_title">路径详情</div>
+                <div class="note" id="trace-window-note" data-i18n="trace_window_note">显示完整跳点列表与时延信息。</div>
             </div>
             <div class="window-actions">
-                <button id="close-trace-window">关闭</button>
+                <button id="close-trace-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
         <div id="trace-output" class="trace-results">
-            <div class="trace-empty">尚未开始追踪</div>
+            <div class="trace-empty" data-i18n="trace_not_started">尚未开始追踪</div>
         </div>
     </section>
 
     <section class="floating-window" id="settings-window">
         <div class="window-head">
             <div>
-                <div class="window-title">设置</div>
-                <div class="note" id="settings-note">统一调整自动刷新、网卡实时监测和后续可配置项。</div>
+                <div class="window-title" data-i18n="settings_window_title">设置</div>
+                <div class="note" id="settings-note" data-i18n="settings_note">统一调整网卡实时监测和后续可配置项。</div>
             </div>
             <div class="window-actions">
-                <button id="save-settings">保存</button>
-                <button id="close-settings-window">关闭</button>
+                <button id="save-settings" data-i18n="save_btn">保存</button>
+                <button id="close-settings-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
         <div class="settings-layout">
             <div class="settings-section">
-                <div class="table-subtitle">全局刷新</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-auto-refresh-enabled">
-                    <span>启用自动刷新</span>
-                </label>
-                <label class="settings-field">
-                    <span>自动刷新间隔</span>
-                    <select id="setting-refresh-interval-sec">
-                        <option value="5">5 秒</option>
-                        <option value="10">10 秒</option>
-                        <option value="15">15 秒</option>
-                        <option value="30">30 秒</option>
-                        <option value="60">60 秒</option>
-                    </select>
-                </label>
-            </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle">宽带测速 (Broadband)</div>
+                <div class="table-subtitle" data-i18n="broadband_speedtest">宽带测速 (Broadband)</div>
                 <label class="settings-toggle">
                     <input type="checkbox" id="setting-broadband-domestic-only">
-                    <span>仅使用国内测速节点</span>
+                    <span data-i18n="domestic_nodes_only">仅使用国内测速节点</span>
                 </label>
-                <div class="note">开启后将强制筛选中国大陆境内的运营商节点，适用于存在全局代理但需要测试真实物理带宽的场景。</div>
+                <div class="note" data-i18n="domestic_nodes_note">开启后将强制筛选中国大陆境内的运营商节点，适用于存在全局代理但需要测试真实物理带宽的场景。</div>
             </div>
 
             <div class="settings-section">
-                <div class="table-subtitle">网卡实时监测</div>
+                <div class="table-subtitle" data-i18n="nic_realtime_monitor">网卡实时监测</div>
                 <label class="settings-toggle">
                     <input type="checkbox" id="setting-nic-realtime-enabled">
-                    <span>启用实时速率刷新</span>
+                    <span data-i18n="enable_nic_realtime">启用实时速率刷新</span>
                 </label>
                 <label class="settings-field">
-                    <span>实时速率刷新间隔</span>
+                    <span data-i18n="nic_realtime_interval">实时速率刷新间隔</span>
                     <select id="setting-nic-realtime-interval-sec">
-                        <option value="1">1 秒</option>
-                        <option value="2">2 秒</option>
-                        <option value="3">3 秒</option>
-                        <option value="5">5 秒</option>
-                        <option value="10">10 秒</option>
+                        <option value="1" data-i18n="sec_1">1 秒</option>
+                        <option value="2" data-i18n="sec_2">2 秒</option>
+                        <option value="3" data-i18n="sec_3">3 秒</option>
+                        <option value="5" data-i18n="sec_5">5 秒</option>
+                        <option value="10" data-i18n="sec_10">10 秒</option>
                     </select>
                 </label>
-                <div class="note">这里显示的是宿主机该网卡的总出入流量，浏览器、微信、代理软件、后台应用都会计入。</div>
+                <div class="note" data-i18n="nic_realtime_note">这里显示的是宿主机该网卡的总出入流量，浏览器、微信、代理软件、后台应用都会计入。</div>
             </div>
 
-        </div>
-    </section>
-    <section class="floating-window" id="app-detail-window">
-        <div class="window-head">
-            <div class="window-title" id="app-detail-title">应用详情</div>
-            <div class="window-actions">
-                <button id="close-app-detail-window">关闭</button>
+            <div class="settings-section">
+                <div class="table-subtitle" data-i18n="background_monitor">后台检测与通知</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-background-monitor-enabled">
+                    <span data-i18n="enable_background_monitor">启用后台检测</span>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="background_monitor_interval">完整检测间隔</span>
+                    <select id="setting-background-monitor-interval-sec">
+                        <option value="30" data-i18n="sec_30">30 秒</option>
+                        <option value="60" data-i18n="sec_60">60 秒</option>
+                        <option value="120" data-i18n="sec_120">120 秒</option>
+                        <option value="300" data-i18n="sec_300">300 秒</option>
+                    </select>
+                </label>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-notifications-enabled">
+                    <span data-i18n="enable_notifications">启用通知</span>
+                </label>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-notify-abnormal-traffic">
+                    <span data-i18n="notify_abnormal_traffic">异常流量通知</span>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="abnormal_traffic_threshold">异常流量阈值</span>
+                    <select id="setting-abnormal-traffic-threshold-mbps">
+                        <option value="50">50 Mbps</option>
+                        <option value="100">100 Mbps</option>
+                        <option value="300">300 Mbps</option>
+                        <option value="500">500 Mbps</option>
+                        <option value="1000">1000 Mbps</option>
+                    </select>
+                </label>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-notify-egress-change">
+                    <span data-i18n="notify_egress_change">国内外出口 IP 变动通知</span>
+                </label>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-notify-connectivity-change">
+                    <span data-i18n="notify_connectivity_change">全球互联连接/断开通知</span>
+                </label>
+                <div class="note" data-i18n="background_monitor_note">完整检测间隔控制后台主动检测网络身份、出口、互联状态和局域网设备扫描；网卡连接/断开使用本地轻量状态检测，会更快更新。</div>
             </div>
-        </div>
-        <div class="window-body">
-            <div class="app-detail-stats" id="app-detail-stats"></div>
-            <div class="app-detail-chart-section">
-                <div class="app-detail-chart-header">
-                    <span class="app-detail-chart-title">流量趋势</span>
-                    <span class="app-detail-chart-legend"><span class="legend-rx"></span> 下行 <span class="legend-tx"></span> 上行</span>
+
+            <div class="settings-section">
+                <div class="table-subtitle" data-i18n="notification_channels">通知渠道</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-client-notification-enabled">
+                    <span data-i18n="client_notification">客户端通知</span>
+                </label>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-bark-enabled">
+                    <span data-i18n="bark_enabled">启用 Bark 推送</span>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="bark_server_url">Bark 服务地址</span>
+                    <input id="setting-bark-server-url" placeholder="https://api.day.app">
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="bark_device_key">Bark Device Key</span>
+                    <input id="setting-bark-device-key" placeholder="xxxxxxxxxxxxxxxxxxxx">
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="bark_group">Bark 分组</span>
+                    <input id="setting-bark-group" placeholder="Netwatch">
+                </label>
+                <div class="window-actions">
+                    <button id="test-bark-notification" data-i18n="test_bark_notification">测试 Bark 推送</button>
                 </div>
-                <div id="app-traffic-chart"></div>
             </div>
+
+            <div class="settings-section">
+                <div class="table-subtitle" data-i18n="dnd_settings">免打扰</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-dnd-enabled">
+                    <span data-i18n="dnd_enabled">启用免打扰</span>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="dnd_start">免打扰开始</span>
+                    <input type="time" id="setting-dnd-start" value="22:00">
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="dnd_end">免打扰结束</span>
+                    <input type="time" id="setting-dnd-end" value="08:00">
+                </label>
+                <div class="note" data-i18n="dnd_note">免打扰时段内，所有推送通知（Bark 和客户端）将被静默。</div>
+            </div>
+
+            <div class="settings-section">
+                <div class="table-subtitle" data-i18n="scheduled_notify">定时通知</div>
+                <label class="settings-toggle">
+                    <input type="checkbox" id="setting-scheduled-notify-enabled">
+                    <span data-i18n="scheduled_notify_enabled">启用定时通知</span>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="scheduled_notify_time">每日通知时间</span>
+                    <input type="time" id="setting-scheduled-notify-time" value="09:00">
+                </label>
+                <div class="note" data-i18n="scheduled_notify_note">每天在指定时间发送网络状态摘要通知，包含出口 IP、全球互联状态和局域网设备统计。</div>
+            </div>
+
         </div>
     </section>
-
     <section class="floating-window" id="traffic-settings-window">
         <div class="window-head">
             <div>
-                <div class="window-title">流量采样设置</div>
-                <div class="note">配置流量趋势采样、刷新间隔和单独应用采样频率。</div>
+                <div class="window-title" data-i18n="traffic_analysis_settings">流量分析设置</div>
+                <div class="note" data-i18n="traffic_settings_note">配置流量趋势采样、刷新间隔和单独应用采样频率。</div>
             </div>
             <div class="window-actions">
-                <button id="ts-save-btn">保存</button>
-                <button id="close-traffic-settings-window">关闭</button>
+                <button id="ts-save-btn" data-i18n="save_btn">保存</button>
+                <button id="close-traffic-settings-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
         <div class="settings-layout" style="padding: 1rem 1.2rem">
             <div class="settings-section">
-                <div class="table-subtitle">采样控制</div>
+                <div class="table-subtitle" data-i18n="sampling_control">采样控制</div>
                 <label class="settings-toggle">
                     <input type="checkbox" id="ts-sampling-enabled">
-                    <span>启用流量趋势采样</span>
+                    <span data-i18n="enable_traffic_analysis">启用流量分析</span>
                 </label>
                 <label class="settings-field">
-                    <span>全局采样间隔</span>
+                    <span data-i18n="global_sampling_interval">全局采样间隔</span>
                     <select id="ts-global-interval">
-                        <option value="10">10 秒</option>
-                        <option value="30">30 秒</option>
-                        <option value="60" selected>60 秒</option>
-                        <option value="120">120 秒</option>
-                        <option value="300">300 秒</option>
+                        <option value="10" data-i18n="sec_10">10 秒</option>
+                        <option value="30" data-i18n="sec_30">30 秒</option>
+                        <option value="60" selected data-i18n="sec_60">60 秒</option>
+                        <option value="120" data-i18n="sec_120">120 秒</option>
+                        <option value="300" data-i18n="sec_300">300 秒</option>
                     </select>
                 </label>
-            </div>
-            <div class="settings-section">
-                <div class="table-subtitle">详情页刷新</div>
-                <label class="settings-field">
-                    <span>详情页刷新间隔</span>
-                    <select id="ts-detail-interval">
-                        <option value="1">1 秒</option>
-                        <option value="2">2 秒</option>
-                        <option value="3">3 秒</option>
-                        <option value="5">5 秒</option>
-                        <option value="10" selected>10 秒</option>
-                        <option value="30">30 秒</option>
-                    </select>
-                </label>
-                <label class="settings-field">
-                    <span>趋势图时间轴标签密度</span>
-                    <select id="ts-chart-label-interval">
-                        <option value="0" selected>自动</option>
-                        <option value="3">每 3 个点</option>
-                        <option value="5">每 5 个点</option>
-                        <option value="10">每 10 个点</option>
-                        <option value="20">每 20 个点</option>
-                    </select>
-                </label>
-                <div class="note">详情页打开后，流量统计和趋势图按此间隔自动刷新。</div>
             </div>
         </div>
         <div style="padding: 0 1.2rem 1rem">
-            <div class="table-subtitle" style="margin-bottom:0.5rem">单独采样间隔</div>
-            <div class="note" style="margin-bottom:0.5rem">对特定应用设置独立的采样频率，覆盖全局间隔。</div>
+            <div class="table-subtitle" style="margin-bottom:0.5rem" data-i18n="per_app_sampling">单独采样间隔</div>
+            <div class="note" style="margin-bottom:0.5rem" data-i18n="per_app_sampling_note">对特定应用设置独立的采样频率，覆盖全局间隔。</div>
             <div id="ts-per-app-list" class="ts-per-app-list"></div>
         </div>
     </section>

@@ -18,17 +18,16 @@ var (
 )
 
 type FileConfig struct {
-	Port                  string   `json:"port"`
-	RefreshIntervalSec    int      `json:"refresh_interval_sec"`
-	HTTPTimeoutSec        int      `json:"http_timeout_sec"`
-	NATTimeoutSec         int      `json:"nat_timeout_sec"`
-	PublicIPv4Endpoint    string   `json:"public_ipv4_endpoint"`
-	PublicIPv6Endpoint    string   `json:"public_ipv6_endpoint"`
-	MonitoredNICs         []string `json:"monitored_nics"`
-	DataDir               string   `json:"data_dir"`
-	BroadbandTestSec      int      `json:"broadband_test_sec"`
-	BroadbandDomesticOnly *bool    `json:"broadband_domestic_only"`
-	LocalTransferTestSec  int      `json:"local_transfer_test_sec"`
+	Port                  string `json:"port"`
+	RefreshIntervalSec    int    `json:"refresh_interval_sec"`
+	HTTPTimeoutSec        int    `json:"http_timeout_sec"`
+	NATTimeoutSec         int    `json:"nat_timeout_sec"`
+	PublicIPv4Endpoint    string `json:"public_ipv4_endpoint"`
+	PublicIPv6Endpoint    string `json:"public_ipv6_endpoint"`
+	DataDir               string `json:"data_dir"`
+	BroadbandTestSec      int    `json:"broadband_test_sec"`
+	BroadbandDomesticOnly *bool  `json:"broadband_domestic_only"`
+	LocalTransferTestSec  int    `json:"local_transfer_test_sec"`
 
 	LocalTransferPayloadMB int    `json:"local_transfer_payload_mb"`
 	IPv6HighPortProbeHost  string `json:"ipv6_high_port_probe_host"`
@@ -68,9 +67,6 @@ func (f FileConfig) Apply(cfg *Config) error {
 	}
 	if f.PublicIPv6Endpoint != "" {
 		cfg.PublicIPv6Endpoint = f.PublicIPv6Endpoint
-	}
-	if len(f.MonitoredNICs) > 0 {
-		cfg.MonitoredNICs = f.MonitoredNICs
 	}
 	if f.DataDir != "" {
 		cfg.DataDir = f.DataDir
@@ -123,7 +119,6 @@ type Config struct {
 	RefreshInterval        time.Duration
 	PublicIPv4Endpoint     string
 	PublicIPv6Endpoint     string
-	MonitoredNICs          []string
 	DataDir                string
 	BroadbandDuration      time.Duration
 	BroadbandDomesticOnly  bool
@@ -154,7 +149,6 @@ func DefaultConfig() Config {
 		RefreshInterval:        envDurationValue("REFRESH_INTERVAL_SEC", 10*time.Second),
 		PublicIPv4Endpoint:     envOrDefault("PUBLIC_IPV4_ENDPOINT", "https://api.ipify.org"),
 		PublicIPv6Endpoint:     envOrDefault("PUBLIC_IPV6_ENDPOINT", "https://api64.ipify.org"),
-		MonitoredNICs:          envCSV("MONITORED_NICS", []string{"enp2s0", "wlp4s0"}),
 		DataDir:                envOrDefault("DATA_DIR", "/app/data"),
 		BroadbandDuration:      envDurationValue("BROADBAND_TEST_SEC", 15*time.Second),
 		BroadbandDomesticOnly:  envBool("BROADBAND_DOMESTIC_ONLY", true),

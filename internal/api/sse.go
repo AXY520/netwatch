@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,7 +29,7 @@ func BasicAuth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, p, ok := r.BasicAuth()
-		if !ok || u != creds.user || p != creds.pass {
+		if !ok || u != creds.user || subtle.ConstantTimeCompare([]byte(p), []byte(creds.pass)) != 1 {
 			w.Header().Set("WWW-Authenticate", `Basic realm="netwatch"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = fmt.Fprintln(w, "Unauthorized")
@@ -55,9 +56,11 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	ch, unsub := h.service.Subscribe()
 	defer unsub()
+	notifyCh, notifyUnsub := h.service.SubscribeNotifications()
+	defer notifyUnsub()
 
-	writeEvent := func(data []byte) bool {
-		_, err := fmt.Fprintf(w, "event: summary\ndata: %s\n\n", data)
+	writeEvent := func(name string, data []byte) bool {
+		_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
 		if err != nil {
 			return false
 		}
@@ -66,7 +69,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if initial, err := json.Marshal(h.service.GetSummary()); err == nil {
-		if !writeEvent(initial) {
+		if !writeEvent("summary", initial) {
 			return
 		}
 	}
@@ -84,7 +87,18 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			if !writeEvent(body) {
+			if !writeEvent("summary", body) {
+				return
+			}
+		case ev, ok := <-notifyCh:
+			if !ok {
+				return
+			}
+			body, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if !writeEvent("notification", body) {
 				return
 			}
 		}

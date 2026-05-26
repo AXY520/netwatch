@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,17 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"netwatch/internal/logger"
 	"netwatch/internal/lzcsdk"
 )
 
 type nicMetaEntry struct {
 	Label    string
 	LinkType string // "wired" / "wifi"
-}
-
-var nicMeta = map[string]nicMetaEntry{
-	"enp2s0": {Label: "有线", LinkType: "wired"},
-	"wlp4s0": {Label: "Wi-Fi", LinkType: "wifi"},
 }
 
 type ipWhoResponse struct {
@@ -65,21 +60,21 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 	if lzcsdk.Available() {
 		ns, err := lzcsdk.FetchNetworkStatus(ctx)
 		if err != nil {
-			log.Printf("[netwatch] sdk FetchNetworkStatus failed: %v", err)
+			logger.Warn("sdk FetchNetworkStatus failed: %v", err)
 		} else {
 			sdkStatus = ns
 			sdkOK = true
-			log.Printf("[netwatch] sdk ok: hasInternet=%v wired=%s wireless=%s connectivity=%s wifi=%s",
+			logger.Info("sdk ok: hasInternet=%v wired=%s wireless=%s connectivity=%s wifi=%s",
 				ns.HasInternet, ns.WiredStatus, ns.WirelessStatus, ns.Connectivity, ns.Wifi.SSID)
 		}
 	} else {
-		log.Printf("[netwatch] sdk not available (socket or certs missing)")
+		logger.Info("sdk not available (socket or certs missing)")
 	}
 
-	interfaces := collectInterfaces(s.cfg.MonitoredNICs, sdkStatus, sdkOK)
+	interfaces := collectInterfaces(sdkStatus, sdkOK)
 
 	// 公网 IP + 地理位置查询（api.ipify.org / ipinfo.io 等）成本高且结果稳定，
-	// 缓存 5 分钟避免每轮 auto-refresh 都打外部 API。
+	// 缓存 5 分钟避免短时间内重复打外部 API。
 	egressIPv4, egressIPv6, egressIPv4Region, egressIPv6Region := s.getPublicIPWithCache(ctx)
 
 	info := NetworkInfo{
@@ -94,7 +89,7 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		EgressIPv6Region: egressIPv6Region,
 		DetectionNotes: []string{
 			"结果以当前容器网络命名空间为准，建议使用 host 网络模式。",
-			"界面仅展示 enp2s0 和 wlp4s0 两个目标网卡。",
+			"界面自动展示当前宿主的物理有线和 Wi-Fi 网卡。",
 			"出口地区主要用于判断代理是否启用以及流量分流是否符合预期。",
 		},
 	}
@@ -166,10 +161,10 @@ func (s *Service) getPublicIPWithCache(ctx context.Context) (string, string, Egr
 	return egressIPv4, egressIPv6, v4Region, v6Region
 }
 
-func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
+func collectInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return placeholderInterfaces(monitored, sdkStatus, sdkOK)
+		return placeholderInterfaces(sdkStatus, sdkOK)
 	}
 
 	byName := make(map[string]net.Interface, len(ifaces))
@@ -177,9 +172,11 @@ func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK boo
 		byName[iface.Name] = iface
 	}
 
+	monitored := autoMonitoredNICs(ifaces)
+
 	result := make([]InterfaceInfo, 0, len(monitored))
 	for _, name := range monitored {
-		meta := nicMeta[name]
+		meta := nicMetaForName(name)
 		iface, exists := byName[name]
 		if !exists {
 			result = append(result, applySDKToInterface(InterfaceInfo{
@@ -229,10 +226,11 @@ func collectInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK boo
 	return result
 }
 
-func placeholderInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
+func placeholderInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
+	monitored := []string{"enp2s0", "wlp4s0"}
 	result := make([]InterfaceInfo, 0, len(monitored))
 	for _, name := range monitored {
-		meta := nicMeta[name]
+		meta := nicMetaForName(name)
 		result = append(result, applySDKToInterface(InterfaceInfo{
 			Name:     name,
 			Label:    meta.Label,
@@ -241,6 +239,76 @@ func placeholderInterfaces(monitored []string, sdkStatus lzcsdk.NetStatus, sdkOK
 		}, sdkStatus, sdkOK))
 	}
 	return result
+}
+
+func autoMonitoredNICs(ifaces []net.Interface) []string {
+	var wired, wifi string
+	for _, iface := range ifaces {
+		name := iface.Name
+		if shouldIgnoreInterface(name) {
+			continue
+		}
+		linkType := inferLinkType(name)
+		if linkType == "wifi" && wifi == "" {
+			wifi = name
+			continue
+		}
+		if linkType == "wired" && wired == "" {
+			wired = name
+		}
+	}
+	out := make([]string, 0, 2)
+	if wired != "" {
+		out = append(out, wired)
+	}
+	if wifi != "" {
+		out = append(out, wifi)
+	}
+	return out
+}
+
+func autoMonitoredNICNames() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	return autoMonitoredNICs(ifaces)
+}
+
+func nicMetaForName(name string) nicMetaEntry {
+	switch inferLinkType(name) {
+	case "wifi":
+		return nicMetaEntry{Label: "Wi-Fi", LinkType: "wifi"}
+	case "wired":
+		return nicMetaEntry{Label: "有线", LinkType: "wired"}
+	default:
+		return nicMetaEntry{Label: name, LinkType: ""}
+	}
+}
+
+func inferLinkType(name string) string {
+	if strings.HasPrefix(name, "wl") {
+		return "wifi"
+	}
+	if strings.HasPrefix(name, "en") || strings.HasPrefix(name, "eth") {
+		return "wired"
+	}
+	return ""
+}
+
+func shouldIgnoreInterface(name string) bool {
+	if name == "lo" || name == "" {
+		return true
+	}
+	prefixes := []string{
+		"br-", "docker", "veth", "lzc-br-", "lzu-", "virbr", "tun", "tap", "heiyu-",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // applySDKToInterface overlays SDK device-status / link-speed / wifi info
@@ -682,7 +750,10 @@ func isPublicIPv4(ip net.IP) bool {
 		"169.254.0.0/16",
 	}
 	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
 		if network.Contains(ip) {
 			return false
 		}

@@ -151,7 +151,10 @@ func isPrivateIPv4(ip net.IP) bool {
 		"169.254.0.0/16",
 	}
 	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
 		if network.Contains(v4) {
 			return true
 		}
@@ -164,7 +167,10 @@ func isCGNATIPv4(ip net.IP) bool {
 	if v4 == nil {
 		return false
 	}
-	_, network, _ := net.ParseCIDR("100.64.0.0/10")
+	_, network, err := net.ParseCIDR("100.64.0.0/10")
+	if err != nil {
+		return false
+	}
 	return network.Contains(v4)
 }
 
@@ -179,7 +185,10 @@ func isPrivateIPv6(ip net.IP) bool {
 		"fe80::/10",
 	}
 	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
 		if network.Contains(ip) {
 			return true
 		}

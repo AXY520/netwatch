@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +13,8 @@ import (
 )
 
 var downloadPayload = make([]byte, 1024*1024)
+
+var maxLocalUploadBytes int64 = 128 * 1024 * 1024
 
 type Handler struct {
 	service *probe.Service
@@ -28,7 +32,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network", h.handleNetworkInfo)
 	mux.HandleFunc("/api/v1/network/nat/run", h.handleNATRefresh)
 	mux.HandleFunc("/api/v1/probe/run", h.handleRefresh)
-	mux.HandleFunc("/api/v1/settings/refresh-interval", h.handleRefreshInterval)
 	mux.HandleFunc("/api/v1/speed/config", h.handleSpeedConfig)
 	mux.HandleFunc("/api/v1/speed/broadband/start", h.handleBroadbandStart)
 	mux.HandleFunc("/api/v1/speed/broadband/task", h.handleBroadbandTask)
@@ -45,11 +48,17 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/diagnostics/trace", h.handleTrace)
 	mux.HandleFunc("/api/v1/diagnostics/trace/task", h.handleTraceTask)
 	mux.HandleFunc("/api/v1/events", h.handleSSE)
-	mux.HandleFunc("/api/v1/auto-refresh", h.handleAutoRefresh)
 	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
+
 	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
+	mux.HandleFunc("/api/v1/notifications/events", h.handleNotificationEvents)
+	mux.HandleFunc("/api/v1/notifications/bark/test", h.handleBarkNotificationTest)
+	mux.HandleFunc("/api/v1/lan/devices", h.handleLANDevices)
+	mux.HandleFunc("/api/v1/lan/devices/meta", h.handleLANDeviceMeta)
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
 	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
+	mux.HandleFunc("/api/v1/network/app-traffic/live", h.handleAppTrafficLive)
+	mux.HandleFunc("/api/v1/network/app-traffic/top", h.handleAppTrafficTop)
 	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 }
@@ -98,21 +107,6 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.Refresh(r.Context()))
 }
 
-func (h *Handler) handleRefreshInterval(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
-	seconds, err := strconv.Atoi(r.URL.Query().Get("seconds"))
-	if err != nil || seconds <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid seconds"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, h.service.UpdateRefreshInterval(seconds))
-}
-
 func (h *Handler) handleSpeedConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetSpeedConfig())
 }
@@ -159,8 +153,13 @@ func (h *Handler) handleLocalResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var result probe.LocalTransferResult
-	if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+	if err := decoder.Decode(&result); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if !validLocalTransferResult(result) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid speed result"})
 		return
 	}
 	writeJSON(w, http.StatusOK, h.service.RecordLocalTransferResult(result))
@@ -186,6 +185,8 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 		}
 		deadline := time.Now().Add(time.Duration(sec * float64(time.Second)))
 		ctx := r.Context()
+		flusher, canFlush := w.(http.Flusher)
+		nextFlush := time.Now().Add(200 * time.Millisecond)
 		for time.Now().Before(deadline) {
 			select {
 			case <-ctx.Done():
@@ -195,6 +196,13 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 			if _, err := w.Write(downloadPayload); err != nil {
 				return
 			}
+			if canFlush && time.Now().After(nextFlush) {
+				flusher.Flush()
+				nextFlush = time.Now().Add(200 * time.Millisecond)
+			}
+		}
+		if canFlush {
+			flusher.Flush()
 		}
 		return
 	}
@@ -218,8 +226,37 @@ func (h *Handler) handleLocalUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	n, _ := io.Copy(io.Discard, r.Body)
+	n, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxLocalUploadBytes))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "payload too large"})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "upload failed"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"received_bytes": n, "time": time.Now().Format(time.DateTime)})
+}
+
+func validLocalTransferResult(result probe.LocalTransferResult) bool {
+	for _, value := range []float64{
+		result.DownloadMbps,
+		result.UploadMbps,
+		result.PayloadMB,
+		result.DownloadMB,
+		result.UploadMB,
+	} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return false
+		}
+	}
+	return result.RoundTripLatencyMS >= 0 &&
+		result.RTTMinMS >= 0 &&
+		result.RTTAvgMS >= 0 &&
+		result.RTTMaxMS >= 0 &&
+		result.JitterMS >= 0 &&
+		result.DurationMS >= 0
 }
 
 func parseMB(value string, fallback int) int {
@@ -253,7 +290,7 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, h.service.GetMutableSettings())
 	case http.MethodPost, http.MethodPut:
 		var in probe.MutableSettings
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256*1024)).Decode(&in); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 			return
 		}
@@ -264,38 +301,30 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
-	host := r.URL.Query().Get("host")
-	if host == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host required"})
-		return
-	}
-	hops, _ := strconv.Atoi(r.URL.Query().Get("hops"))
-	if r.Method == http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, h.service.GetTraceTask())
+	case http.MethodPost:
+		host := r.URL.Query().Get("host")
+		if host == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "host required"})
+			return
+		}
+		hops, _ := strconv.Atoi(r.URL.Query().Get("hops"))
 		writeJSON(w, http.StatusOK, h.service.StartTraceTask(host, hops))
-		return
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
-	writeJSON(w, http.StatusOK, h.service.GetTraceTask())
 }
 
 func (h *Handler) handleTraceTask(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetTraceTask())
 }
 
-func (h *Handler) handleAutoRefresh(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": h.service.GetAutoRefresh()})
-	case http.MethodPost:
-		enabled := r.URL.Query().Get("enabled") == "true"
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": h.service.SetAutoRefresh(enabled)})
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-	}
-}
-
 func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetRealtimeNetStats())
 }
+
 
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
@@ -304,6 +333,50 @@ func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, h.service.GetEgressLookups(r.Context()))
+}
+
+func (h *Handler) handleNotificationEvents(w http.ResponseWriter, r *http.Request) {
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": h.service.GetNotificationEvents(since),
+	})
+}
+
+func (h *Handler) handleBarkNotificationTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if err := h.service.TestBarkNotification(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (h *Handler) handleLANDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		writeJSON(w, http.StatusOK, h.service.ScanLANDevices(r.Context()))
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.GetLANDevices())
+}
+
+func (h *Handler) handleLANDeviceMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var in probe.LANDeviceMetaUpdate
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.UpdateLANDeviceMeta(in))
 }
 
 func (h *Handler) handleAppTraffic(w http.ResponseWriter, _ *http.Request) {
@@ -316,13 +389,78 @@ func (h *Handler) handleAppTrafficHistory(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bridge parameter required"})
 		return
 	}
-	limit := 300
+	limit := 1440
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
 	}
+	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
+		writeJSON(w, http.StatusOK, h.service.GetAppTrafficHistorySince(bridge, time.Now().Add(-d), limit))
+		return
+	}
 	writeJSON(w, http.StatusOK, h.service.GetAppTrafficHistory(bridge, limit))
+}
+
+func parseTrafficRange(value string) (time.Duration, bool) {
+	switch value {
+	case "15m":
+		return 15 * time.Minute, true
+	case "1m":
+		return time.Minute, true
+	case "5m":
+		return 5 * time.Minute, true
+	case "1h":
+		return time.Hour, true
+	case "6h":
+		return 6 * time.Hour, true
+	case "24h":
+		return 24 * time.Hour, true
+	default:
+		return 0, false
+	}
+}
+
+func (h *Handler) handleAppTrafficTop(w http.ResponseWriter, r *http.Request) {
+	limit := 5
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	var since time.Time
+	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
+		since = time.Now().Add(-d)
+	}
+	writeJSON(w, http.StatusOK, h.service.GetAppTrafficTop(since, limit))
+}
+
+func (h *Handler) handleAppTrafficLive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	bridge := r.URL.Query().Get("bridge")
+	if bridge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bridge parameter required"})
+		return
+	}
+	limit := 1440
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	var since time.Time
+	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
+		since = time.Now().Add(-d)
+	}
+	result, ok := h.service.SampleAppTrafficBridge(bridge, since, limit)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridge not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) handlePersistentTrafficBridges(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +472,7 @@ func (h *Handler) handlePersistentTrafficBridges(w http.ResponseWriter, r *http.
 		Bridge  string `json:"bridge"`
 		Enabled bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Bridge == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&body); err != nil || body.Bridge == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}

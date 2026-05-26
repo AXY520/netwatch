@@ -70,10 +70,43 @@ type AppTrafficSnapshot struct {
 	Note        string           `json:"note,omitempty"`
 }
 
+type AppTrafficLiveResult struct {
+	GeneratedAt string            `json:"generated_at"`
+	Bridge      AppBridgeStats    `json:"bridge"`
+	History     []AppTrafficPoint `json:"history"`
+	Note        string            `json:"note,omitempty"`
+}
+
 const (
 	sysClassNetDir  = "/sys/class/net"
 	lzcBridgePrefix = "lzc-br-"
 )
+
+func CollectBridgeTraffic(bridge string) (AppBridgeStats, bool) {
+	if !strings.HasPrefix(bridge, lzcBridgePrefix) {
+		return AppBridgeStats{}, false
+	}
+	statsPath := filepath.Join(sysClassNetDir, bridge, "statistics")
+	if _, err := os.Stat(statsPath); err != nil {
+		return AppBridgeStats{}, false
+	}
+	stats := AppBridgeStats{
+		Bridge:    bridge,
+		RxBytes:   readSysCounter(filepath.Join(statsPath, "rx_bytes")),
+		TxBytes:   readSysCounter(filepath.Join(statsPath, "tx_bytes")),
+		RxPackets: readSysCounter(filepath.Join(statsPath, "rx_packets")),
+		TxPackets: readSysCounter(filepath.Join(statsPath, "tx_packets")),
+		RxErrors:  readSysCounter(filepath.Join(statsPath, "rx_errors")),
+		TxErrors:  readSysCounter(filepath.Join(statsPath, "tx_errors")),
+		RxDropped: readSysCounter(filepath.Join(statsPath, "rx_dropped")),
+		TxDropped: readSysCounter(filepath.Join(statsPath, "tx_dropped")),
+	}
+	if addrs, ok := bridgeAddresses()[bridge]; ok {
+		stats.SubnetV4 = addrs.v4
+		stats.SubnetV6 = addrs.v6
+	}
+	return stats, true
+}
 
 // CollectAppTraffic enumerates all `lzc-br-*` bridges in the current network
 // namespace and reports their cumulative byte counters.
@@ -84,6 +117,14 @@ const (
 // Requires the calling process to share the host's network namespace
 // (`network_mode: host` in lzc-manifest.yml) — otherwise the bridges aren't
 // visible. NET_ADMIN is not strictly required just for /sys reads.
+// isNetwatchApp returns true if the bridge belongs to the netwatch app itself.
+func isNetwatchApp(info dockerlzc.BridgeAppInfo) bool {
+	if info.AppID == "cloud.lazycat.app.netwatch" || info.AppID == "netwatch" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(info.Project), "netwatch")
+}
+
 func CollectAppTraffic() AppTrafficSnapshot {
 	snap := AppTrafficSnapshot{GeneratedAt: localTimestamp()}
 	entries, err := os.ReadDir(sysClassNetDir)
@@ -147,6 +188,9 @@ func CollectAppTraffic() AppTrafficSnapshot {
 			stats.SubnetV6 = addrs.v6
 		}
 		if info, ok := bridgeMap[name]; ok {
+			if isNetwatchApp(info) {
+				continue
+			}
 			stats.AppID = info.AppID
 			stats.Project = info.Project
 			stats.ContainerCount = info.ContainerCount

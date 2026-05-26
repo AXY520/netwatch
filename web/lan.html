@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN" id="html-root">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NETWATCH // 局域网设备</title>
+    <script>
+        document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+    </script>
+    <script src="/i18n.js"></script>
+    <script src="/vendor/lazycat-sdk.js"></script>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+    <div id="toast" class="toast"></div>
+    <div id="lan-test-backdrop" class="window-backdrop"></div>
+    <div class="container traffic-page lan-page">
+        <header>
+            <div class="traffic-header-copy">
+                <div class="logo" id="lan-logo">NET<span>WATCH</span></div>
+                <div class="note">局域网设备发现与上线/下线观测</div>
+            </div>
+            <div class="controls">
+                <button id="theme-toggle" title="切换深浅模式">🌓</button>
+                <button id="lang-toggle" title="中文/English">🌐</button>
+                <a class="button-link" href="/" data-i18n="back_to_dashboard">返回仪表盘</a>
+                <a class="button-link" href="/traffic.html" data-i18n="traffic_analysis_btn">流量分析</a>
+                <button id="lan-open-settings" data-i18n="settings_btn">设置</button>
+                <button id="lan-refresh-btn" data-i18n="scan_btn">扫描</button>
+            </div>
+        </header>
+
+        <main class="system-layout">
+            <section class="card">
+                <div class="card-title">
+                    <span>设备列表</span>
+                    <span class="placeholder" id="lan-device-count">在线 0 台</span>
+                </div>
+                <table class="data-table system-table lan-device-table" id="lan-device-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="device_col">设备</th>
+                            <th data-i18n="status_col">状态</th>
+                            <th data-i18n="network_info_col">网络信息</th>
+                            <th data-i18n="last_seen_col">最后在线</th>
+                            <th data-i18n="action_col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </section>
+        </main>
+    </div>
+
+    <section class="floating-window" id="lan-settings-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="background_monitor">后台检测与通知</div>
+                <div class="note" id="lan-settings-status">未保存</div>
+            </div>
+            <div class="window-actions">
+                <button id="lan-settings-close" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div class="settings-layout lan-settings-layout">
+            <div class="settings-section lan-monitor-section">
+                <div class="table-subtitle" data-i18n="lan_device_list">局域网设备</div>
+                <div class="lan-ignored-section">
+                    <div class="table-subtitle">已忽略设备</div>
+                    <div id="lan-ignored-list" class="lan-ignored-list">
+                        <div class="placeholder">无已忽略设备</div>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-section lan-notify-section">
+                <div class="table-subtitle" data-i18n="notification_settings">通知设置</div>
+                <div class="settings-toggle">
+                    <input type="checkbox" id="lan-setting-notify-lan-device-change">
+                    <span data-i18n="notify_lan_device_change">局域网设备上线/下线通知</span>
+                </div>
+                <label class="settings-field">
+                    <span data-i18n="lan_device_offline_after">离线判定时间</span>
+                    <select id="lan-setting-offline-after-sec">
+                        <option value="60">1 分钟</option>
+                        <option value="120">2 分钟</option>
+                        <option value="180">3 分钟</option>
+                        <option value="300">5 分钟</option>
+                        <option value="600">10 分钟</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_device_online_after">上线判定时间</span>
+                    <select id="lan-setting-online-after-sec">
+                        <option value="0">立即判定</option>
+                        <option value="30">30 秒</option>
+                        <option value="60">1 分钟</option>
+                        <option value="120">2 分钟</option>
+                        <option value="300">5 分钟</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_device_offline_notify_delay">离线通知延迟</span>
+                    <select id="lan-setting-offline-notify-delay-sec">
+                        <option value="0">不启用延迟通知</option>
+                        <option value="120">2 分钟</option>
+                        <option value="180">3 分钟</option>
+                        <option value="300">5 分钟</option>
+                        <option value="600">10 分钟</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_device_online_notify_delay">上线通知延迟</span>
+                    <select id="lan-setting-online-notify-delay-sec">
+                        <option value="0">不启用延迟通知</option>
+                        <option value="120">2 分钟</option>
+                        <option value="300">5 分钟</option>
+                        <option value="600">10 分钟</option>
+                        <option value="900">15 分钟</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_max_check_attempts">离线确认次数</span>
+                    <select id="lan-setting-max-check-attempts">
+                        <option value="1">1 次（立即判定）</option>
+                        <option value="2">2 次</option>
+                        <option value="3">3 次（推荐）</option>
+                        <option value="5">5 次</option>
+                        <option value="10">10 次</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_notify_cooldown_sec">通知冷却时间</span>
+                    <select id="lan-setting-notify-cooldown-sec">
+                        <option value="60">1 分钟</option>
+                        <option value="180">3 分钟</option>
+                        <option value="300">5 分钟</option>
+                        <option value="600">10 分钟（推荐）</option>
+                        <option value="1800">30 分钟</option>
+                        <option value="3600">1 小时</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_flapping_threshold">抖动抑制阈值</span>
+                    <select id="lan-setting-flapping-threshold">
+                        <option value="3">3 次</option>
+                        <option value="5">5 次（推荐）</option>
+                        <option value="10">10 次</option>
+                        <option value="20">20 次</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_flapping_window_sec">抖动检测窗口</span>
+                    <select id="lan-setting-flapping-window-sec">
+                        <option value="300">5 分钟</option>
+                        <option value="600">10 分钟（推荐）</option>
+                        <option value="1800">30 分钟</option>
+                        <option value="3600">1 小时</option>
+                    </select>
+                </label>
+                <label class="settings-field">
+                    <span data-i18n="lan_device_auto_remove_days">自动清理离线设备</span>
+                    <select id="lan-setting-auto-remove-days">
+                        <option value="0">不自动清理</option>
+                        <option value="7">7 天后</option>
+                        <option value="14">14 天后</option>
+                        <option value="30">30 天后（推荐）</option>
+                        <option value="90">90 天后</option>
+                        <option value="180">180 天后</option>
+                    </select>
+                </label>
+                <div class="note" data-i18n="lan_detection_note">离线确认次数：连续未检测到设备多少次后才判定为离线，避免误报。通知冷却：同一设备两次通知之间的最短间隔。抖动抑制：在滑动窗口内状态变化超过阈值后，暂停该设备通知。自动清理：离线超过指定天数的设备将被自动移除，已标记和已忽略的设备不受影响。</div>
+                <div class="window-actions lan-settings-actions">
+                    <button id="lan-save-settings" data-i18n="save_btn">保存</button>
+                </div>
+            </div>
+        </div>
+        <div class="note" data-i18n="lan_monitor_note">完整后台检测间隔在首页设置中配置；这里仅控制局域网设备通知和判定时间。网卡连接/断开使用本地轻量状态检测，会及时更新并只发送网卡级通知。</div>
+    </section>
+
+    <section class="floating-window lan-note-window" id="lan-note-window">
+        <input id="lan-note-input" class="traffic-search" placeholder="备注">
+        <div class="window-actions">
+            <button id="lan-note-save">保存</button>
+            <button id="lan-note-cancel">取消</button>
+        </div>
+    </section>
+
+    <section class="floating-window lan-test-window" id="lan-notify-test-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title">通知测试</div>
+                <div class="note">用于验证当前客户端系统通知能力。这个入口通过连续点击 NETWATCH 5 次显示。</div>
+            </div>
+            <div class="window-actions">
+                <button id="lan-notify-test-close">关闭</button>
+            </div>
+        </div>
+        <div class="settings-layout">
+            <div class="settings-section">
+                <div class="table-subtitle">当前客户端通知</div>
+                <label class="settings-field">
+                    <span>标题</span>
+                    <input id="lan-notify-test-title" class="traffic-search" value="Netwatch 测试通知">
+                </label>
+                <label class="settings-field">
+                    <span>正文</span>
+                    <input id="lan-notify-test-body" class="traffic-search" value="如果你看到这条通知，说明客户端通知 API 可用。">
+                </label>
+                <button id="lan-notify-test-send">发送测试通知</button>
+                <div class="note">局域网设备上线/下线通知只会在设置里开启后台检测后自动触发；手动扫描不会推送系统通知。</div>
+            </div>
+        </div>
+    </section>
+
+    <script src="/lan.js"></script>
+</body>
+</html>

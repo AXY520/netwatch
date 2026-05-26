@@ -12,10 +12,21 @@ LPK="${PKG}-v${VER}.lpk"
 
 echo "==> 准备 ${LPK}"
 
-# 2) 修复 SDK 间接依赖（gitee.com/linakesi/lzc-baseos-protos / remotesocks）
-echo "==> 同步 Go 依赖"
-go get gitee.com/linakesi/lzc-sdk/lang/go@latest >/dev/null
-go mod tidy
+# 2) Go 依赖同步。默认只在 go.mod/go.sum 变化时执行，避免每次部署都拉依赖。
+#    如需强制刷新 SDK/依赖：FORCE_GO_DEPS=1 ./deploy.sh
+mkdir -p .cache
+DEPS_HASH_FILE=".cache/deploy-go-deps.sha"
+DEPS_HASH="$(sha256sum go.mod go.sum 2>/dev/null | sha256sum | awk '{print $1}')"
+OLD_DEPS_HASH="$(cat "${DEPS_HASH_FILE}" 2>/dev/null || true)"
+if [[ "${FORCE_GO_DEPS:-0}" == "1" || "${DEPS_HASH}" != "${OLD_DEPS_HASH}" ]]; then
+    echo "==> 同步 Go 依赖"
+    go mod download
+    go mod tidy
+    DEPS_HASH="$(sha256sum go.mod go.sum 2>/dev/null | sha256sum | awk '{print $1}')"
+    printf '%s\n' "${DEPS_HASH}" > "${DEPS_HASH_FILE}"
+else
+    echo "==> Go 依赖未变化，跳过同步"
+fi
 
 # 3) 编译 + 装配 dist/
 echo "==> 编译 dist/"
@@ -37,3 +48,5 @@ lzc-cli app install "./${LPK}"
 
 echo
 echo "✅ 部署完成: ${LPK}"
+
+echo "当前时间: $(date '+%Y-%m-%d %H:%M:%S')"

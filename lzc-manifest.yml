@@ -34,7 +34,6 @@ services:
       - LOCAL_TRANSFER_TEST_SEC=10
       - LOCAL_TRANSFER_PAYLOAD_MB=32
       - DATA_DIR=/app/data
-      - MONITORED_NICS=enp2s0,wlp4s0
     binds:
       - /lzcapp/var/data:/app/data
   proxy:

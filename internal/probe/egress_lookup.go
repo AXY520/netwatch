@@ -54,6 +54,8 @@ type egressProvider struct {
 // be classified differently by the upstream router; prefer a non-mainland
 // result when one is available, otherwise show the first valid result.
 var internationalEgressProviders = []egressProvider{
+	{name: "ifconfig.co", scope: "global", fetch: fetchIfconfigCO},
+	{name: "icanhazip.com", scope: "global", fetch: fetchICanHazIP},
 	{name: "ip.sb", scope: "global", fetch: fetchIPSB},
 	{name: "ipwho.is", scope: "global", fetch: fetchIPWhoIs},
 	{name: "ipinfo.io", scope: "global", fetch: fetchIPInfo},
@@ -90,6 +92,7 @@ func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 
 func pickInternationalEgress(candidates []EgressLookup) EgressLookup {
 	var firstValid EgressLookup
+	var firstUnknownCountry EgressLookup
 	var firstError EgressLookup
 	for _, item := range candidates {
 		if item.IP == "" {
@@ -101,9 +104,18 @@ func pickInternationalEgress(candidates []EgressLookup) EgressLookup {
 		if firstValid.Provider == "" {
 			firstValid = item
 		}
+		if strings.TrimSpace(item.Country) == "" {
+			if firstUnknownCountry.Provider == "" {
+				firstUnknownCountry = item
+			}
+			continue
+		}
 		if !isMainlandChina(item.Country) {
 			return item
 		}
+	}
+	if firstUnknownCountry.Provider != "" {
+		return firstUnknownCountry
 	}
 	if firstValid.Provider != "" {
 		return firstValid
@@ -129,6 +141,28 @@ func httpGetJSON(ctx context.Context, client *http.Client, url string, target an
 	return json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(target)
 }
 
+func httpGetText(ctx context.Context, client *http.Client, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 netwatch")
+	req.Header.Set("Accept", "text/plain")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
 // isMainlandChina returns true when a Country/location string clearly
 // resolves to mainland China.
 func isMainlandChina(country string) bool {
@@ -139,19 +173,61 @@ func isMainlandChina(country string) bool {
 	return strings.Contains(c, "中国") || strings.Contains(c, "China") || strings.EqualFold(c, "CN")
 }
 
+// --- ifconfig.co (global; often follows upstream overseas routing) ---
+
+type ifconfigCOResponse struct {
+	IP         string `json:"ip"`
+	Country    string `json:"country"`
+	CountryISO string `json:"country_iso"`
+	Region     string `json:"region_name"`
+	City       string `json:"city"`
+	ASN        string `json:"asn"`
+	ASNOrg     string `json:"asn_org"`
+}
+
+func fetchIfconfigCO(ctx context.Context) (EgressLookup, error) {
+	var p ifconfigCOResponse
+	if err := httpGetJSON(ctx, egressHTTPClient, "https://ifconfig.co/json", &p); err != nil {
+		return EgressLookup{}, err
+	}
+	ip := strings.TrimSpace(p.IP)
+	if ip == "" {
+		return EgressLookup{}, fmt.Errorf("ifconfig.co: empty ip")
+	}
+	return EgressLookup{
+		IP:      ip,
+		Country: firstNonEmpty(p.Country, p.CountryISO),
+		Region:  p.Region,
+		City:    p.City,
+		ASN:     p.ASN,
+		ISP:     p.ASNOrg,
+	}, nil
+}
+
+// --- icanhazip.com (plain global IP fallback) ---
+
+func fetchICanHazIP(ctx context.Context) (EgressLookup, error) {
+	ip, err := httpGetText(ctx, egressHTTPClient, "https://icanhazip.com")
+	if err != nil {
+		return EgressLookup{}, err
+	}
+	ip = strings.TrimSpace(ip)
+	if net.ParseIP(ip) == nil {
+		return EgressLookup{}, fmt.Errorf("icanhazip.com: invalid ip")
+	}
+	lookup := lookupIPLocation(ctx, ip, 4*time.Second)
+	return EgressLookup{
+		IP:      ip,
+		Country: lookup.Country,
+		Region:  lookup.Region,
+		City:    lookup.City,
+		ISP:     lookup.ISP,
+	}, nil
+}
+
 // --- cip.cc (domestic) ---
 
 func fetchCipCC(ctx context.Context) (EgressLookup, error) {
-	if out, err := fetchCipCCHTTP(ctx); err == nil {
-		return out, nil
-	}
-	if out, err := fetchZXINCEgress(ctx); err == nil {
-		return out, nil
-	}
-	return EgressLookup{}, fmt.Errorf("cip.cc and zxinc both failed")
-}
-
-func fetchCipCCHTTP(ctx context.Context) (EgressLookup, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://cip.cc", nil)
 	if err != nil {
 		return EgressLookup{}, err
@@ -173,33 +249,6 @@ func fetchCipCCHTTP(ctx context.Context) (EgressLookup, error) {
 	}
 
 	return parseCipCCResponse(string(body))
-}
-
-func fetchZXINCEgress(ctx context.Context) (EgressLookup, error) {
-	ip, err := fetchZXINCIP(ctx, 4)
-	if err != nil {
-		return EgressLookup{}, err
-	}
-	location, isp, err := fetchZXINCLocation(ctx, ip)
-	if err != nil {
-		return EgressLookup{IP: ip, Provider: "zxinc"}, nil
-	}
-	parts := strings.SplitN(location, " ", 2)
-	country := ""
-	region := ""
-	if len(parts) > 0 {
-		country = parts[0]
-	}
-	if len(parts) > 1 {
-		region = parts[1]
-	}
-	return EgressLookup{
-		IP:       ip,
-		Provider: "zxinc",
-		Country:  country,
-		Region:   region,
-		ISP:      isp,
-	}, nil
 }
 
 func parseCipCCResponse(text string) (EgressLookup, error) {
@@ -285,14 +334,17 @@ func fetchIPSB(ctx context.Context) (EgressLookup, error) {
 // --- ipwho.is (global, free, reliable) ---
 
 type ipwhoisResponse struct {
-	IP      string `json:"ip"`
-	Success bool   `json:"success"`
-	Country string `json:"country"`
-	Region  string `json:"region"`
-	City    string `json:"city"`
-	ISP     string `json:"connection.isp"`
-	ASN     string `json:"connection.asn"`
-	Message string `json:"message"`
+	IP         string `json:"ip"`
+	Success    bool   `json:"success"`
+	Country    string `json:"country"`
+	Region     string `json:"region"`
+	City       string `json:"city"`
+	Message    string `json:"message"`
+	Connection struct {
+		ISP string `json:"isp"`
+		Org string `json:"org"`
+		ASN int    `json:"asn"`
+	} `json:"connection"`
 }
 
 func fetchIPWhoIs(ctx context.Context) (EgressLookup, error) {
@@ -307,20 +359,17 @@ func fetchIPWhoIs(ctx context.Context) (EgressLookup, error) {
 	if ip == "" {
 		return EgressLookup{}, fmt.Errorf("ipwho.is: empty ip")
 	}
-	isp := p.ISP
-	if p.ASN != "" {
-		if isp != "" {
-			isp = "AS" + p.ASN + " · " + isp
-		} else {
-			isp = "AS" + p.ASN
-		}
+	asn := ""
+	if p.Connection.ASN > 0 {
+		asn = fmt.Sprintf("AS%d", p.Connection.ASN)
 	}
 	return EgressLookup{
 		IP:      ip,
 		Country: p.Country,
 		Region:  p.Region,
 		City:    p.City,
-		ISP:     isp,
+		ASN:     asn,
+		ISP:     firstNonEmpty(p.Connection.ISP, p.Connection.Org),
 	}, nil
 }
 
@@ -341,51 +390,5 @@ func fetchIPInfo(ctx context.Context) (EgressLookup, error) {
 		Region:  p.Region,
 		City:    p.City,
 		ISP:     p.Org,
-	}, nil
-}
-
-// --- ip-api.com (global fallback) ---
-
-type ipapiResponse struct {
-	Status     string  `json:"status"`
-	Message    string  `json:"message"`
-	Query      string  `json:"query"`
-	Country    string  `json:"country"`
-	RegionName string  `json:"regionName"`
-	City       string  `json:"city"`
-	ISP        string  `json:"isp"`
-	Org        string  `json:"org"`
-	AS         string  `json:"as"`
-}
-
-func fetchIPAPI(ctx context.Context) (EgressLookup, error) {
-	var p ipapiResponse
-	if err := httpGetJSON(ctx, egressHTTPClient, "http://ip-api.com/json", &p); err != nil {
-		return EgressLookup{}, err
-	}
-	if p.Status != "" && p.Status != "success" {
-		return EgressLookup{}, fmt.Errorf("ip-api.com: %s", firstNonEmpty(p.Message, p.Status))
-	}
-	ip := strings.TrimSpace(p.Query)
-	if ip == "" {
-		return EgressLookup{}, fmt.Errorf("ip-api.com: empty query ip")
-	}
-	isp := p.ISP
-	if isp == "" {
-		isp = p.Org
-	}
-	if p.AS != "" {
-		if isp != "" {
-			isp = p.AS + " · " + isp
-		} else {
-			isp = p.AS
-		}
-	}
-	return EgressLookup{
-		IP:      ip,
-		Country: p.Country,
-		Region:  p.RegionName,
-		City:    p.City,
-		ISP:     isp,
 	}, nil
 }

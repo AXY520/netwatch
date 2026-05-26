@@ -1,0 +1,14 @@
+services:
+  netwatch:
+    privileged: true
+    pid: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+      - SYS_ADMIN
+    volumes:
+      - /sys:/host/sys:ro
+      - /proc:/host/proc:ro
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /lzcsys/run/lzc-docker/docker.sock:/var/run/docker.sock:ro
+      - /lzcsys/data/system/pkgm/run:/lzcapp/run/pkgm:ro

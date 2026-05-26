@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"netwatch/internal/logger"
 )
 
 func (s *Service) loadHistory() {
@@ -25,13 +27,13 @@ func (s *Service) loadJSON(path string, target any) {
 	if err != nil {
 		return
 	}
-	_ = json.Unmarshal(body, target)
+	if err := json.Unmarshal(body, target); err != nil {
+		logger.Warn("loadJSON %s: %v", path, err)
+	}
 }
 
 func (s *Service) saveJSON(path string, payload any) {
-	body, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return
+	if err := writeJSONFile(path, payload, true); err != nil {
+		logger.Warn("saveJSON %s: %v", path, err)
 	}
-	_ = os.WriteFile(path, body, 0o644)
 }

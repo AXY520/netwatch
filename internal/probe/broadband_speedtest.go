@@ -19,6 +19,11 @@ import (
 
 const speedtestCNIDBaseURL = "https://raw.githubusercontent.com/spiritLHLS/speedtest.net-CN-ID/main"
 
+const (
+	maxOoklaPingCandidates        = 24
+	maxDomesticTCPProbeCandidates = 24
+)
+
 // 镜像按国内可达性排序：cdn0/cdn2 较稳定，cdn1/cdn3 经常超时放后面。
 var speedtestCNIDMirrors = []string{
 	speedtestCNIDBaseURL,
@@ -75,14 +80,22 @@ type domesticSpeedtestCandidate struct {
 	supplier string
 }
 
-func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, progress func(stage string, progress int, message string, partial BroadbandSpeedResult)) (BroadbandSpeedResult, bool) {
+type selectedSpeedtestServer struct {
+	server *speedtest.Server
+	source string
+}
+
+func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.Duration, progress func(stage string, progress int, message string, partial BroadbandSpeedResult)) (BroadbandSpeedResult, bool) {
 	if duration <= 0 {
 		duration = 15 * time.Second
 	}
-	s_ptr := ctx.Value("service").(*Service)
-	s_ptr.mu.RLock()
-	domesticOnly := s_ptr.cfg.BroadbandDomesticOnly
-	s_ptr.mu.RUnlock()
+	startedAt := time.Now()
+	domesticOnly := true
+	if svc != nil {
+		svc.mu.RLock()
+		domesticOnly = svc.cfg.BroadbandDomesticOnly
+		svc.mu.RUnlock()
+	}
 
 	result := BroadbandSpeedResult{
 		Timestamp: localTimestamp(),
@@ -108,6 +121,15 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 		defer resultMu.Unlock()
 		return result
 	}
+	fail := func(stage, reason string) (BroadbandSpeedResult, bool) {
+		setResult(func(r *BroadbandSpeedResult) {
+			r.FailureStage = stage
+			r.FailureReason = reason
+			r.Error = reason
+			r.StageDurations.TotalMS = elapsedMS(startedAt)
+		})
+		return currentResult(), false
+	}
 
 	report("starting", 2, "正在初始化测速引擎")
 	stClient := speedtest.New()
@@ -115,20 +137,22 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	stClient.SetRateCaptureFrequency(250 * time.Millisecond)
 
 	var server *speedtest.Server
+	nodeStartedAt := time.Now()
 
 	if domesticOnly {
 		report("starting", 5, "正在检索国内优质运营商节点")
-		server = selectDomesticSpeedtestServer(ctx, stClient, s_ptr)
-		if server != nil {
+		selected := selectDomesticSpeedtestServer(ctx, stClient, svc)
+		if selected != nil {
+			server = selected.server
 			// 确保 server.Context 指向设置了回调的 stClient，
 			// 否则 Download/Upload 回调不会触发（实时进度丢失）。
 			server.Context = stClient
+			setResult(func(r *BroadbandSpeedResult) {
+				r.NodeSource = selected.source
+			})
 		}
 		if server == nil {
-			setResult(func(r *BroadbandSpeedResult) {
-				r.Error = "未找到可用的国内 Speedtest 节点"
-			})
-			return currentResult(), false
+			return fail("node_selection", "未找到可用的国内 Speedtest 节点")
 		}
 	} else {
 		report("starting", 10, "正在寻找最近的响应节点")
@@ -137,29 +161,40 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 			targets, _ := serverList.FindServer([]int{})
 			if len(targets) > 0 {
 				server = targets[0]
+				setResult(func(r *BroadbandSpeedResult) {
+					r.NodeSource = "Ookla 最近节点"
+				})
 			}
 		}
 	}
+	nodeSelectionMS := elapsedMS(nodeStartedAt)
+	setResult(func(r *BroadbandSpeedResult) {
+		r.StageDurations.NodeSelectionMS = nodeSelectionMS
+	})
 
 	if server == nil {
-		setResult(func(r *BroadbandSpeedResult) {
-			r.Error = "无法连接到测速服务器"
-		})
-		return currentResult(), false
+		return fail("node_selection", "无法连接到测速服务器")
 	}
 
 	setResult(func(r *BroadbandSpeedResult) {
 		r.Provider = server.Sponsor
 		r.ServerRegion = fmt.Sprintf("%s · %s", server.Name, server.Country)
+		r.ServerID = server.ID
+		r.ServerName = server.Name
+		r.ServerCountry = server.Country
+		r.ServerHost = server.Host
+		r.DomesticNode = isChinaSpeedtestServer(server)
 	})
 	report("latency", 15, fmt.Sprintf("已选节点：%s (%s)", server.Sponsor, server.Name))
 
+	latencyStartedAt := time.Now()
 	_ = server.PingTestContext(ctx, nil)
 	latencyMS := int64(server.Latency.Milliseconds())
 	jitterMS := int64(server.Jitter.Milliseconds())
 	setResult(func(r *BroadbandSpeedResult) {
 		r.LatencyMS = latencyMS
 		r.JitterMS = jitterMS
+		r.StageDurations.LatencyTestMS = elapsedMS(latencyStartedAt)
 	})
 	report("latency", 25, fmt.Sprintf("延迟 %d ms · 抖动 %d ms", latencyMS, jitterMS))
 
@@ -180,14 +215,15 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	err := server.DownloadTestContext(ctx)
 	stClient.SetCallbackDownload(nil)
 	if err != nil {
-		setResult(func(r *BroadbandSpeedResult) {
-			r.Error = "下载测试失败: " + err.Error()
-		})
-		return currentResult(), false
+		return fail("download", "下载测试失败: "+err.Error())
 	}
-	downloadMbps := server.DLSpeed.Mbps()
+	downloadMbps := validSpeedMbps(server.DLSpeed.Mbps(), currentResult().DownloadMbps)
+	if downloadMbps <= 0 {
+		return fail("download", "下载测试未获取到有效速度样本")
+	}
 	setResult(func(r *BroadbandSpeedResult) {
 		r.DownloadMbps = downloadMbps
+		r.StageDurations.DownloadTestMS = elapsedMS(downloadStart)
 	})
 	report("download", 60, fmt.Sprintf("下载完成 %.1f Mbps", downloadMbps))
 
@@ -208,19 +244,21 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 	err = server.UploadTestContext(ctx)
 	stClient.SetCallbackUpload(nil)
 	if err != nil {
-		setResult(func(r *BroadbandSpeedResult) {
-			r.Error = "上传测试失败: " + err.Error()
-		})
-		return currentResult(), false
+		return fail("upload", "上传测试失败: "+err.Error())
 	}
-	uploadMbps := server.ULSpeed.Mbps()
+	uploadMbps := validSpeedMbps(server.ULSpeed.Mbps(), currentResult().UploadMbps)
+	if uploadMbps <= 0 {
+		return fail("upload", "上传测试未获取到有效速度样本")
+	}
 	setResult(func(r *BroadbandSpeedResult) {
 		r.UploadMbps = uploadMbps
+		r.StageDurations.UploadTestMS = elapsedMS(uploadStart)
 	})
 	report("upload", 95, fmt.Sprintf("上传完成 %.1f Mbps", uploadMbps))
 
 	setResult(func(r *BroadbandSpeedResult) {
 		r.Timestamp = localTimestamp()
+		r.StageDurations.TotalMS = elapsedMS(startedAt)
 	})
 	report("finalizing", 100, "测速全部完成")
 
@@ -234,28 +272,31 @@ func executeBroadbandSpeedTest(ctx context.Context, duration time.Duration, prog
 //  4. 内置扩展兜底列表
 //
 // 任一策略找到可用节点即返回，不继续尝试后续策略。
-func selectDomesticSpeedtestServer(ctx context.Context, stClient *speedtest.Speedtest, svc *Service) *speedtest.Server {
+func selectDomesticSpeedtestServer(ctx context.Context, stClient *speedtest.Speedtest, svc *Service) *selectedSpeedtestServer {
 	preferredISP := detectPreferredDomesticISP(ctx, svc)
 	logger.Info("broadband: preferred domestic isp=%q", preferredISP)
 
 	// 策略 1: Ookla API 关键词搜索
 	if s := selectDomesticViaOoklaKeyword(ctx, preferredISP); s != nil {
-		return s
+		return &selectedSpeedtestServer{server: s, source: "Ookla 关键词"}
 	}
 
 	// 策略 2: Ookla API 坐标搜索
 	if s := selectDomesticViaOoklaLocation(ctx, preferredISP); s != nil {
-		return s
+		return &selectedSpeedtestServer{server: s, source: "Ookla 坐标"}
 	}
 
 	// 策略 3: spiritLHLS CSV 远程列表
 	if s := selectDomesticViaCSV(ctx, stClient, preferredISP); s != nil {
-		return s
+		return &selectedSpeedtestServer{server: s, source: "国内节点列表"}
 	}
 
 	// 策略 4: 内置兜底列表
 	logger.Warn("broadband: all remote sources failed, using embedded fallback list")
-	return selectDomesticFromCandidates(ctx, stClient, fallbackDomesticSpeedtestCandidates, preferredISP)
+	if s := selectDomesticFromCandidates(ctx, stClient, fallbackDomesticSpeedtestCandidates, preferredISP); s != nil {
+		return &selectedSpeedtestServer{server: s, source: "内置兜底"}
+	}
+	return nil
 }
 
 // selectDomesticViaOoklaKeyword 用 Ookla API 的 search=China 关键词搜索。
@@ -377,6 +418,10 @@ func pickBestChinaServer(ctx context.Context, servers speedtest.Servers, preferr
 			logger.Info("broadband: ISP-matched %d servers for isp=%s", len(matched), preferredISP)
 		}
 	}
+	if len(servers) > maxOoklaPingCandidates {
+		logger.Info("broadband: limiting Ookla ping candidates from %d to %d", len(servers), maxOoklaPingCandidates)
+		servers = servers[:maxOoklaPingCandidates]
+	}
 
 	var best *speedtest.Server
 	for _, s := range servers {
@@ -487,59 +532,72 @@ func fetchDomesticSpeedtestCandidates(ctx context.Context) []domesticSpeedtestCa
 }
 
 func fetchDomesticSpeedtestCSV(ctx context.Context, source domesticSpeedtestSource) []domesticSpeedtestCandidate {
-	for _, base := range speedtestCNIDMirrors {
-		reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, base+"/"+source.file, nil)
-		if err != nil {
-			cancel()
-			continue
-		}
-		resp, err := domesticSpeedtestHTTPClient.Do(req)
-		if err != nil || resp == nil {
-			if err != nil {
-				logger.Warn("broadband: fetch csv failed source=%s base=%s err=%v", source.file, base, err)
-			}
-			cancel()
-			continue
-		}
-		if resp.StatusCode >= 400 {
-			logger.Warn("broadband: fetch csv bad status source=%s base=%s status=%d", source.file, base, resp.StatusCode)
-			_ = resp.Body.Close()
-			cancel()
-			continue
-		}
-
-		reader := csv.NewReader(resp.Body)
-		reader.FieldsPerRecord = -1
-		records, err := reader.ReadAll()
-		_ = resp.Body.Close()
-		cancel()
-		if err != nil {
-			logger.Warn("broadband: parse csv failed source=%s base=%s err=%v", source.file, base, err)
-			continue
-		}
-
-		var out []domesticSpeedtestCandidate
-		for _, record := range records {
-			if len(record) < 8 || record[0] == "id" || record[2] != "China" {
-				continue
-			}
-			out = append(out, domesticSpeedtestCandidate{
-				id:       record[0],
-				isp:      source.isp,
-				city:     record[3],
-				host:     record[5],
-				port:     record[6],
-				supplier: record[7],
-			})
-		}
-		if len(out) > 0 {
-			logger.Info("broadband: fetched csv source=%s base=%s count=%d", source.file, base, len(out))
-			return out
-		}
+	type result struct {
+		candidates []domesticSpeedtestCandidate
+		base      string
 	}
-	logger.Warn("broadband: no valid candidates from source=%s", source.file)
-	return nil
+	ch := make(chan result, len(speedtestCNIDMirrors))
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	for _, base := range speedtestCNIDMirrors {
+		base := base
+		go func() {
+			reqCtx, reqCancel := context.WithTimeout(ctx, 8*time.Second)
+			defer reqCancel()
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, base+"/"+source.file, nil)
+			if err != nil {
+				return
+			}
+			resp, err := domesticSpeedtestHTTPClient.Do(req)
+			if err != nil || resp == nil {
+				if err != nil {
+					logger.Warn("broadband: fetch csv failed source=%s base=%s err=%v", source.file, base, err)
+				}
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode >= 400 {
+				logger.Warn("broadband: fetch csv bad status source=%s base=%s status=%d", source.file, base, resp.StatusCode)
+				return
+			}
+
+			reader := csv.NewReader(resp.Body)
+			reader.FieldsPerRecord = -1
+			records, err := reader.ReadAll()
+			if err != nil {
+				logger.Warn("broadband: parse csv failed source=%s base=%s err=%v", source.file, base, err)
+				return
+			}
+
+			var out []domesticSpeedtestCandidate
+			for _, record := range records {
+				if len(record) < 8 || record[0] == "id" || record[2] != "China" {
+					continue
+				}
+				out = append(out, domesticSpeedtestCandidate{
+					id:       record[0],
+					isp:      source.isp,
+					city:     record[3],
+					host:     record[5],
+					port:     record[6],
+					supplier: record[7],
+				})
+			}
+			if len(out) > 0 {
+				logger.Info("broadband: fetched csv source=%s base=%s count=%d", source.file, base, len(out))
+				ch <- result{candidates: out, base: base}
+			}
+		}()
+	}
+
+	select {
+	case r := <-ch:
+		return r.candidates
+	case <-ctx.Done():
+		logger.Warn("broadband: no valid candidates from source=%s (concurrent, %d mirrors attempted)", source.file, len(speedtestCNIDMirrors))
+		return nil
+	}
 }
 
 func nearestDomesticSpeedtestCandidates(ctx context.Context, candidates []domesticSpeedtestCandidate, perISP int) []domesticSpeedtestCandidate {
@@ -555,6 +613,9 @@ func nearestDomesticSpeedtestCandidates(ctx context.Context, candidates []domest
 	var selected []domesticSpeedtestCandidate
 	for _, source := range domesticSpeedtestSources {
 		items := grouped[source.isp]
+		if len(items) > maxDomesticTCPProbeCandidates {
+			items = items[:maxDomesticTCPProbeCandidates]
+		}
 		latencies := make(map[string]time.Duration, len(items))
 		for _, item := range items {
 			latencies[item.id] = pingDomesticCandidate(ctx, item)

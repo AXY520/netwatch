@@ -18,8 +18,6 @@ services:
       # 宽带 / 本机传输测速时长（下载和上传各持续 N 秒）
       BROADBAND_TEST_SEC: "15"
       LOCAL_TRANSFER_TEST_SEC: "10"
-      # 需要实时监控速率的网卡名（逗号分隔），宿主机 `ls /sys/class/net` 可查
-      MONITORED_NICS: "enp2s0,wlp4s0"
       # 网站连通性目标，格式 Name|URL，逗号分隔
       # DOMESTIC_SITES: "Baidu|https://www.baidu.com,Bilibili|https://www.bilibili.com"
       # GLOBAL_SITES: "GitHub|https://github.com,YouTube|https://www.youtube.com"

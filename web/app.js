@@ -1,3 +1,4 @@
+(function () {
 const state = {
             theme: localStorage.getItem('theme') || 'dark',
             refreshInterval: 10,
@@ -16,31 +17,51 @@ const state = {
             },
             settings: {
                 refresh_interval_sec: 10,
-                auto_refresh_enabled: false,
                 broadband_domestic_only: true,
                 nic_realtime_enabled: true,
                 nic_realtime_interval_sec: 1,
-                app_detail_interval_sec: 10,
                 chart_time_label_interval: 0,
                 traffic_sampling_enabled: true,
                 traffic_sampling_interval_sec: 60,
                 per_app_sampling_interval: {},
-                persistent_traffic_bridges: []
+                persistent_traffic_bridges: [],
+                background_monitor_enabled: false,
+                background_monitor_interval_sec: 60,
+                notifications_enabled: false,
+                client_notification_enabled: true,
+                notify_abnormal_traffic: true,
+                notify_egress_change: true,
+                notify_connectivity_change: true,
+                notify_lan_device_change: true,
+                abnormal_traffic_threshold_mbps: 100,
+                bark_enabled: false,
+                bark_server_url: 'https://api.day.app',
+                bark_device_key: '',
+                bark_group: 'Netwatch',
+                dnd_enabled: false,
+                dnd_start: '22:00',
+                dnd_end: '08:00',
+                scheduled_notify_enabled: false,
+                scheduled_notify_time: '09:00'
             },
             activeWindow: null,
             runningTest: null,
             broadbandPoller: null,
             transferAbortController: null,
             nicRealtimeInterval: null,
-            refreshTimer: null,
             sse: null,
             initialized: false,
             settingsInitialized: false,
             egressInitialized: false,
             nicRealtimeInitialized: false,
-            autoRefreshInitialized: false,
             traceInitialized: false,
             controlsBound: false,
+            notificationPoller: null,
+            notificationLastID: Number(localStorage.getItem('netwatch_notification_last_id') || '0') || 0,
+            lzcGatewayPromise: null,
+            notificationUnsupported: localStorage.getItem('netwatch_notification_unsupported') === 'true',
+            modalScrollY: 0,
+            modalLockCount: 0,
             appTrafficSort: {
                 key: 'total',
                 direction: 'desc'
@@ -49,24 +70,16 @@ const state = {
 
         const elements = {
             themeToggle: document.getElementById('theme-toggle'),
-            lastUpdate: document.getElementById('last-update'),
-            timerBar: document.getElementById('timer-bar'),
             refreshBtn: document.getElementById('refresh-btn'),
             overlay: document.getElementById('loading-overlay'),
             websiteRefreshBtn: document.getElementById('website-refresh-btn'),
             websiteStatus: document.getElementById('website-status'),
-            networkStatus: document.getElementById('network-status'),
             domesticTable: document.querySelector('#domestic-table tbody'),
             globalTable: document.querySelector('#global-table tbody'),
             interfacesTable: document.querySelector('#interfaces-table tbody'),
-            valHostname: document.getElementById('val-hostname'),
-            valIPv4: document.getElementById('val-ipv4'),
-            valIPv4Region: document.getElementById('val-ipv4-region'),
-            valIPv6: document.getElementById('val-ipv6'),
-            valIPv6Region: document.getElementById('val-ipv6-region'),
             valGw4: document.getElementById('val-gw4'),
-            valGw6: document.getElementById('val-gw6'),
             valPlatformConnectivity: document.getElementById('val-platform-connectivity'),
+            nicRealtimeRefreshBtn: document.getElementById('nic-realtime-refresh-btn'),
             backdrop: document.getElementById('window-backdrop'),
             traceBackdrop: document.getElementById('trace-window-backdrop'),
             openSettingsWindow: document.getElementById('open-settings-window'),
@@ -81,18 +94,33 @@ const state = {
             transferWindow: document.getElementById('transfer-window'),
             traceWindow: document.getElementById('trace-window'),
             saveSettings: document.getElementById('save-settings'),
-            settingAutoRefreshEnabled: document.getElementById('setting-auto-refresh-enabled'),
-            settingRefreshIntervalSec: document.getElementById('setting-refresh-interval-sec'),
             settingBroadbandDomesticOnly: document.getElementById('setting-broadband-domestic-only'),
             settingNICRealtimeEnabled: document.getElementById('setting-nic-realtime-enabled'),
             settingNICRealtimeIntervalSec: document.getElementById('setting-nic-realtime-interval-sec'),
+            settingBackgroundMonitorEnabled: document.getElementById('setting-background-monitor-enabled'),
+            settingBackgroundMonitorIntervalSec: document.getElementById('setting-background-monitor-interval-sec'),
+            settingNotificationsEnabled: document.getElementById('setting-notifications-enabled'),
+            settingClientNotificationEnabled: document.getElementById('setting-client-notification-enabled'),
+            settingNotifyAbnormalTraffic: document.getElementById('setting-notify-abnormal-traffic'),
+            settingAbnormalTrafficThresholdMbps: document.getElementById('setting-abnormal-traffic-threshold-mbps'),
+            settingNotifyEgressChange: document.getElementById('setting-notify-egress-change'),
+            settingNotifyConnectivityChange: document.getElementById('setting-notify-connectivity-change'),
+            settingNotifyLANDeviceChange: document.getElementById('setting-notify-lan-device-change'),
+            settingBarkEnabled: document.getElementById('setting-bark-enabled'),
+            settingBarkServerURL: document.getElementById('setting-bark-server-url'),
+            settingBarkDeviceKey: document.getElementById('setting-bark-device-key'),
+            settingBarkGroup: document.getElementById('setting-bark-group'),
+            testBarkNotification: document.getElementById('test-bark-notification'),
+            settingDNDEnabled: document.getElementById('setting-dnd-enabled'),
+            settingDNDStart: document.getElementById('setting-dnd-start'),
+            settingDNDEnd: document.getElementById('setting-dnd-end'),
+            settingScheduledNotifyEnabled: document.getElementById('setting-scheduled-notify-enabled'),
+            settingScheduledNotifyTime: document.getElementById('setting-scheduled-notify-time'),
             broadbandNote: document.getElementById('broadband-note'),
             transferNote: document.getElementById('transfer-note'),
             runBroadbandTest: document.getElementById('run-broadband-test'),
             runTransferTest: document.getElementById('run-transfer-test'),
             broadbandPrimaryMode: document.getElementById('broadband-primary-mode'),
-            broadbandPrimarySpeed: document.getElementById('broadband-primary-speed'),
-            broadbandPrimaryUnit: document.getElementById('broadband-primary-unit'),
             broadbandPrimaryCaption: document.getElementById('broadband-primary-caption'),
             broadbandStage: document.getElementById('broadband-stage'),
             broadbandProgress: document.getElementById('broadband-progress'),
@@ -100,9 +128,18 @@ const state = {
             broadbandUpload: document.getElementById('broadband-upload'),
             broadbandLatency: document.getElementById('broadband-latency'),
             broadbandJitter: document.getElementById('broadband-jitter'),
+            broadbandNodeName: document.getElementById('broadband-node-name'),
+            broadbandNodeProvider: document.getElementById('broadband-node-provider'),
+            broadbandNodeRegion: document.getElementById('broadband-node-region'),
+            broadbandNodeSource: document.getElementById('broadband-node-source'),
+            broadbandDurationNode: document.getElementById('broadband-duration-node'),
+            broadbandDurationLatency: document.getElementById('broadband-duration-latency'),
+            broadbandDurationDownload: document.getElementById('broadband-duration-download'),
+            broadbandDurationUpload: document.getElementById('broadband-duration-upload'),
+            broadbandDurationTotal: document.getElementById('broadband-duration-total'),
+            broadbandFailureStage: document.getElementById('broadband-failure-stage'),
+            broadbandFailureReason: document.getElementById('broadband-failure-reason'),
             transferPrimaryMode: document.getElementById('transfer-primary-mode'),
-            transferPrimarySpeed: document.getElementById('transfer-primary-speed'),
-            transferPrimaryUnit: document.getElementById('transfer-primary-unit'),
             transferPrimaryCaption: document.getElementById('transfer-primary-caption'),
             transferStage: document.getElementById('transfer-stage'),
             transferProgress: document.getElementById('transfer-progress'),
@@ -110,11 +147,21 @@ const state = {
             transferUpload: document.getElementById('transfer-upload'),
             transferLatency: document.getElementById('transfer-latency'),
             transferJitter: document.getElementById('transfer-jitter'),
+            transferRTTMin: document.getElementById('transfer-rtt-min'),
+            transferRTTAvg: document.getElementById('transfer-rtt-avg'),
+            transferRTTMax: document.getElementById('transfer-rtt-max'),
+            transferRTTJitter: document.getElementById('transfer-rtt-jitter'),
+            transferDownloadBytes: document.getElementById('transfer-download-bytes'),
+            transferUploadBytes: document.getElementById('transfer-upload-bytes'),
+            transferTotalBytes: document.getElementById('transfer-total-bytes'),
+            transferDuration: document.getElementById('transfer-duration'),
             broadbandHistory: document.getElementById('broadband-history'),
             transferHistory: document.getElementById('transfer-history')
         };
 
-function initTheme() {
+const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
+
+        function initTheme() {
             if (state.themeInitialized) return;
             state.themeInitialized = true;
             document.documentElement.setAttribute('data-theme', state.theme);
@@ -138,23 +185,14 @@ function initTheme() {
             setTimeout(() => toast.classList.remove('show'), ms);
         }
 
-        const statusMap = { ok: '正常', down: '故障', degraded: '降级', unknown: '未知' };
-        const natLabelMap = {
-            full_cone: '全锥形',
-            restricted_cone: '受限锥形',
-            port_restricted_cone: '端口受限锥形',
-            symmetric: '对称型',
-            unknown: '未知'
-        };
-        const broadbandStageMap = {
-            starting: '准备中',
-            latency: '延迟采样',
-            download: '下载测速',
-            upload: '上传测速',
-            finalizing: '整理结果',
-            complete: '已完成',
-            canceled: '已停止',
-            error: '失败'
+        const statusMap = { ok: i18n('ok'), down: i18n('down'), degraded: i18n('degraded'), unknown: i18n('unknown') };
+        const broadbandStageMap = { starting: i18n('starting'), latency: i18n('latency'), download: i18n('download'), upload: i18n('upload'), finalizing: i18n('finalizing'), complete: i18n('complete'), canceled: i18n('canceled'), error: i18n('error') };
+        const broadbandFailureStageMap = {
+            node_selection: i18n('select_node'),
+            latency: i18n('latency'),
+            download: i18n('download'),
+            upload: i18n('upload'),
+            timeout: i18n('timeout')
         };
 
         function getIconUrl(name) {
@@ -163,12 +201,65 @@ function initTheme() {
             return localIcons.includes(lowerName) ? `/icons/${lowerName}.ico` : '/icons/default.ico';
         }
 
-        function formatRegion(region) {
-            if (!region) return '未知';
-            const parts = [region.country, region.region, region.city].filter(Boolean);
-            const place = parts.join(' / ');
-            if (region.isp) return place ? `${place} (${region.isp})` : region.isp;
-            return place || '未知';
+        const countryNameZh = {
+            'united states': '美国',
+            'usa': '美国',
+            'us': '美国',
+            'china': '中国',
+            'cn': '中国',
+            'hong kong': '中国香港',
+            'taiwan': '中国台湾',
+            'japan': '日本',
+            'singapore': '新加坡',
+            'south korea': '韩国',
+            'korea, republic of': '韩国',
+            'germany': '德国',
+            'united kingdom': '英国',
+            'france': '法国',
+            'netherlands': '荷兰',
+            'canada': '加拿大',
+            'australia': '澳大利亚'
+        };
+
+        const regionNameZh = {
+            'california': '加利福尼亚州',
+            'new york': '纽约州',
+            'washington': '华盛顿州',
+            'oregon': '俄勒冈州',
+            'texas': '得克萨斯州',
+            'illinois': '伊利诺伊州',
+            'virginia': '弗吉尼亚州'
+        };
+
+        const cityNameZh = {
+            'los angeles': '洛杉矶',
+            'new york city': '纽约市',
+            'new york': '纽约',
+            'san jose': '圣何塞',
+            'san francisco': '旧金山',
+            'seattle': '西雅图',
+            'chicago': '芝加哥',
+            'ashburn': '阿什本',
+            'tokyo': '东京',
+            'osaka': '大阪',
+            'seoul': '首尔',
+            'singapore': '新加坡',
+            'frankfurt': '法兰克福',
+            'london': '伦敦',
+            'paris': '巴黎',
+            'amsterdam': '阿姆斯特丹',
+            'toronto': '多伦多',
+            'sydney': '悉尼'
+        };
+
+        function translateGeoName(value, kind) {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            const key = raw.toLowerCase();
+            if (kind === 'country') return countryNameZh[key] || raw;
+            if (kind === 'region') return regionNameZh[key] || raw;
+            if (kind === 'city') return cityNameZh[key] || raw;
+            return countryNameZh[key] || regionNameZh[key] || cityNameZh[key] || raw;
         }
 
         function formatMbps(value) {
@@ -189,28 +280,56 @@ function initTheme() {
             return Number.isFinite(value) && value > 0 ? `${Math.round(value)} ms` : '--';
         }
 
-        function gaugeMax(value, unit) {
-            if (unit === 'ms') {
-                if (!Number.isFinite(value) || value <= 0) return 200;
-                if (value <= 50) return 50;
-                if (value <= 100) return 100;
-                if (value <= 200) return 200;
-                return 500;
-            }
-            if (!Number.isFinite(value) || value <= 0) return 1000;
-            if (value <= 100) return 100;
-            if (value <= 200) return 200;
-            if (value <= 500) return 500;
-            if (value <= 1000) return 1000;
-            if (value <= 2000) return 2000;
-            return 5000;
+        function formatDurationMS(value) {
+            const ms = Number(value);
+            if (!Number.isFinite(ms) || ms <= 0) return '--';
+            if (ms < 1000) return `${Math.round(ms)} ms`;
+            return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
         }
 
-        function setPrimaryGauge(ringEl, modeEl, speedEl, unitEl, captionEl, value, unit, mode, caption) {
-            const max = gaugeMax(value, unit);
-            const safeValue = Number.isFinite(value) && value > 0 ? value : 0;
-            const ratio = Math.max(0, Math.min(1, safeValue / max));
-            if (ringEl) ringEl.style.setProperty('--dial-progress', `${ratio * 100}%`);
+        function formatMB(value) {
+            const mb = Number(value);
+            if (!Number.isFinite(mb) || mb <= 0) return '--';
+            return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+        }
+
+        function bytesToMB(value) {
+            const bytes = Number(value);
+            if (!Number.isFinite(bytes) || bytes <= 0) return 0;
+            return bytes / 1024 / 1024;
+        }
+
+        function setText(el, value = '--') {
+            if (el) el.textContent = value || '--';
+        }
+
+        function finiteNumber(value, fallback = 0) {
+            const number = parseFloat(value);
+            return Number.isFinite(number) ? number : fallback;
+        }
+
+        function summarizeRTT(samples = []) {
+            const values = samples.map(Number).filter(v => Number.isFinite(v) && v > 0);
+            if (!values.length) {
+                return { min: 0, avg: 0, max: 0 };
+            }
+            const sum = values.reduce((acc, value) => acc + value, 0);
+            return {
+                min: Math.round(Math.min(...values)),
+                avg: Math.round(sum / values.length),
+                max: Math.round(Math.max(...values))
+            };
+        }
+
+        function finishTransferRun() {
+            if (state.runningTest === 'transfer') {
+                state.runningTest = null;
+            }
+            state.transferAbortController = null;
+            updateWindowControls();
+        }
+
+        function setPrimaryStatus(modeEl, captionEl, mode, caption) {
             if (modeEl) {
                 modeEl.textContent = mode;
                 modeEl.classList.remove('active', 'done', 'error');
@@ -218,17 +337,16 @@ function initTheme() {
                 else if (mode === 'Result') modeEl.classList.add('done');
                 else if (mode === 'Stopped') modeEl.classList.add('error');
             }
-            if (speedEl) speedEl.textContent = Number.isFinite(value) && value > 0 ? value.toFixed(unit === 'ms' ? 0 : 1) : '--';
-            if (unitEl) unitEl.textContent = unit.toUpperCase();
             if (captionEl) captionEl.textContent = caption || '';
 
-            const scope = ringEl && ringEl.id && ringEl.id.startsWith('broadband') ? 'broadband' : 'transfer';
+        }
+
+        function setSpeedPanelMode(scope, mode) {
             const dlPanel = document.getElementById(`${scope}-panel-download`);
             const upPanel = document.getElementById(`${scope}-panel-upload`);
-            if (dlPanel && upPanel) {
-                dlPanel.classList.toggle('active', mode === 'Download');
-                upPanel.classList.toggle('active', mode === 'Upload');
-            }
+            if (!dlPanel || !upPanel) return;
+            dlPanel.classList.toggle('active', mode === 'Download');
+            upPanel.classList.toggle('active', mode === 'Upload');
         }
 
         function createSpeedSampler() {
@@ -307,7 +425,7 @@ function initTheme() {
 
         function updateConnectivityTable(tbody, items) {
             if (!Array.isArray(items) || items.length === 0) {
-                renderPlaceholderTable(tbody, '暂无检测结果');
+                renderPlaceholderTable(tbody, i18n('no_results'));
                 return;
             }
 
@@ -317,24 +435,19 @@ function initTheme() {
                     <td>
                         <div class="target-info">
                             <img class="site-icon" src="${getIconUrl(item.name)}" onerror="this.src='/icons/default.ico'">
-                            <span>${item.name}</span>
+                            <span>${escapeHtml(item.name)}</span>
                         </div>
                     </td>
-                    <td><span class="nat-badge ${getStatusClass(item.status)}">${statusMap[item.status] || '未知'}</span></td>
-                    <td class="latency ${item.latency_ms > 200 ? 'high' : (item.latency_ms === 0 ? 'down' : '')}">
-                        ${item.latency_ms > 0 ? `${item.latency_ms} ms` : '连接失败'}
+                    <td data-label="${i18n('status_col')}"><span class="nat-badge ${getStatusClass(item.status)}">${statusMap[item.status] || i18n('unknown')}</span></td>
+                    <td data-label="${i18n('latency_col')}" class="latency ${item.latency_ms > 200 ? 'high' : (item.latency_ms === 0 ? 'down' : '')}">
+                        ${item.latency_ms > 0 ? `${item.latency_ms} ms` : i18n('connection_failed')}
                     </td>
                 </tr>`;
             }).join('');
         }
 
         function renderNetworkInfo(networkInfo = {}) {
-            elements.valIPv4.textContent = networkInfo.egress_ipv4 || '无公网 IPv4';
-            elements.valIPv4Region.textContent = formatRegion(networkInfo.egress_ipv4_region);
-            elements.valIPv6.textContent = networkInfo.egress_ipv6 || '无公网 IPv6';
-            elements.valIPv6Region.textContent = formatRegion(networkInfo.egress_ipv6_region);
-            elements.valGw4.textContent = networkInfo.default_ipv4?.gateway || '未知';
-            elements.valGw6.textContent = networkInfo.default_ipv6?.gateway || '未知';
+            elements.valGw4.textContent = networkInfo.default_ipv4?.gateway || i18n('unknown');
 
             if (elements.valPlatformConnectivity) {
                 elements.valPlatformConnectivity.textContent = formatPlatformConnectivity(networkInfo);
@@ -360,29 +473,29 @@ function initTheme() {
                     <tr>
                         <td class="col-iface">${mainLabel}${subtitle}</td>
                         <td class="col-status">${statusCell}</td>
-                        <td class="col-ipv4">${ipv4List.length ? ipv4List.join('<br>') : '---'}</td>
-                        <td class="col-ipv6">${ipv6List.length ? ipv6List.join('<br>') : '---'}</td>
-                        <td class="col-mac"><small>${iface.hardware_addr || '---'}</small></td>
+                        <td class="col-ipv4">${ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '---'}</td>
+                        <td class="col-ipv6">${ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '---'}</td>
+                        <td class="col-mac"><small>${escapeHtml(iface.hardware_addr) || '---'}</small></td>
                     </tr>
                 `;
-            }).join('') || '<tr><td colspan="5" class="placeholder">未找到目标网卡</td></tr>';
+            }).join('') || `<tr><td colspan="5" class="placeholder">${i18n('no_target_nic')}</td></tr>`;
         }
 
         function ifaceFallbackLabel(linkType) {
-            if (linkType === 'wired') return '有线';
+            if (linkType === 'wired') return i18n('wired');
             if (linkType === 'wifi') return 'Wi-Fi';
             return '';
         }
 
         function formatDeviceStatus(status) {
             switch (status) {
-                case 'connected': return '已连接';
-                case 'disconnected': return '未连接';
-                case 'connecting': return '连接中';
-                case 'disconnecting': return '断开中';
-                case 'disabled': return '已禁用';
-                case 'unavailable': return '不可用';
-                case 'unknown': return '未知';
+                case 'connected': return i18n('connected');
+                case 'disconnected': return i18n('disconnected');
+                case 'connecting': return i18n('connecting');
+                case 'disconnecting': return i18n('disconnecting');
+                case 'disabled': return i18n('disabled');
+                case 'unavailable': return i18n('unavailable');
+                case 'unknown': return i18n('unknown');
                 case '': case undefined: return '---';
                 default: return status;
             }
@@ -391,49 +504,46 @@ function initTheme() {
         function formatPlatformConnectivity(networkInfo) {
             const level = networkInfo.platform_connectivity || '';
             switch (level) {
-                case 'Full': return '已联网';
-                case 'Limited': return '受限';
-                case 'Portal': return '需要登录认证';
-                case 'None': return '无法访问外网';
-                case 'Unknown': return '未知';
+                case 'Full': return i18n('internet_full');
+                case 'Limited': return i18n('internet_limited');
+                case 'Portal': return i18n('internet_portal');
+                case 'None': return i18n('internet_none');
+                case 'Unknown': return i18n('unknown');
                 case '':
-                    if (networkInfo.has_internet) return '已联网';
-                    return 'SDK 状态异常';
+                    if (networkInfo.has_internet) return i18n('internet_full');
+                    return i18n('sdk_status_error');
                 default: return level;
             }
         }
-
-        function renderNAT() { /* NAT card removed */ }
 
         function detectProxyState() {
             const ci = state.summary?.website_connectivity || {};
             const globalSites = (ci.global || []).filter(s => s && s.status);
             if (globalSites.length === 0) {
-                return { mode: 'unknown', label: '状态不明' };
+                return { mode: 'unknown', label: i18n('unknown_status') };
             }
             const okCount = globalSites.filter(s => s.status === 'ok').length;
             const total = globalSites.length;
 
-            const lookups = state.egressData?.lookups || [];
-            const dom = lookups.find(l => l.scope === 'domestic' && l.ip);
-            const glb = lookups.find(l => l.scope === 'global' && l.ip);
+            const glb = (state.egressData?.lookups || []).find(l => l.scope === 'global' && l.ip);
+            const domesticV4 = state.egressData?.domestic_ip?.ipv4;
             const inChina = (entry) => {
                 if (!entry) return false;
-                const c = (entry.country || '') + (entry.region || '');
+                const c = (entry.country || '') + (entry.region || '') + (entry.location || '');
                 return c.includes('中国') || c.includes('China') || c.includes('CN');
             };
-            const boxInChina = inChina(dom) || inChina(glb);
+            const boxInChina = inChina(domesticV4) || inChina(glb);
 
             if (okCount === total) {
                 if (boxInChina) {
-                    return { mode: 'proxy', label: '存在代理环境' };
+                    return { mode: 'proxy', label: i18n('proxy_detected') };
                 }
-                return { mode: 'direct', label: '获取到境外出口' };
+                return { mode: 'direct', label: i18n('global_egress_detected') };
             }
             if (okCount === 0) {
-                return { mode: 'direct', label: '无代理' };
+                return { mode: 'direct', label: i18n('no_proxy') };
             }
-            return { mode: 'partial', label: '状态不明' };
+            return { mode: 'partial', label: i18n('unknown_status') };
         }
 
         function renderProxyBanner() {
@@ -456,28 +566,10 @@ function initTheme() {
             state.settings.refresh_interval_sec = state.refreshInterval;
             state.lastRefreshTime = Date.now();
             if (elements.websiteStatus) elements.websiteStatus.textContent = '';
-            if (elements.networkStatus) elements.networkStatus.textContent = '';
-
             updateConnectivityTable(elements.domesticTable, summary.website_connectivity?.domestic || []);
             updateConnectivityTable(elements.globalTable, summary.website_connectivity?.global || []);
             renderNetworkInfo(summary.network_info || {});
             refreshProxyDisplay();
-        }
-
-        function startAutoRefreshTimer() {
-            stopAutoRefreshTimer();
-            if (!state.settings.auto_refresh_enabled) return;
-            const sec = Math.max(5, parseInt(state.settings.refresh_interval_sec, 10) || 10);
-            state.refreshTimer = setInterval(() => {
-                if (!document.hidden) loadSummary(false, true);
-            }, sec * 1000);
-        }
-
-        function stopAutoRefreshTimer() {
-            if (state.refreshTimer) {
-                clearInterval(state.refreshTimer);
-                state.refreshTimer = null;
-            }
         }
 
         async function loadSummary(showOverlay = false, refresh = false) {
@@ -494,8 +586,7 @@ function initTheme() {
                 renderSummary(data);
             } catch (error) {
                 console.error(error);
-                elements.lastUpdate && (elements.lastUpdate.textContent = '连接服务器失败: ' + error.message);
-                showToast('加载数据失败: ' + error.message, 'error');
+                showToast(i18n('load_failed') + ': ' + error.message, 'error');
             } finally {
                 if (showOverlay) elements.overlay.style.display = 'none';
             }
@@ -512,7 +603,7 @@ function initTheme() {
                 renderSummary(data);
             } catch (error) {
                 console.error(error);
-                showToast('刷新失败', 'error');
+                showToast(i18n('refresh_failed'), 'error');
             } finally {
                 state.fastRefreshing = false;
                 if (showOverlay) elements.overlay.style.display = 'none';
@@ -522,9 +613,10 @@ function initTheme() {
 
         async function runWebsiteRefresh() {
             elements.websiteRefreshBtn.disabled = true;
-            elements.websiteStatus.textContent = '检测中...';
+            elements.websiteStatus.textContent = `${i18n('checking')}...`;
             try {
                 const response = await fetch('/api/v1/connectivity/websites/run', { method: 'POST' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const websiteData = await response.json();
                 updateConnectivityTable(elements.domesticTable, websiteData.domestic || []);
                 updateConnectivityTable(elements.globalTable, websiteData.global || []);
@@ -534,18 +626,17 @@ function initTheme() {
                 }
             } catch (error) {
                 console.error(error);
-                elements.websiteStatus.textContent = '检测失败';
-                showToast('网站检测失败', 'error');
+                elements.websiteStatus.textContent = i18n('check_failed');
+                showToast(i18n('speedtest_failed'), 'error');
             } finally {
                 elements.websiteRefreshBtn.disabled = false;
             }
         }
 
-        async function runNATRefresh() { /* NAT card removed */ }
-
         async function loadSpeedConfig() {
             try {
                 const response = await fetch('/api/v1/speed/config', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
                 state.speedConfig = {
                     broadband_duration_sec: data.broadband_duration_sec || 10,
@@ -556,17 +647,15 @@ function initTheme() {
                 console.error(error);
             }
 
-            elements.broadbandNote.textContent =
-                `宽带测速使用 Speedtest.net 节点；开启“仅国内节点”后会强制选择国内候选节点，每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
-            elements.transferNote.textContent =
-                `浏览器与本机服务间并发下载/上传 ${state.speedConfig.local_transfer_duration_sec} 秒，实时显示速率。`;
+            elements.broadbandNote.textContent = `${i18n('broadband_note_prefix')}${state.speedConfig.broadband_duration_sec}${i18n('seconds_unit')}`;
+            elements.transferNote.textContent = `${i18n('transfer_note_prefix')}${state.speedConfig.local_transfer_duration_sec}${i18n('seconds_unit')}`;
         }
 
         async function loadSpeedHistory() {
             try {
                 const [broadband, localTransfer] = await Promise.all([
-                    fetch('/api/v1/speed/broadband/history', { cache: 'no-store' }).then(r => r.json()),
-                    fetch('/api/v1/speed/local/history', { cache: 'no-store' }).then(r => r.json())
+                    fetch('/api/v1/speed/broadband/history', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+                    fetch('/api/v1/speed/local/history', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
                 ]);
                 renderBroadbandHistory(Array.isArray(broadband) ? broadband : []);
                 renderTransferHistory(Array.isArray(localTransfer) ? localTransfer : []);
@@ -580,14 +669,14 @@ function initTheme() {
                 <div class="history-item">
                     <div class="history-item-info">
                         <span class="history-item-value">${item.download_mbps?.toFixed?.(2) || '0.00'} / ${item.upload_mbps?.toFixed?.(2) || '0.00'} <small>Mbps</small></span>
-                        <small>${item.timestamp || '--'}${item.provider ? ' · ' + item.provider : ''}</small>
+                        <small>${escapeHtml(item.timestamp) || '--'}${item.provider ? ' · ' + escapeHtml(item.provider) : ''}${item.node_source ? ' · ' + escapeHtml(item.node_source) : ''}</small>
                     </div>
                     <div style="text-align: right">
-                        <small>延迟 ${item.latency_ms || 0} ms</small><br>
-                        <small>抖动 ${item.jitter_ms || 0} ms</small>
+                        <small>${i18n('latency_col')} ${item.latency_ms || 0} ms</small><br>
+                        <small>${i18n('total_duration')} ${formatDurationMS(item.stage_durations?.total_ms)}</small>
                     </div>
                 </div>
-            `).join('') || '<div class="history-item"><small>暂无记录</small></div>';
+            `).join('') || `<div class="history-item"><small>${i18n('no_history')}</small></div>`;
         }
 
         function renderTransferHistory(items) {
@@ -595,60 +684,122 @@ function initTheme() {
                 <div class="history-item">
                     <div class="history-item-info">
                         <span class="history-item-value">${item.download_mbps?.toFixed?.(2) || '0.00'} / ${item.upload_mbps?.toFixed?.(2) || '0.00'} <small>Mbps</small></span>
-                        <small>${item.timestamp || '--'}</small>
+                        <small>${escapeHtml(item.timestamp) || '--'} · ${i18n('total')} ${formatMB(item.payload_mb || ((item.download_mb || 0) + (item.upload_mb || 0)))}</small>
                     </div>
                     <div style="text-align: right">
-                        <small>延迟 ${item.round_trip_latency_ms || 0} ms</small><br>
-                        <small>抖动 ${item.jitter_ms || 0} ms</small>
+                        <small>RTT ${item.rtt_min_ms || 0}/${item.rtt_avg_ms || item.round_trip_latency_ms || 0}/${item.rtt_max_ms || 0} ms</small><br>
+                        <small>${i18n('duration')} ${formatDurationMS(item.duration_ms)}</small>
                     </div>
                 </div>
-            `).join('') || '<div class="history-item"><small>暂无记录</small></div>';
+            `).join('') || `<div class="history-item"><small>${i18n('no_history')}</small></div>`;
+        }
+
+        function resetBroadbandDetails() {
+            setText(elements.broadbandNodeName);
+            setText(elements.broadbandNodeProvider);
+            setText(elements.broadbandNodeRegion);
+            setText(elements.broadbandNodeSource);
+            setText(elements.broadbandDurationNode);
+            setText(elements.broadbandDurationLatency);
+            setText(elements.broadbandDurationDownload);
+            setText(elements.broadbandDurationUpload);
+            setText(elements.broadbandDurationTotal);
+            setText(elements.broadbandFailureStage);
+            setText(elements.broadbandFailureReason);
+        }
+
+        function renderBroadbandDetails(result = {}) {
+            const durations = result.stage_durations || {};
+            setText(elements.broadbandNodeName, result.server_name || result.server_region || '--');
+            setText(elements.broadbandNodeProvider, result.provider || '--');
+            setText(elements.broadbandNodeRegion, result.server_country || result.server_region || '--');
+            setText(elements.broadbandNodeSource, result.node_source ? `${result.node_source}${result.domestic_node ? ` · ${i18n('domestic_node')}` : ''}` : '--');
+            setText(elements.broadbandDurationNode, formatDurationMS(durations.node_selection_ms));
+            setText(elements.broadbandDurationLatency, formatDurationMS(durations.latency_test_ms));
+            setText(elements.broadbandDurationDownload, formatDurationMS(durations.download_test_ms));
+            setText(elements.broadbandDurationUpload, formatDurationMS(durations.upload_test_ms));
+            setText(elements.broadbandDurationTotal, formatDurationMS(durations.total_ms));
+            setText(elements.broadbandFailureStage, result.failure_stage ? (broadbandFailureStageMap[result.failure_stage] || result.failure_stage) : '--');
+            setText(elements.broadbandFailureReason, result.failure_reason || result.error || '--');
+        }
+
+        function resetTransferDetails() {
+            setText(elements.transferRTTMin);
+            setText(elements.transferRTTAvg);
+            setText(elements.transferRTTMax);
+            setText(elements.transferRTTJitter);
+            setText(elements.transferDownloadBytes);
+            setText(elements.transferUploadBytes);
+            setText(elements.transferTotalBytes);
+            setText(elements.transferDuration);
+        }
+
+        function renderTransferDetails(stats = {}) {
+            const downloadMB = Number(stats.download_mb) || 0;
+            const uploadMB = Number(stats.upload_mb) || 0;
+            setText(elements.transferRTTMin, formatMS(stats.rtt_min_ms));
+            setText(elements.transferRTTAvg, formatMS(stats.rtt_avg_ms));
+            setText(elements.transferRTTMax, formatMS(stats.rtt_max_ms));
+            setText(elements.transferRTTJitter, formatMS(stats.jitter_ms));
+            setText(elements.transferDownloadBytes, formatMB(downloadMB));
+            setText(elements.transferUploadBytes, formatMB(uploadMB));
+            setText(elements.transferTotalBytes, formatMB(stats.payload_mb || (downloadMB + uploadMB)));
+            setText(elements.transferDuration, formatDurationMS(stats.duration_ms));
         }
 
         function resetBroadbandMetrics() {
-            elements.broadbandStage.textContent = '待启动';
+            elements.broadbandStage.textContent = i18n('idle');
             elements.broadbandProgress.textContent = '0%';
-            elements.broadbandNote.textContent = `宽带测速使用 Speedtest.net 节点，每阶段 ${state.speedConfig.broadband_duration_sec} 秒。`;
-            setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, 0, 'Mbps', 'Idle', '等待测速开始');
+            elements.broadbandNote.textContent = `${i18n('broadband_note_prefix')}${state.speedConfig.broadband_duration_sec}${i18n('seconds_unit')}`;
+            setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Idle', i18n('standby'));
+            setSpeedPanelMode('broadband', 'Idle');
             elements.broadbandDownload.textContent = '--';
             elements.broadbandUpload.textContent = '--';
             elements.broadbandLatency.textContent = '--';
             elements.broadbandJitter.textContent = '--';
+            resetBroadbandDetails();
         }
 
         function resetTransferMetrics() {
-            elements.transferStage.textContent = '待启动';
+            elements.transferStage.textContent = i18n('idle');
             elements.transferProgress.textContent = '0%';
-            elements.transferNote.textContent = `浏览器与本机服务间并发下载/上传 ${state.speedConfig.local_transfer_duration_sec} 秒。`;
-            setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, 0, 'Mbps', 'Idle', '等待测速开始');
+            elements.transferNote.textContent = `${i18n('transfer_note_prefix')}${state.speedConfig.local_transfer_duration_sec}${i18n('seconds_unit')}`;
+            setPrimaryStatus(elements.transferPrimaryMode, elements.transferPrimaryCaption, 'Idle', i18n('standby'));
+            setSpeedPanelMode('transfer', 'Idle');
             elements.transferDownload.textContent = '--';
             elements.transferUpload.textContent = '--';
             elements.transferLatency.textContent = '--';
             elements.transferJitter.textContent = '--';
+            resetTransferDetails();
         }
 
         function renderBroadbandTask(task = {}) {
-            elements.broadbandStage.textContent = broadbandStageMap[task.stage] || '待启动';
+            elements.broadbandStage.textContent = broadbandStageMap[task.stage] || i18n('idle');
             elements.broadbandProgress.textContent = `${Math.max(0, Math.min(100, Math.round(task.progress_percent || 0)))}%`;
-            elements.broadbandNote.textContent = task.message || broadbandStageMap[task.stage] || '等待测速开始';
+            elements.broadbandNote.textContent = task.message || broadbandStageMap[task.stage] || i18n('standby');
             elements.broadbandLatency.textContent = formatMS(task.result?.latency_ms);
             elements.broadbandJitter.textContent = formatMS(task.result?.jitter_ms);
             elements.broadbandDownload.textContent = formatMbps(task.result?.download_mbps);
             elements.broadbandUpload.textContent = formatMbps(task.result?.upload_mbps);
+            renderBroadbandDetails(task.result || {});
 
             if (task.stage === 'latency') {
-                setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, task.result?.latency_ms || 0, 'ms', 'Ping', task.message || '延迟采样中');
+                setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Ping', task.message || i18n('latency_sampling'));
+                setSpeedPanelMode('broadband', 'Ping');
                 return;
             }
             if (task.stage === 'download') {
-                setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, task.result?.download_mbps || 0, 'Mbps', 'Download', task.message || '下载测速中');
+                setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Download', task.message || i18n('downloading'));
+                setSpeedPanelMode('broadband', 'Download');
                 return;
             }
             if (task.stage === 'upload') {
-                setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, task.result?.upload_mbps || 0, 'Mbps', 'Upload', task.message || '上传测速中');
+                setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Upload', task.message || i18n('uploading'));
+                setSpeedPanelMode('broadband', 'Upload');
                 return;
             }
-            setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, task.result?.download_mbps || task.result?.upload_mbps || 0, 'Mbps', 'Result', task.message || '测速完成');
+            setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Result', task.message || i18n('speedtest_complete'));
+            setSpeedPanelMode('broadband', 'Result');
         }
 
         function updateTransferProgress(stage, progress, message) {
@@ -695,7 +846,7 @@ function initTheme() {
             state.runningTest = 'broadband';
             updateWindowControls();
             resetBroadbandMetrics();
-            elements.broadbandNote.textContent = '正在启动宽带测速任务';
+            elements.broadbandNote.textContent = i18n('started_broadband');
 
             try {
                 const response = await fetch('/api/v1/speed/broadband/start', { method: 'POST' });
@@ -706,7 +857,7 @@ function initTheme() {
                 console.error(error);
                 state.runningTest = null;
                 updateWindowControls();
-                elements.broadbandNote.textContent = '宽带测速启动失败';
+                elements.broadbandNote.textContent = i18n('broadband_start_failed');
             }
         }
 
@@ -722,10 +873,11 @@ function initTheme() {
                 }
                 updateWindowControls();
                 if (showStopped) {
-                    elements.broadbandStage.textContent = '已停止';
-                    elements.broadbandNote.textContent = '宽带测速已停止';
+                    elements.broadbandStage.textContent = i18n('canceled');
+                    elements.broadbandNote.textContent = i18n('speedtest_stopped');
                     elements.broadbandProgress.textContent = '0%';
-                    setPrimaryGauge(null, elements.broadbandPrimaryMode, elements.broadbandPrimarySpeed, elements.broadbandPrimaryUnit, elements.broadbandPrimaryCaption, 0, 'Mbps', 'Stopped', '测速已手动停止');
+                    setPrimaryStatus(elements.broadbandPrimaryMode, elements.broadbandPrimaryCaption, 'Stopped', i18n('manual_stop'));
+                    setSpeedPanelMode('broadband', 'Stopped');
                 }
             }
         }
@@ -738,26 +890,41 @@ function initTheme() {
 
             const s = new Speedtest();
             state.transferAbortController = { abort: () => s.abort() };
+            const durationSec = Math.max(1, Math.min(60, Number(state.speedConfig.local_transfer_duration_sec) || 10));
             
-            s.setParameter("url_dl", "/api/v1/speed/local/download?sec=30");
+            s.setParameter("url_dl", `/api/v1/speed/local/download?sec=${durationSec}`);
             s.setParameter("url_ul", "/api/v1/speed/local/upload");
             s.setParameter("url_ping", "/api/v1/speed/local/ping");
             s.setParameter("url_getIp", "/api/v1/summary");
             s.setParameter("worker_path", "/speedtest_worker.js");
             s.setParameter("test_order", "P_D_U");
-            s.setParameter("time_dl_max", state.speedConfig.local_transfer_duration_sec);
-            s.setParameter("time_ul_max", state.speedConfig.local_transfer_duration_sec);
+            s.setParameter("time_dl_max", durationSec);
+            s.setParameter("time_ul_max", durationSec);
             s.setParameter("time_auto", false);
             s.setParameter("count_ping", 10);
             
             let lastData = {};
+            let transferStartedAt = Date.now();
             s.onupdate = (data) => {
+                if (state.runningTest !== 'transfer') return;
                 lastData = data;
+                const rtt = summarizeRTT(data.pingSamples || []);
+                const transferStats = {
+                    rtt_min_ms: rtt.min,
+                    rtt_avg_ms: rtt.avg || finiteNumber(data.pingStatus),
+                    rtt_max_ms: rtt.max,
+                    jitter_ms: finiteNumber(data.jitterStatus),
+                    download_mb: bytesToMB(data.dlBytes),
+                    upload_mb: bytesToMB(data.ulBytes),
+                    duration_ms: (Number(data.dlDuration) || 0) + (Number(data.ulDuration) || 0)
+                };
+                transferStats.payload_mb = transferStats.download_mb + transferStats.upload_mb;
+                renderTransferDetails(transferStats);
                 const testStateMap = {
-                    0: { stage: '准备中', progress: 0, mode: 'Idle' },
-                    1: { stage: '下载测速', progress: 15 + (data.dlProgress || 0) * 40, mode: 'Download' },
-                    2: { stage: '延迟采样', progress: 5 + (data.pingProgress || 0) * 10, mode: 'Ping' },
-                    3: { stage: '上传测速', progress: 55 + (data.ulProgress || 0) * 45, mode: 'Upload' }
+                    0: { stage: i18n('preparing'), progress: 0, mode: 'Idle' },
+                    1: { stage: i18n('dl_speedtest'), progress: 15 + (data.dlProgress || 0) * 40, mode: 'Download' },
+                    2: { stage: i18n('latency'), progress: 5 + (data.pingProgress || 0) * 10, mode: 'Ping' },
+                    3: { stage: i18n('ul_speedtest'), progress: 55 + (data.ulProgress || 0) * 45, mode: 'Upload' }
                 };
                 
                 const current = testStateMap[data.testState];
@@ -767,39 +934,54 @@ function initTheme() {
                     
                     let speed = 0, unit = 'Mbps', caption = '';
                     if (current.mode === 'Download') {
-                        speed = parseFloat(data.dlStatus) || 0;
+                        speed = finiteNumber(data.dlStatus);
                         elements.transferDownload.textContent = speed.toFixed(1);
-                        caption = `正在下载... ${speed.toFixed(2)} Mbps`;
+                        caption = `${i18n('downloading')}... ${speed.toFixed(2)} Mbps`;
                     } else if (current.mode === 'Upload') {
-                        speed = parseFloat(data.ulStatus) || 0;
+                        speed = finiteNumber(data.ulStatus);
                         elements.transferUpload.textContent = speed.toFixed(1);
-                        caption = `正在上传... ${speed.toFixed(2)} Mbps`;
+                        caption = `${i18n('uploading')}... ${speed.toFixed(2)} Mbps`;
                     } else if (current.mode === 'Ping') {
-                        speed = parseFloat(data.pingStatus) || 0;
+                        speed = finiteNumber(data.pingStatus);
                         elements.transferLatency.textContent = formatMS(speed);
-                        elements.transferJitter.textContent = formatMS(parseFloat(data.jitterStatus));
+                        elements.transferJitter.textContent = formatMS(finiteNumber(data.jitterStatus));
                         unit = 'ms';
-                        caption = `延迟采样中... ${speed.toFixed(0)} ms`;
+                        caption = `${i18n('latency_sampling')}... ${speed.toFixed(0)} ms`;
                     }
                     
-                    setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, speed, unit, current.mode, caption);
+                    setPrimaryStatus(elements.transferPrimaryMode, elements.transferPrimaryCaption, current.mode, caption);
+                    setSpeedPanelMode('transfer', current.mode);
                 }
             };
 
             s.onend = async (aborted) => {
                 if (aborted) {
+                    finishTransferRun();
                     return;
                 }
 
-                const downloadMbps = parseFloat(elements.transferDownload.textContent) || 0;
-                const uploadMbps = parseFloat(elements.transferUpload.textContent) || 0;
-                const pingMs = parseFloat(elements.transferLatency.textContent) || 0;
-                const jitterMs = parseFloat(elements.transferJitter.textContent) || 0;
+                const downloadMbps = finiteNumber(lastData.dlStatus, finiteNumber(elements.transferDownload.textContent));
+                const uploadMbps = finiteNumber(lastData.ulStatus, finiteNumber(elements.transferUpload.textContent));
+                const pingMs = finiteNumber(lastData.pingStatus, finiteNumber(elements.transferLatency.textContent));
+                const jitterMs = finiteNumber(lastData.jitterStatus, finiteNumber(elements.transferJitter.textContent));
+                const rtt = summarizeRTT(lastData.pingSamples || []);
+                const transferStats = {
+                    download_mb: bytesToMB(lastData.dlBytes),
+                    upload_mb: bytesToMB(lastData.ulBytes),
+                    duration_ms: ((Number(lastData.dlDuration) || 0) + (Number(lastData.ulDuration) || 0)) || (Date.now() - transferStartedAt),
+                    rtt_min_ms: rtt.min || Math.round(pingMs),
+                    rtt_avg_ms: rtt.avg || Math.round(pingMs),
+                    rtt_max_ms: rtt.max || Math.round(pingMs),
+                    jitter_ms: Math.round(jitterMs)
+                };
+                transferStats.payload_mb = transferStats.download_mb + transferStats.upload_mb;
+                renderTransferDetails(transferStats);
 
-                elements.transferStage.textContent = '已完成';
+                elements.transferStage.textContent = i18n('complete');
                 elements.transferProgress.textContent = '100%';
-                elements.transferNote.textContent = '网页到本机传输测速完成';
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, downloadMbps, 'Mbps', 'Result', '测速完成');
+                elements.transferNote.textContent = i18n('transfer_done');
+                setPrimaryStatus(elements.transferPrimaryMode, elements.transferPrimaryCaption, 'Result', i18n('speedtest_complete'));
+                setSpeedPanelMode('transfer', 'Result');
 
                 try {
                     await fetch('/api/v1/speed/local/result', {
@@ -808,8 +990,15 @@ function initTheme() {
                         body: JSON.stringify({
                             download_mbps: downloadMbps,
                             upload_mbps: uploadMbps,
+                            payload_mb: transferStats.payload_mb,
+                            download_mb: transferStats.download_mb,
+                            upload_mb: transferStats.upload_mb,
+                            duration_ms: Math.round(transferStats.duration_ms),
                             round_trip_latency_ms: Math.round(pingMs),
-                            jitter_ms: Math.round(jitterMs)
+                            rtt_min_ms: transferStats.rtt_min_ms,
+                            rtt_avg_ms: transferStats.rtt_avg_ms,
+                            rtt_max_ms: transferStats.rtt_max_ms,
+                            jitter_ms: transferStats.jitter_ms
                         })
                     });
                     await loadSpeedHistory();
@@ -817,13 +1006,20 @@ function initTheme() {
                     console.error('Failed to save transfer result:', e);
                 }
 
-                state.runningTest = null;
-                state.transferAbortController = null;
-                updateWindowControls();
+                finishTransferRun();
             };
 
-            updateTransferProgress('准备中', 0, '正在启动网页到本机传输测速');
-            s.start();
+            updateTransferProgress(i18n('preparing'), 0, i18n('starting_transfer'));
+            try {
+                s.start();
+            } catch (error) {
+                console.error(error);
+                elements.transferStage.textContent = i18n('start_failed');
+                elements.transferNote.textContent = i18n('transfer_start_failed');
+                setPrimaryStatus(elements.transferPrimaryMode, elements.transferPrimaryCaption, 'Error', i18n('speedtest_start_failed'));
+                setSpeedPanelMode('transfer', 'Error');
+                finishTransferRun();
+            }
         }
 
         function cancelTransferTest(showStopped = true) {
@@ -836,10 +1032,11 @@ function initTheme() {
             }
             updateWindowControls();
             if (showStopped) {
-                elements.transferStage.textContent = '已停止';
-                elements.transferNote.textContent = '网页到本机传输测速已停止';
+                elements.transferStage.textContent = i18n('canceled');
+                elements.transferNote.textContent = i18n('transfer_stopped');
                 elements.transferProgress.textContent = '0%';
-                setPrimaryGauge(null, elements.transferPrimaryMode, elements.transferPrimarySpeed, elements.transferPrimaryUnit, elements.transferPrimaryCaption, 0, 'Mbps', 'Stopped', '测速已手动停止');
+                setPrimaryStatus(elements.transferPrimaryMode, elements.transferPrimaryCaption, 'Stopped', i18n('manual_stop'));
+                setSpeedPanelMode('transfer', 'Stopped');
             }
         }
 
@@ -860,6 +1057,7 @@ function initTheme() {
             }
 
             elements.backdrop.classList.add('active');
+            lockModalScroll();
             state.activeWindow = name;
             updateWindowControls();
             await loadSpeedHistory();
@@ -876,10 +1074,9 @@ function initTheme() {
             elements.settingsWindow.classList.remove('active');
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
-            document.getElementById('app-detail-window')?.classList.remove('active');
             document.getElementById('traffic-settings-window')?.classList.remove('active');
             elements.backdrop.classList.remove('active');
-            stopDetailRefresh();
+            unlockModalScroll();
             state.activeWindow = null;
             updateWindowControls();
         }
@@ -887,6 +1084,7 @@ function initTheme() {
         function openTraceWindow() {
             elements.traceWindow?.classList.add('active');
             elements.traceBackdrop?.classList.add('active');
+            lockModalScroll();
         }
 
         function closeTraceWindow() {
@@ -896,6 +1094,30 @@ function initTheme() {
                 clearInterval(state.tracePoller);
                 state.tracePoller = null;
             }
+            unlockModalScroll();
+        }
+
+        function lockModalScroll() {
+            state.modalLockCount += 1;
+            if (state.modalLockCount > 1) return;
+            state.modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+            const hasStableGutter = window.CSS?.supports?.('scrollbar-gutter: stable');
+            const scrollbarWidth = hasStableGutter ? 0 : Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+            document.documentElement.style.setProperty('--scrollbar-compensation', `${scrollbarWidth}px`);
+            document.body.style.top = `-${state.modalScrollY}px`;
+            document.body.classList.add('modal-scroll-locked');
+        }
+
+        function unlockModalScroll() {
+            if (state.modalLockCount > 0) {
+                state.modalLockCount -= 1;
+            }
+            if (state.modalLockCount > 0) return;
+            const y = state.modalScrollY || 0;
+            document.body.classList.remove('modal-scroll-locked');
+            document.body.style.top = '';
+            document.documentElement.style.removeProperty('--scrollbar-compensation');
+            window.scrollTo(0, y);
         }
 
         function updateWindowControls() {
@@ -929,11 +1151,6 @@ function initTheme() {
             elements.backdrop.addEventListener('click', closeCurrentWindow);
             elements.closeTraceWindow?.addEventListener('click', closeTraceWindow);
             elements.traceBackdrop?.addEventListener('click', closeTraceWindow);
-            document.getElementById('close-app-detail-window')?.addEventListener('click', () => {
-                document.getElementById('app-detail-window')?.classList.remove('active');
-                elements.backdrop.classList.remove('active');
-                stopDetailRefresh();
-            });
             elements.runBroadbandTest.addEventListener('click', startBroadbandTest);
             elements.runTransferTest.addEventListener('click', runTransferTest);
             elements.saveSettings?.addEventListener('click', saveSettings);
@@ -943,6 +1160,47 @@ function initTheme() {
                 if (elements.settingNICRealtimeIntervalSec) {
                     elements.settingNICRealtimeIntervalSec.disabled = !isEnabled;
                 }
+            });
+            elements.settingBackgroundMonitorEnabled?.addEventListener('change', () => {
+                state.settings.background_monitor_enabled = !!elements.settingBackgroundMonitorEnabled.checked;
+                applySettingsToForm();
+            });
+            elements.settingNotificationsEnabled?.addEventListener('change', () => {
+                state.settings.notifications_enabled = !!elements.settingNotificationsEnabled.checked;
+                applySettingsToForm();
+                initNotificationPolling();
+            });
+            elements.settingClientNotificationEnabled?.addEventListener('change', () => {
+                state.settings.client_notification_enabled = !!elements.settingClientNotificationEnabled.checked;
+                applySettingsToForm();
+                initNotificationPolling();
+            });
+            elements.settingNotifyAbnormalTraffic?.addEventListener('change', () => {
+                state.settings.notify_abnormal_traffic = !!elements.settingNotifyAbnormalTraffic.checked;
+                applySettingsToForm();
+            });
+            elements.settingNotifyEgressChange?.addEventListener('change', () => {
+                state.settings.notify_egress_change = !!elements.settingNotifyEgressChange.checked;
+            });
+            elements.settingNotifyConnectivityChange?.addEventListener('change', () => {
+                state.settings.notify_connectivity_change = !!elements.settingNotifyConnectivityChange.checked;
+            });
+            elements.settingBarkEnabled?.addEventListener('change', () => {
+                state.settings.bark_enabled = !!elements.settingBarkEnabled.checked;
+                if (!state.settings.bark_enabled) {
+                    state.settings.client_notification_enabled = true;
+                }
+                applySettingsToForm();
+            });
+            elements.testBarkNotification?.addEventListener('click', testBarkNotification);
+            elements.settingDNDEnabled?.addEventListener('change', () => {
+                state.settings.dnd_enabled = !!elements.settingDNDEnabled.checked;
+            });
+            elements.settingDNDStart?.addEventListener('change', () => {
+                state.settings.dnd_start = elements.settingDNDStart.value || '22:00';
+            });
+            elements.settingDNDEnd?.addEventListener('change', () => {
+                state.settings.dnd_end = elements.settingDNDEnd.value || '08:00';
             });
         }
 
@@ -958,7 +1216,6 @@ function initTheme() {
                 loadSpeedHistory(),
                 loadSettings()
             ]).then(() => {
-                startAutoRefreshTimer();
                 updateWindowControls();
                 initNICRealtime();
                 // Re-render traffic table now that settings are loaded
@@ -979,7 +1236,6 @@ function initTheme() {
 
             initSSE();
             initTrace();
-            initAutoRefreshToggle();
             initEgressLookups();
             initAppTraffic();
         }
@@ -993,12 +1249,12 @@ function initTheme() {
         }
 
         function formatBytes(n) {
-            const v = n || 0;
-            if (v < 1024) return `${v} B`;
-            if (v < 1048576) return `${(v / 1024).toFixed(1)} KB`;
-            if (v < 1073741824) return `${(v / 1048576).toFixed(1)} MB`;
-            if (v < 1099511627776) return `${(v / 1073741824).toFixed(2)} GB`;
-            return `${(v / 1099511627776).toFixed(2)} TB`;
+            if (!n || n <= 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let i = 0;
+            let v = n;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return (i === 0 ? v.toString() : v.toFixed(v < 10 ? 2 : 1)) + ' ' + units[i];
         }
 
         function renderEgressLookups(data) {
@@ -1008,23 +1264,27 @@ function initTheme() {
             const statusEl = document.getElementById('egress-status');
             if (!globalEl) return;
 
-            const itemHTML = (lu) => {
+            const itemHTML = (lu, options = {}) => {
                 if (lu.error) {
                     return `
                         <div class="egress-item error">
-                            <span class="egress-provider">${lu.provider}</span>
                             <span class="egress-duration">${Number.isFinite(lu.duration_ms) && lu.duration_ms > 0 ? `${lu.duration_ms} ms` : ''}</span>
-                            <span class="egress-meta">错误：${lu.error}</span>
+                            <span class="egress-meta">${i18n('error')}: ${escapeHtml(lu.error)}</span>
                         </div>`;
                 }
-                const geo = [lu.country, lu.region, lu.city].filter(Boolean).join(' · ');
+                const geoParts = [
+                    ['country', lu.country],
+                    ['region', lu.region],
+                    ['city', lu.city]
+                ].filter(([, value]) => value)
+                    .map(([kind, value]) => options.translateGeo ? translateGeoName(value, kind) : value);
+                const geo = geoParts.join(' · ');
                 const meta = [geo, lu.asn, lu.isp].filter(Boolean).join('  ');
                 return `
                     <div class="egress-item">
-                        <span class="egress-provider">${lu.provider}</span>
-                        <span class="egress-ip">${lu.ip || '--'}</span>
+                        <span class="egress-ip">${escapeHtml(lu.ip) || '--'}</span>
                         <span class="egress-duration">${Number.isFinite(lu.duration_ms) && lu.duration_ms > 0 ? `${lu.duration_ms} ms` : ''}</span>
-                        <span class="egress-meta">${meta || '—'}</span>
+                        <span class="egress-meta">${escapeHtml(meta) || '—'}</span>
                     </div>`;
             };
 
@@ -1042,10 +1302,10 @@ function initTheme() {
                         isp: domestic.isp,
                         error: domestic.error
                     })
-                    : '<div class="egress-item"><small>无数据</small></div>';
+                    : `<div class="egress-item"><small>${i18n('no_data')}</small></div>`;
             }
-            globalEl.innerHTML = lookup ? itemHTML(lookup) : '<div class="egress-item"><small>无数据</small></div>';
-            statusEl.textContent = data.generated_at ? `查询于 ${data.generated_at}` : '等待查询';
+            globalEl.innerHTML = lookup ? itemHTML(lookup, { translateGeo: true }) : `<div class="egress-item"><small>${i18n('no_data')}</small></div>`;
+            statusEl.textContent = data.generated_at ? `${i18n('queried_at')} ${data.generated_at}` : i18n('waiting');
             renderDomesticIPSnapshot(data.domestic_ip || {});
             refreshProxyDisplay();
         }
@@ -1067,23 +1327,23 @@ function initTheme() {
             const ipv6Location = document.getElementById('domestic-ipv6-location');
             const ipv6Port = document.getElementById('domestic-ipv6-port');
 
-            if (ipv4IP) ipv4IP.textContent = v4.ip || '未检测到';
-            if (ipv4Location) ipv4Location.textContent = v4.error || v4.location || '等待查询';
+            if (ipv4IP) ipv4IP.textContent = v4.ip || i18n('not_detected');
+            if (ipv4Location) ipv4Location.textContent = v4.error || v4.location || i18n('waiting');
 
-            if (ipv6IP) ipv6IP.textContent = v6.ip || '未检测到';
-            if (ipv6Location) ipv6Location.textContent = v6.error || v6.location || '等待查询';
+            if (ipv6IP) ipv6IP.textContent = v6.ip || i18n('not_detected');
+            if (ipv6Location) ipv6Location.textContent = v6.error || v6.location || i18n('waiting');
 
             const portProbe = v6.port_probe || {};
             if (portProbe.status === 'reachable') {
-                setIdentityBadge(ipv6Port, `高位端口可达 ${portProbe.latency_ms || 0} ms`, 'ok');
+                setIdentityBadge(ipv6Port, `${i18n('high_port_reachable')} ${portProbe.latency_ms || 0} ms`, 'ok');
             } else if (portProbe.status === 'blocked') {
-                setIdentityBadge(ipv6Port, '高位端口疑似受限', 'fail');
+                setIdentityBadge(ipv6Port, i18n('high_port_blocked'), 'fail');
             } else if (portProbe.status === 'closed') {
-                setIdentityBadge(ipv6Port, '探针关闭', 'warn');
+                setIdentityBadge(ipv6Port, i18n('probe_closed'), 'warn');
             } else if (portProbe.status === 'unavailable') {
-                setIdentityBadge(ipv6Port, '高位端口未检测', 'warn');
+                setIdentityBadge(ipv6Port, i18n('high_port_not_checked'), 'warn');
             } else {
-                setIdentityBadge(ipv6Port, '高位端口检测失败', 'fail');
+                setIdentityBadge(ipv6Port, i18n('high_port_check_failed'), 'fail');
             }
         }
 
@@ -1095,7 +1355,7 @@ function initTheme() {
             const statusEl = document.getElementById('egress-status');
 
             const load = async (force) => {
-                statusEl.textContent = force ? '查询中...' : '加载中...';
+                statusEl.textContent = force ? `${i18n('querying')}...` : `${i18n('loading')}...`;
                 btn.disabled = true;
                 try {
                     const resp = await fetch('/api/v1/network/egress-lookups', {
@@ -1104,7 +1364,7 @@ function initTheme() {
                     });
                     renderEgressLookups(await resp.json());
                 } catch (e) {
-                    statusEl.textContent = '加载失败: ' + e.message;
+                    statusEl.textContent = i18n('load_failed') + ': ' + e.message;
                 } finally {
                     btn.disabled = false;
                 }
@@ -1130,7 +1390,7 @@ function initTheme() {
                 return String(item.app_title || item.app_id || item.project || item.bridge || '').toLowerCase();
             };
 
-            const compareAppTraffic = (a, b, key, direction) => {
+            const sortAppTrafficRows = (a, b, key, direction) => {
                 let result = 0;
                 if (key === 'app') {
                     result = getAppTrafficName(a).localeCompare(getAppTrafficName(b), 'zh-CN');
@@ -1155,56 +1415,58 @@ function initTheme() {
                 });
             };
 
+            const isNetwatchBridge = (b) => {
+                const id = (b.app_id || '').toLowerCase();
+                const proj = (b.project || '').toLowerCase();
+                return id === 'cloud.lazycat.app.netwatch' || id === 'netwatch' || proj.includes('netwatch');
+            };
+
             const renderTraffic = (data) => {
                 latestTrafficData = data;
-                const list = Array.isArray(data.bridges) ? [...data.bridges] : [];
+                const list = Array.isArray(data.bridges) ? data.bridges.filter(b => !isNetwatchBridge(b)) : [];
                 updateSortHeaders();
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="placeholder">未发现 lzc-br-* 网桥（容器需要 host 网络模式）</td></tr>';
+                    tbody.innerHTML = `<tr><td colspan="4" class="placeholder">${i18n('no_app_data')}</td></tr>`;
                 } else {
                     const { key, direction } = state.appTrafficSort;
-                    list.sort((a, b) => compareAppTraffic(a, b, key, direction));
+                    list.sort((a, b) => sortAppTrafficRows(a, b, key, direction));
                     tbody.innerHTML = list.map(b => {
                         const total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
-                        const title = b.app_title || shortAppName(b.app_id) || b.bridge;
-                        const iconHtml = b.icon ? `<img class="app-icon" src="${b.icon}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
-                        const statusLine = b.status_text ? `<div class="app-status-text">${b.status_text}</div>` : '';
+                        const title = escapeHtml(b.app_title || shortAppName(b.app_id) || b.bridge);
+                        const iconHtml = b.icon ? `<img class="app-icon" src="${escapeHtml(b.icon)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
+                        const statusLine = b.status_text ? `<div class="app-status-text">${escapeHtml(b.status_text)}</div>` : '';
                         let nameHtml;
                         if (b.app_title) {
-                            nameHtml = `<strong>${b.app_title}</strong>${statusLine}`;
+                            nameHtml = `<strong>${escapeHtml(b.app_title)}</strong>${statusLine}`;
                         } else if (b.app_id) {
-                            nameHtml = `<strong>${shortAppName(b.app_id)}</strong>${statusLine}<div class="app-status-text">${b.app_id}</div>`;
+                            nameHtml = `<strong>${escapeHtml(shortAppName(b.app_id))}</strong>${statusLine}<div class="app-status-text">${escapeHtml(b.app_id)}</div>`;
                         } else if (b.project) {
-                            nameHtml = `<small style="color:var(--text-muted)">${b.project}</small>`;
+                            nameHtml = `<small style="color:var(--text-muted)">${escapeHtml(b.project)}</small>`;
                         } else {
-                            nameHtml = `<small style="color:var(--text-muted)">${b.bridge}</small>`;
+                            nameHtml = `<small style="color:var(--text-muted)">${escapeHtml(b.bridge)}</small>`;
                         }
-                        const detailBtn = state.settings.traffic_sampling_enabled
-                            ? `<button type="button" class="btn-detail" data-bridge="${b.bridge}" data-title="${title}">详情</button>`
-                            : '';
                         return `
                             <tr>
                                 <td class="col-app"><div class="app-cell">${iconHtml}<div class="app-cell-info">${nameHtml}</div></div></td>
                                 <td class="col-rx">${formatBytes(b.rx_bytes || 0)}</td>
                                 <td class="col-tx">${formatBytes(b.tx_bytes || 0)}</td>
                                 <td class="col-total">${formatBytes(total)}</td>
-                                <td class="col-detail">${detailBtn}</td>
                             </tr>
                         `;
                     }).join('');
                 }
-                if (statusEl) statusEl.textContent = data.generated_at ? `采样于 ${data.generated_at}` : '';
+                if (statusEl) statusEl.textContent = data.generated_at ? `${i18n('sampled_at')} ${data.generated_at}` : '';
                 if (noteEl && data.note) noteEl.textContent = data.note;
             };
 
             const load = async () => {
                 if (btn) btn.disabled = true;
-                if (statusEl) statusEl.textContent = '采样中...';
+                if (statusEl) statusEl.textContent = `${i18n('sampling')}...`;
                 try {
                     const resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
                     renderTraffic(await resp.json());
                 } catch (e) {
-                    if (statusEl) statusEl.textContent = '采样失败: ' + e.message;
+                    if (statusEl) statusEl.textContent = `${i18n('sampling_failed')}: ${e.message}`;
                 } finally {
                     if (btn) btn.disabled = false;
                 }
@@ -1224,14 +1486,6 @@ function initTheme() {
                 });
             });
 
-            // Detail button delegation
-            tbody.addEventListener('click', (e) => {
-                const detailBtn = e.target.closest('.btn-detail');
-                if (detailBtn) {
-                    openAppDetailWindow(detailBtn.dataset.bridge, detailBtn.dataset.title, latestTrafficData);
-                }
-            });
-
             updateSortHeaders();
             if (btn) btn.addEventListener('click', load);
             await load();
@@ -1244,28 +1498,30 @@ function initTheme() {
             function populateTrafficSettings() {
                 const el = (id) => document.getElementById(id);
                 if (el('ts-sampling-enabled')) el('ts-sampling-enabled').checked = !!state.settings.traffic_sampling_enabled;
-                if (el('ts-global-interval')) el('ts-global-interval').value = String(state.settings.traffic_sampling_interval_sec || 60);
-                if (el('ts-detail-interval')) el('ts-detail-interval').value = String(state.settings.app_detail_interval_sec || 10);
-                if (el('ts-chart-label-interval')) el('ts-chart-label-interval').value = String(state.settings.chart_time_label_interval || 0);
+                if (el('ts-global-interval')) {
+                    el('ts-global-interval').value = String(state.settings.traffic_sampling_interval_sec || 60);
+                    window.syncCustomSelect?.(el('ts-global-interval'));
+                }
                 const perAppList = el('ts-per-app-list');
                 if (perAppList && latestTrafficData?.bridges) {
                     const perApp = state.settings.per_app_sampling_interval || {};
-                    perAppList.innerHTML = latestTrafficData.bridges.map(b => {
+                    perAppList.innerHTML = latestTrafficData.bridges.filter(b => !isNetwatchBridge(b)).map(b => {
                         const title = b.app_title || shortAppName(b.app_id) || b.bridge;
                         const currentVal = perApp[b.bridge] || '';
                         const options = [
-                            { v: '', l: '跟随全局' },
-                            { v: '10', l: '10 秒' },
-                            { v: '30', l: '30 秒' },
-                            { v: '60', l: '60 秒' },
-                            { v: '120', l: '120 秒' },
-                            { v: '300', l: '300 秒' },
+                            { v: '', l: i18n('follow_global') },
+                            { v: '10', l: `10 ${i18n('seconds_short')}` },
+                            { v: '30', l: `30 ${i18n('seconds_short')}` },
+                            { v: '60', l: `60 ${i18n('seconds_short')}` },
+                            { v: '120', l: `120 ${i18n('seconds_short')}` },
+                            { v: '300', l: `300 ${i18n('seconds_short')}` },
                         ].map(o => `<option value="${o.v}" ${String(currentVal) === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
                         return `<div class="ts-per-app-item" data-bridge="${b.bridge}">
                             <span class="ts-app-name" title="${b.bridge}">${title}</span>
                             <select class="ts-per-app-select">${options}</select>
                         </div>`;
                     }).join('');
+                    window.enhanceSelects?.(perAppList);
                 }
             }
 
@@ -1274,6 +1530,7 @@ function initTheme() {
                 populateTrafficSettings();
                 trafficSettingsWindow.classList.add('active');
                 document.getElementById('window-backdrop').classList.add('active');
+                lockModalScroll();
             }
 
             async function saveTrafficSettings() {
@@ -1291,16 +1548,31 @@ function initTheme() {
                 const el = (id) => document.getElementById(id);
                 const payload = {
                     refresh_interval_sec: state.settings.refresh_interval_sec,
-                    auto_refresh_enabled: state.settings.auto_refresh_enabled,
                     broadband_domestic_only: state.settings.broadband_domestic_only,
                     nic_realtime_enabled: state.settings.nic_realtime_enabled,
                     nic_realtime_interval_sec: state.settings.nic_realtime_interval_sec,
-                    app_detail_interval_sec: parseInt(el('ts-detail-interval')?.value || '10', 10) || 10,
-                    chart_time_label_interval: parseInt(el('ts-chart-label-interval')?.value || '0', 10) || 0,
+                    chart_time_label_interval: state.settings.chart_time_label_interval,
                     traffic_sampling_enabled: !!el('ts-sampling-enabled')?.checked,
                     traffic_sampling_interval_sec: parseInt(el('ts-global-interval')?.value || '60', 10) || 60,
                     per_app_sampling_interval: perApp,
-                    persistent_traffic_bridges: state.settings.persistent_traffic_bridges || []
+                    persistent_traffic_bridges: state.settings.persistent_traffic_bridges || [],
+                    background_monitor_enabled: state.settings.background_monitor_enabled,
+                    background_monitor_interval_sec: state.settings.background_monitor_interval_sec,
+                    notifications_enabled: state.settings.notifications_enabled,
+                    client_notification_enabled: state.settings.client_notification_enabled !== false,
+                    notify_abnormal_traffic: state.settings.notify_abnormal_traffic,
+                    notify_egress_change: state.settings.notify_egress_change,
+                    notify_connectivity_change: state.settings.notify_connectivity_change,
+                    notify_lan_device_change: state.settings.notify_lan_device_change,
+                    lan_device_offline_after_sec: state.settings.lan_device_offline_after_sec || 180,
+                    lan_device_online_after_sec: state.settings.lan_device_online_after_sec || 0,
+                    lan_device_offline_notify_delay_sec: state.settings.lan_device_offline_notify_delay_sec ?? 120,
+                    lan_device_online_notify_delay_sec: state.settings.lan_device_online_notify_delay_sec ?? 120,
+                    abnormal_traffic_threshold_mbps: state.settings.abnormal_traffic_threshold_mbps,
+                    bark_enabled: state.settings.bark_enabled,
+                    bark_server_url: state.settings.bark_server_url,
+                    bark_device_key: state.settings.bark_device_key,
+                    bark_group: state.settings.bark_group
                 };
                 try {
                     const resp = await fetch('/api/v1/settings', {
@@ -1313,11 +1585,13 @@ function initTheme() {
                     state.settings = { ...state.settings, ...saved };
                     trafficSettingsWindow.classList.remove('active');
                     document.getElementById('window-backdrop').classList.remove('active');
-                    // Re-render traffic to show/hide detail buttons
+                    unlockModalScroll();
+                    updateTrafficAnalysisLink();
+                    // Re-render traffic with saved sampling settings.
                     if (latestTrafficData) renderTraffic(latestTrafficData);
-                    showToast('流量设置已保存', 'success');
+                    showToast(i18n('traffic_settings_saved'), 'success');
                 } catch (e) {
-                    showToast('保存失败: ' + e.message, 'error');
+                    showToast(i18n('save_settings_fail') + ': ' + e.message, 'error');
                 }
             }
 
@@ -1325,158 +1599,9 @@ function initTheme() {
             if (closeTrafficSettingsBtn) closeTrafficSettingsBtn.addEventListener('click', () => {
                 trafficSettingsWindow?.classList.remove('active');
                 document.getElementById('window-backdrop').classList.remove('active');
+                unlockModalScroll();
             });
             if (document.getElementById('ts-save-btn')) document.getElementById('ts-save-btn').addEventListener('click', saveTrafficSettings);
-        }
-
-        // --- App detail floating window ---
-        let appDetailRefreshTimer = null;
-
-        async function openAppDetailWindow(bridge, title, trafficData) {
-            const win = document.getElementById('app-detail-window');
-            const backdrop = document.getElementById('window-backdrop');
-            if (!win) return;
-
-            document.getElementById('app-detail-title').textContent = title || bridge;
-
-            // Initial stats render
-            renderDetailStats(bridge, trafficData);
-
-            // Show window
-            win.classList.add('active');
-            backdrop.classList.add('active');
-
-            // Chart container
-            const chartEl = document.getElementById('app-traffic-chart');
-
-            // Fetch and draw immediately
-            await refreshDetailChart(bridge, chartEl);
-
-            // Auto-refresh while window is open, using user-configured interval
-            stopDetailRefresh();
-            const intervalSec = Math.max(1, Number.parseInt(state.settings.app_detail_interval_sec, 10) || 10);
-            appDetailRefreshTimer = setInterval(async () => {
-                if (!win.classList.contains('active')) {
-                    stopDetailRefresh();
-                    return;
-                }
-                try {
-                    const resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
-                    const data = await resp.json();
-                    renderDetailStats(bridge, data);
-                } catch (_) {}
-                refreshDetailChart(bridge, chartEl);
-            }, intervalSec * 1000);
-        }
-
-        function renderDetailStats(bridge, trafficData) {
-            const statsEl = document.getElementById('app-detail-stats');
-            const b = trafficData?.bridges?.find(x => x.bridge === bridge);
-            if (!b) {
-                statsEl.innerHTML = '<div class="placeholder">无数据</div>';
-                return;
-            }
-            const rx = b.rx_bytes || 0;
-            const tx = b.tx_bytes || 0;
-            const f = (n) => (n || 0).toLocaleString();
-            statsEl.innerHTML =
-                `<div class="app-detail-row app-detail-row-main">` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">下行总计</span><span class="app-detail-stat-value">${formatBytes(rx)}</span></div>` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">上行总计</span><span class="app-detail-stat-value">${formatBytes(tx)}</span></div>` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">合计</span><span class="app-detail-stat-value">${formatBytes(rx + tx)}</span></div>` +
-                `</div>` +
-                `<div class="app-detail-row">` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">收包</span><span class="app-detail-stat-value">${f(b.rx_packets)}</span></div>` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">发包</span><span class="app-detail-stat-value">${f(b.tx_packets)}</span></div>` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">收包丢弃</span><span class="app-detail-stat-value">${f(b.rx_dropped)}</span></div>` +
-                    `<div class="app-detail-stat"><span class="app-detail-stat-label">发包丢弃</span><span class="app-detail-stat-value">${f(b.tx_dropped)}</span></div>` +
-                `</div>`;
-        }
-
-        function stopDetailRefresh() {
-            if (appDetailRefreshTimer) {
-                clearInterval(appDetailRefreshTimer);
-                appDetailRefreshTimer = null;
-            }
-        }
-
-        async function refreshDetailChart(bridge, container) {
-            try {
-                const resp = await fetch(`/api/v1/network/app-traffic/history?bridge=${encodeURIComponent(bridge)}&limit=300`);
-                const points = await resp.json();
-                renderTrafficSVG(container, points);
-            } catch (e) {
-                container.innerHTML = '<div class="placeholder" style="padding:2rem">加载失败</div>';
-            }
-        }
-
-        function renderTrafficSVG(container, points) {
-            if (!points || points.length < 2) {
-                container.innerHTML = '<div class="placeholder" style="padding:2rem">数据不足，等待采样...</div>';
-                return;
-            }
-
-            // Compute deltas (rate) since points are cumulative
-            const deltas = [];
-            for (let i = 1; i < points.length; i++) {
-                deltas.push({
-                    ts: points[i].timestamp || '',
-                    rx: Math.max(0, points[i].rx_bytes - points[i - 1].rx_bytes),
-                    tx: Math.max(0, points[i].tx_bytes - points[i - 1].tx_bytes),
-                });
-            }
-
-            const W = container.clientWidth || 560;
-            const H = Math.max(240, Math.round(W * 0.45));
-            const pad = { top: 16, right: 12, bottom: 28, left: 48 };
-            const cw = W - pad.left - pad.right;
-            const ch = H - pad.top - pad.bottom;
-            const maxVal = Math.max(1, ...deltas.map(d => Math.max(d.rx, d.tx)));
-
-            const xS = (i) => pad.left + (i / Math.max(1, deltas.length - 1)) * cw;
-            const yS = (v) => pad.top + ch - (v / maxVal) * ch;
-
-            let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
-
-            // Grid
-            for (let i = 0; i <= 4; i++) {
-                const y = pad.top + (ch / 4) * i;
-                svg += `<line x1="${pad.left}" y1="${y}" x2="${pad.left + cw}" y2="${y}" stroke="rgba(128,128,128,0.15)" stroke-width="1"/>`;
-                const val = maxVal * (1 - i / 4);
-                svg += `<text x="${pad.left - 6}" y="${y + 4}" fill="#888" font-size="10" text-anchor="end">${formatBytes(val)}</text>`;
-            }
-
-            // X labels
-            const configuredStep = Number.parseInt(state.settings.chart_time_label_interval, 10) || 0;
-            const step = configuredStep > 0 ? configuredStep : Math.max(1, Math.floor(deltas.length / 5));
-            for (let i = 0; i < deltas.length; i += step) {
-                const x = xS(i);
-                const short = (deltas[i].ts.length > 10) ? deltas[i].ts.slice(11, 16) : deltas[i].ts;
-                svg += `<text x="${x}" y="${H - 6}" fill="#888" font-size="10" text-anchor="middle">${short}</text>`;
-            }
-
-            // Build polyline points
-            let rxPts = '', txPts = '';
-            for (let i = 0; i < deltas.length; i++) {
-                const x = xS(i);
-                rxPts += `${x},${yS(deltas[i].rx)} `;
-                txPts += `${x},${yS(deltas[i].tx)} `;
-            }
-
-            svg += `<polyline points="${rxPts.trim()}" fill="none" stroke="#2196F3" stroke-width="2"/>`;
-            svg += `<polyline points="${txPts.trim()}" fill="none" stroke="#4CAF50" stroke-width="2"/>`;
-            svg += `</svg>`;
-
-            container.innerHTML = svg;
-        }
-
-        function formatBytes(n) {
-            if (!n || n <= 0) return '0 B';
-            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-            let i = 0;
-            let v = n;
-            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-            return (i === 0 ? v.toString() : v.toFixed(v < 10 ? 2 : 1)) + ' ' + units[i];
         }
 
         // shortAppName extracts the last dotted segment from an appid,
@@ -1496,8 +1621,8 @@ function initTheme() {
 
             const render = (data) => {
                 if (!data.nics || data.nics.length === 0) {
-                    listEl.innerHTML = `<div class="nic-realtime-item"><small>未配置监控网卡（MONITORED_NICS）</small></div>`;
-                    statusEl.textContent = '无数据';
+                    listEl.innerHTML = `<div class="nic-realtime-item"><small>${i18n('no_monitored_nics')}</small></div>`;
+                    statusEl.textContent = i18n('no_data');
                     return;
                 }
                 listEl.innerHTML = data.nics.map(n => {
@@ -1505,39 +1630,41 @@ function initTheme() {
                     return `
                     <div class="nic-realtime-item">
                         <div class="nic-realtime-head">
-                            <span class="nic-realtime-name">${n.name}</span>
+                            <span class="nic-realtime-name">${escapeHtml(n.name)}</span>
                             <span class="nic-realtime-badge ${isUp ? 'online' : 'offline'}">${isUp ? 'UP' : 'DOWN'}</span>
                         </div>
                         <div class="nic-realtime-rows">
                             <div class="nic-realtime-cell">
-                                <span class="nic-realtime-label">↓ 下行</span>
+                                <span class="nic-realtime-label">↓ ${i18n('rx')}</span>
                                 <span class="nic-realtime-value rx">${formatBitsPerSec(n.rx_bps)}</span>
                             </div>
                             <div class="nic-realtime-cell">
-                                <span class="nic-realtime-label">↑ 上行</span>
+                                <span class="nic-realtime-label">↑ ${i18n('tx')}</span>
                                 <span class="nic-realtime-value tx">${formatBitsPerSec(n.tx_bps)}</span>
                             </div>
                         </div>
-                        <div class="nic-realtime-total">累计 ↓ ${formatBytes(n.rx_total)} / ↑ ${formatBytes(n.tx_total)}</div>
+                        <div class="nic-realtime-total">${i18n('cumulative')} ↓ ${formatBytes(n.rx_total)} / ↑ ${formatBytes(n.tx_total)}</div>
                     </div>`;
                 }).join('');
-                statusEl.textContent = `采样 ${data.timestamp || ''}`;
+                statusEl.textContent = `${i18n('sampled_at')} ${data.timestamp || ''}`;
             };
 
-            const tick = async () => {
+            const tick = async (manual = false) => {
                 try {
+                    if (manual && elements.nicRealtimeRefreshBtn) elements.nicRealtimeRefreshBtn.disabled = true;
                     const resp = await fetch('/api/v1/network/realtime', { cache: 'no-store' });
                     if (!resp.ok) return;
                     render(await resp.json());
-                } catch (_) {}
+                } catch (_) {
+                    if (statusEl) statusEl.textContent = i18n('sampling_failed');
+                } finally {
+                    if (manual && elements.nicRealtimeRefreshBtn) elements.nicRealtimeRefreshBtn.disabled = false;
+                }
             };
+            updateNICRealtimeRefreshButton();
+            elements.nicRealtimeRefreshBtn?.addEventListener('click', () => tick(true));
+            tick();
             startNICRealtimePolling(tick);
-        }
-
-        async function initAutoRefreshToggle() {
-            if (state.autoRefreshInitialized) return;
-            state.autoRefreshInitialized = true;
-            await loadSettings();
         }
 
         function initSSE() {
@@ -1551,9 +1678,102 @@ function initTheme() {
                         renderSummary(summary);
                     } catch (_) {}
                 });
+                es.addEventListener('notification', (ev) => {
+                    try {
+                        handleNotificationEvent(JSON.parse(ev.data));
+                    } catch (_) {}
+                });
                 es.onerror = () => { /* browser will reconnect */ };
                 state.sse = es;
             } catch (_) {}
+        }
+
+        async function getLazycatGateway() {
+            if (state.lzcGatewayPromise) return state.lzcGatewayPromise;
+            state.lzcGatewayPromise = (async () => {
+                const Gateway = window.lzcAPIGateway || window.LazycatSDK?.lzcAPIGateway;
+                if (!Gateway) {
+                    throw new Error('Lazycat SDK 未加载，请确认当前客户端支持系统通知');
+                }
+                return new Gateway(window.location.origin, false);
+            })();
+            state.lzcGatewayPromise.catch(() => { state.lzcGatewayPromise = null; });
+            return state.lzcGatewayPromise;
+        }
+
+        async function notifyCurrentDevice(event) {
+            if (state.notificationUnsupported) {
+                throw new Error('当前客户端未注册系统通知服务');
+            }
+            const gateway = await getLazycatGateway();
+            const device = await gateway.currentDevice;
+            await device.notification.Notify({
+                title: event.title || 'Netwatch',
+                body: event.body || '',
+                deeplinkUrl: event.deeplink_url || 'lzc://app/cloud.lazycat.app.netwatch'
+            });
+        }
+
+        function markNotificationSeen(id) {
+            if (!Number.isFinite(id) || id <= state.notificationLastID) return;
+            state.notificationLastID = id;
+            localStorage.setItem('netwatch_notification_last_id', String(id));
+        }
+
+        function handleNotificationEvent(event) {
+            const id = Number(event?.id || 0);
+            if (!id || id <= state.notificationLastID) return;
+            if (!state.settings.notifications_enabled || state.settings.client_notification_enabled === false) {
+                markNotificationSeen(id);
+                return;
+            }
+            markNotificationSeen(id);
+            notifyCurrentDevice(event).catch((err) => {
+                console.debug('lazycat notification unavailable', err);
+                if (isNotificationUnsupportedError(err)) {
+                    disableClientNotifications();
+                }
+            });
+        }
+
+        async function pollNotificationEvents() {
+            if (!state.settings.background_monitor_enabled || !state.settings.notifications_enabled || state.settings.client_notification_enabled === false || state.notificationUnsupported) return;
+            try {
+                const resp = await fetch(`/api/v1/notifications/events?since=${state.notificationLastID}`, { cache: 'no-store' });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                (data.events || []).forEach(handleNotificationEvent);
+            } catch (err) {
+                console.debug('notification poll failed', err);
+            }
+        }
+
+        function initNotificationPolling() {
+            if (state.notificationPoller) {
+                clearInterval(state.notificationPoller);
+                state.notificationPoller = null;
+            }
+            if (!state.settings.background_monitor_enabled || !state.settings.notifications_enabled || state.settings.client_notification_enabled === false || state.notificationUnsupported) return;
+            pollNotificationEvents();
+            state.notificationPoller = setInterval(pollNotificationEvents, 15000);
+        }
+
+        function isNotificationUnsupportedError(err) {
+            const message = String(err?.message || err || '').toLowerCase();
+            return message.includes('notificationservice') && (
+                message.includes('not registered') ||
+                message.includes('unimplemented') ||
+                message.includes('unknown service')
+            );
+        }
+
+        function disableClientNotifications() {
+            state.notificationUnsupported = true;
+            localStorage.setItem('netwatch_notification_unsupported', 'true');
+            if (state.notificationPoller) {
+                clearInterval(state.notificationPoller);
+                state.notificationPoller = null;
+            }
         }
 
         function initTrace() {
@@ -1579,20 +1799,20 @@ function initTheme() {
             const renderTraceRows = (data) => {
                 const hops = Array.isArray(data.hops) ? data.hops : [];
                 if (hops.length === 0) {
-                    out.innerHTML = '<div class="trace-empty">未返回可用跳点</div>';
+                    out.innerHTML = `<div class="trace-empty">${i18n('trace_no_hops')}</div>`;
                     return;
                 }
 
                 out.innerHTML = hops.map(h => {
                     const primary = h.ip || '*';
-                    const secondary = h.location || (primary === '*' ? '超时' : '归属地查询中');
+                    const secondary = h.location || (primary === '*' ? i18n('timeout') : i18n('geo_lookup_pending'));
                     const timedOut = !h.ip && !h.host;
-                    const latency = timedOut ? '超时' : (Number.isFinite(h.latency_ms) && h.latency_ms > 0 ? `${h.latency_ms} ms` : '--');
+                    const latency = timedOut ? i18n('timeout') : (Number.isFinite(h.latency_ms) && h.latency_ms > 0 ? `${h.latency_ms} ms` : '--');
                     const latencyClass = timedOut ? 'fail' : (h.latency_ms > 200 ? 'warn' : '');
                     return `
                         <div class="trace-hop">
-                            <div class="trace-hop-host">${primary}</div>
-                            <div class="trace-hop-ip">${secondary}</div>
+                            <div class="trace-hop-host">${escapeHtml(primary)}</div>
+                            <div class="trace-hop-ip">${escapeHtml(secondary)}</div>
                             <div class="trace-hop-latency ${latencyClass}">${latency}</div>
                         </div>
                     `;
@@ -1607,11 +1827,11 @@ function initTheme() {
                 state.traceResult = null;
                 openTraceWindow();
                 renderTraceSummary([
-                    { label: '目标', value: host },
-                    { label: '状态', value: '追踪中' },
-                    { label: '工具', value: 'mtr' }
+                    { label: i18n('target'), value: host },
+                    { label: i18n('status_col'), value: i18n('tracing') },
+                    { label: i18n('tool'), value: 'mtr' }
                 ]);
-                out.innerHTML = '<div class="trace-empty">正在采集路径信息...</div>';
+                out.innerHTML = `<div class="trace-empty">${i18n('collecting_trace')}</div>`;
                 try {
                     await fetch(`/api/v1/diagnostics/trace?host=${encodeURIComponent(host)}`, {
                         method: 'POST',
@@ -1623,11 +1843,11 @@ function initTheme() {
                         const data = await resp.json();
                         if (data.error) {
                             renderTraceSummary([
-                                { label: '目标', value: data.target || host },
-                                { label: '状态', value: '失败' },
-                                { label: '工具', value: data.tool || 'mtr' }
+                                { label: i18n('target'), value: data.target || host },
+                                { label: i18n('status_col'), value: i18n('failed') },
+                                { label: i18n('tool'), value: data.tool || 'mtr' }
                             ]);
-                            out.innerHTML = `<div class="trace-empty">错误: ${data.error}</div>`;
+                            out.innerHTML = `<div class="trace-empty">${i18n('error')}: ${data.error}</div>`;
                             if (state.tracePoller) {
                                 clearInterval(state.tracePoller);
                                 state.tracePoller = null;
@@ -1637,9 +1857,9 @@ function initTheme() {
 
                         state.traceResult = data;
                         renderTraceSummary([
-                            { label: '目标', value: data.target || host },
-                            { label: '状态', value: data.running ? '追踪中' : `${(data.hops || []).length} 跳` },
-                            { label: '工具', value: data.tool || 'mtr' }
+                            { label: i18n('target'), value: data.target || host },
+                            { label: i18n('status_col'), value: data.running ? i18n('tracing') : `${(data.hops || []).length} ${i18n('hops')}` },
+                            { label: i18n('tool'), value: data.tool || 'mtr' }
                         ]);
                         renderTraceRows(data);
                         if (detailsBtn) detailsBtn.disabled = false;
@@ -1655,11 +1875,11 @@ function initTheme() {
                     state.tracePoller = setInterval(poll, 1000);
                 } catch (e) {
                     renderTraceSummary([
-                        { label: '目标', value: host },
-                        { label: '状态', value: '请求失败' },
-                        { label: '工具', value: 'mtr' }
+                        { label: i18n('target'), value: host },
+                        { label: i18n('status_col'), value: i18n('request_failed') },
+                        { label: i18n('tool'), value: 'mtr' }
                     ]);
-                    out.innerHTML = `<div class="trace-empty">请求失败: ${e.message}</div>`;
+                    out.innerHTML = `<div class="trace-empty">${i18n('request_failed')}: ${e.message}</div>`;
                 } finally {
                     btn.disabled = false;
                 }
@@ -1695,12 +1915,6 @@ function initTheme() {
         }
 
         function applySettingsToForm() {
-            if (elements.settingAutoRefreshEnabled) {
-                elements.settingAutoRefreshEnabled.checked = !!state.settings.auto_refresh_enabled;
-            }
-            if (elements.settingRefreshIntervalSec) {
-                elements.settingRefreshIntervalSec.value = String(state.settings.refresh_interval_sec || 10);
-            }
             if (elements.settingBroadbandDomesticOnly) {
                 elements.settingBroadbandDomesticOnly.checked = !!state.settings.broadband_domestic_only;
             }
@@ -1710,34 +1924,158 @@ function initTheme() {
             if (elements.settingNICRealtimeIntervalSec) {
                 elements.settingNICRealtimeIntervalSec.value = String(state.settings.nic_realtime_interval_sec || 1);
                 elements.settingNICRealtimeIntervalSec.disabled = !state.settings.nic_realtime_enabled;
+                window.syncCustomSelect?.(elements.settingNICRealtimeIntervalSec);
+            }
+            if (elements.settingBackgroundMonitorEnabled) {
+                elements.settingBackgroundMonitorEnabled.checked = !!state.settings.background_monitor_enabled;
+            }
+            if (elements.settingBackgroundMonitorIntervalSec) {
+                elements.settingBackgroundMonitorIntervalSec.value = String(state.settings.background_monitor_interval_sec || 60);
+                elements.settingBackgroundMonitorIntervalSec.disabled = !state.settings.background_monitor_enabled;
+                window.syncCustomSelect?.(elements.settingBackgroundMonitorIntervalSec);
+            }
+            const notificationsDisabled = !state.settings.background_monitor_enabled || !state.settings.notifications_enabled;
+            if (elements.settingNotificationsEnabled) {
+                elements.settingNotificationsEnabled.checked = !!state.settings.notifications_enabled;
+                elements.settingNotificationsEnabled.disabled = !state.settings.background_monitor_enabled;
+            }
+            if (elements.settingNotifyAbnormalTraffic) {
+                elements.settingNotifyAbnormalTraffic.checked = state.settings.notify_abnormal_traffic !== false;
+                elements.settingNotifyAbnormalTraffic.disabled = notificationsDisabled;
+            }
+            if (elements.settingAbnormalTrafficThresholdMbps) {
+                elements.settingAbnormalTrafficThresholdMbps.value = String(state.settings.abnormal_traffic_threshold_mbps || 100);
+                elements.settingAbnormalTrafficThresholdMbps.disabled = notificationsDisabled || state.settings.notify_abnormal_traffic === false;
+                window.syncCustomSelect?.(elements.settingAbnormalTrafficThresholdMbps);
+            }
+            if (elements.settingNotifyEgressChange) {
+                elements.settingNotifyEgressChange.checked = state.settings.notify_egress_change !== false;
+                elements.settingNotifyEgressChange.disabled = notificationsDisabled;
+            }
+            if (elements.settingNotifyConnectivityChange) {
+                elements.settingNotifyConnectivityChange.checked = state.settings.notify_connectivity_change !== false;
+                elements.settingNotifyConnectivityChange.disabled = notificationsDisabled;
+            }
+            if (elements.settingNotifyLANDeviceChange) {
+                elements.settingNotifyLANDeviceChange.checked = state.settings.notify_lan_device_change !== false;
+                elements.settingNotifyLANDeviceChange.disabled = notificationsDisabled;
+            }
+            if (elements.settingClientNotificationEnabled) {
+                elements.settingClientNotificationEnabled.checked = state.settings.client_notification_enabled !== false;
+                elements.settingClientNotificationEnabled.disabled = notificationsDisabled || !state.settings.bark_enabled;
+            }
+            if (elements.settingBarkEnabled) {
+                elements.settingBarkEnabled.checked = !!state.settings.bark_enabled;
+                elements.settingBarkEnabled.disabled = notificationsDisabled;
+            }
+            const barkInputsDisabled = notificationsDisabled || !state.settings.bark_enabled;
+            if (elements.settingBarkServerURL) {
+                elements.settingBarkServerURL.value = state.settings.bark_server_url || 'https://api.day.app';
+                elements.settingBarkServerURL.disabled = barkInputsDisabled;
+            }
+            if (elements.settingBarkDeviceKey) {
+                elements.settingBarkDeviceKey.value = state.settings.bark_device_key || '';
+                elements.settingBarkDeviceKey.disabled = barkInputsDisabled;
+            }
+            if (elements.settingBarkGroup) {
+                elements.settingBarkGroup.value = state.settings.bark_group || 'Netwatch';
+                elements.settingBarkGroup.disabled = barkInputsDisabled;
+            }
+            if (elements.testBarkNotification) {
+                elements.testBarkNotification.disabled = barkInputsDisabled;
+            }
+            if (elements.settingDNDEnabled) {
+                elements.settingDNDEnabled.checked = !!state.settings.dnd_enabled;
+                elements.settingDNDEnabled.disabled = notificationsDisabled;
+            }
+            if (elements.settingDNDStart) {
+                elements.settingDNDStart.value = state.settings.dnd_start || '22:00';
+                elements.settingDNDStart.disabled = notificationsDisabled || !state.settings.dnd_enabled;
+            }
+            if (elements.settingDNDEnd) {
+                elements.settingDNDEnd.value = state.settings.dnd_end || '08:00';
+                elements.settingDNDEnd.disabled = notificationsDisabled || !state.settings.dnd_enabled;
+            }
+            if (elements.settingScheduledNotifyEnabled) {
+                elements.settingScheduledNotifyEnabled.checked = !!state.settings.scheduled_notify_enabled;
+                elements.settingScheduledNotifyEnabled.disabled = notificationsDisabled;
+            }
+            if (elements.settingScheduledNotifyTime) {
+                elements.settingScheduledNotifyTime.value = state.settings.scheduled_notify_time || '09:00';
+                elements.settingScheduledNotifyTime.disabled = notificationsDisabled || !state.settings.scheduled_notify_enabled;
+            }
+            updateNICRealtimeRefreshButton();
+        }
+
+        async function testBarkNotification() {
+            try {
+                await saveSettings();
+                const resp = await fetch('/api/v1/notifications/bark/test', { method: 'POST' });
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.error || `HTTP ${resp.status}`);
+                }
+                showToast('Bark 测试推送已发送', 'success');
+            } catch (err) {
+                showToast(`Bark 测试失败: ${err.message}`, 'error');
             }
         }
 
         async function loadSettings() {
             try {
-                const [settingsResp, autoResp] = await Promise.all([
-                    fetch('/api/v1/settings', { cache: 'no-store' }),
-                    fetch('/api/v1/auto-refresh', { cache: 'no-store' })
-                ]);
+                const settingsResp = await fetch('/api/v1/settings', { cache: 'no-store' });
+                if (!settingsResp.ok) throw new Error(`HTTP ${settingsResp.status}`);
                 const settingsData = await settingsResp.json();
-                const autoData = await autoResp.json();
                 state.settings = {
                     refresh_interval_sec: settingsData.refresh_interval_sec || state.refreshInterval || 10,
-                    auto_refresh_enabled: !!autoData.enabled,
                     broadband_domestic_only: !!settingsData.broadband_domestic_only,
                     nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
                     nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
-                    app_detail_interval_sec: settingsData.app_detail_interval_sec || 10,
                     chart_time_label_interval: settingsData.chart_time_label_interval || 0,
                     traffic_sampling_enabled: settingsData.traffic_sampling_enabled !== false,
                     traffic_sampling_interval_sec: settingsData.traffic_sampling_interval_sec || 60,
                     per_app_sampling_interval: settingsData.per_app_sampling_interval || {},
-                    persistent_traffic_bridges: settingsData.persistent_traffic_bridges || []
+                    persistent_traffic_bridges: settingsData.persistent_traffic_bridges || [],
+                    background_monitor_enabled: !!settingsData.background_monitor_enabled,
+                    background_monitor_interval_sec: settingsData.background_monitor_interval_sec || 60,
+                    notifications_enabled: !!settingsData.notifications_enabled,
+                    client_notification_enabled: settingsData.client_notification_enabled !== false,
+                    notify_abnormal_traffic: settingsData.notify_abnormal_traffic !== false,
+                    notify_egress_change: settingsData.notify_egress_change !== false,
+                    notify_connectivity_change: settingsData.notify_connectivity_change !== false,
+                    notify_lan_device_change: settingsData.notify_lan_device_change !== false,
+                    lan_device_offline_after_sec: settingsData.lan_device_offline_after_sec ?? 180,
+                    lan_device_online_after_sec: settingsData.lan_device_online_after_sec ?? 0,
+                    lan_device_offline_notify_delay_sec: settingsData.lan_device_offline_notify_delay_sec ?? 120,
+                    lan_device_online_notify_delay_sec: settingsData.lan_device_online_notify_delay_sec ?? 120,
+                    abnormal_traffic_threshold_mbps: settingsData.abnormal_traffic_threshold_mbps || 100,
+                    bark_enabled: !!settingsData.bark_enabled,
+                    bark_server_url: settingsData.bark_server_url || 'https://api.day.app',
+                    bark_device_key: settingsData.bark_device_key || '',
+                    bark_group: settingsData.bark_group || 'Netwatch',
+                    dnd_enabled: !!settingsData.dnd_enabled,
+                    dnd_start: settingsData.dnd_start || '22:00',
+                    dnd_end: settingsData.dnd_end || '08:00',
+                    scheduled_notify_enabled: !!settingsData.scheduled_notify_enabled,
+                    scheduled_notify_time: settingsData.scheduled_notify_time || '09:00'
                 };
                 applySettingsToForm();
+                updateTrafficAnalysisLink();
+                initNotificationPolling();
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        function updateNICRealtimeRefreshButton() {
+            if (!elements.nicRealtimeRefreshBtn) return;
+            elements.nicRealtimeRefreshBtn.style.display = state.settings.nic_realtime_enabled ? 'none' : '';
+        }
+
+        function updateTrafficAnalysisLink() {
+            const link = document.getElementById('traffic-analysis-link');
+            if (!link) return;
+            link.hidden = !state.settings.traffic_sampling_enabled;
         }
 
         function stopNICRealtimePolling() {
@@ -1751,30 +2089,49 @@ function initTheme() {
             stopNICRealtimePolling();
             if (!state.settings.nic_realtime_enabled) {
                 if (elements.nicRealtimeStatus) {
-                    elements.nicRealtimeStatus.textContent = '已关闭实时刷新';
+                    elements.nicRealtimeStatus.textContent = i18n('real_time_rate_disabled');
                 }
                 applySettingsToForm();
                 return;
             }
             const intervalSec = Math.max(1, Number.parseInt(state.settings.nic_realtime_interval_sec, 10) || 1);
-            tick();
             state.nicRealtimeInterval = setInterval(tick, intervalSec * 1000);
             applySettingsToForm();
         }
 
         async function saveSettings() {
             const payload = {
-                refresh_interval_sec: parseInt(elements.settingRefreshIntervalSec?.value || '10', 10) || 10,
-                auto_refresh_enabled: !!elements.settingAutoRefreshEnabled?.checked,
+                refresh_interval_sec: state.settings.refresh_interval_sec,
                 broadband_domestic_only: !!elements.settingBroadbandDomesticOnly?.checked,
                 nic_realtime_enabled: !!elements.settingNICRealtimeEnabled?.checked,
                 nic_realtime_interval_sec: parseInt(elements.settingNICRealtimeIntervalSec?.value || '1', 10) || 1,
-                app_detail_interval_sec: state.settings.app_detail_interval_sec,
                 chart_time_label_interval: state.settings.chart_time_label_interval,
                 traffic_sampling_enabled: state.settings.traffic_sampling_enabled,
                 traffic_sampling_interval_sec: state.settings.traffic_sampling_interval_sec,
                 per_app_sampling_interval: state.settings.per_app_sampling_interval,
-                persistent_traffic_bridges: state.settings.persistent_traffic_bridges
+                persistent_traffic_bridges: state.settings.persistent_traffic_bridges,
+                background_monitor_enabled: !!elements.settingBackgroundMonitorEnabled?.checked,
+                background_monitor_interval_sec: parseInt(elements.settingBackgroundMonitorIntervalSec?.value || '60', 10) || 60,
+                notifications_enabled: !!elements.settingNotificationsEnabled?.checked,
+                client_notification_enabled: !!elements.settingClientNotificationEnabled?.checked || !elements.settingBarkEnabled?.checked,
+                notify_abnormal_traffic: !!elements.settingNotifyAbnormalTraffic?.checked,
+                notify_egress_change: !!elements.settingNotifyEgressChange?.checked,
+                notify_connectivity_change: !!elements.settingNotifyConnectivityChange?.checked,
+                notify_lan_device_change: state.settings.notify_lan_device_change !== false,
+                lan_device_offline_after_sec: state.settings.lan_device_offline_after_sec || 180,
+                lan_device_online_after_sec: state.settings.lan_device_online_after_sec || 0,
+                lan_device_offline_notify_delay_sec: state.settings.lan_device_offline_notify_delay_sec ?? 120,
+                lan_device_online_notify_delay_sec: state.settings.lan_device_online_notify_delay_sec ?? 120,
+                abnormal_traffic_threshold_mbps: parseInt(elements.settingAbnormalTrafficThresholdMbps?.value || '100', 10) || 100,
+                bark_enabled: !!elements.settingBarkEnabled?.checked,
+                bark_server_url: elements.settingBarkServerURL?.value?.trim() || 'https://api.day.app',
+                bark_device_key: elements.settingBarkDeviceKey?.value?.trim() || '',
+                bark_group: elements.settingBarkGroup?.value?.trim() || 'Netwatch',
+                dnd_enabled: !!elements.settingDNDEnabled?.checked,
+                dnd_start: elements.settingDNDStart?.value || '22:00',
+                dnd_end: elements.settingDNDEnd?.value || '08:00',
+                scheduled_notify_enabled: !!elements.settingScheduledNotifyEnabled?.checked,
+                scheduled_notify_time: elements.settingScheduledNotifyTime?.value || '09:00'
             };
 
             try {
@@ -1786,17 +2143,16 @@ function initTheme() {
                 if (!settingsResp.ok) {
                     throw new Error('settings save failed');
                 }
-                await fetch(`/api/v1/auto-refresh?enabled=${payload.auto_refresh_enabled}`, { method: 'POST' });
                 state.settings = { ...state.settings, ...payload };
                 state.refreshInterval = payload.refresh_interval_sec;
                 applySettingsToForm();
-                startAutoRefreshTimer();
                 state.nicRealtimeInitialized = false;
                 initNICRealtime();
-                showToast('设置已保存', 'success');
+                initNotificationPolling();
+                showToast(i18n('save_settings_success'), 'success');
             } catch (error) {
                 console.error(error);
-                showToast('设置保存失败', 'error');
+                showToast(i18n('save_settings_fail'), 'error');
             }
         }
 
@@ -1806,15 +2162,12 @@ function initTheme() {
             initTheme();
             initWithRetry();
 
-            // 页面可见性变化：隐藏时暂停定时刷新，可见时恢复
             document.addEventListener('visibilitychange', () => {
-                if (document.hidden) {
-                    stopAutoRefreshTimer();
-                } else {
+                if (!document.hidden) {
                     loadSummary(false, true);
-                    startAutoRefreshTimer();
                 }
             });
         }
 
         setTimeout(boot, 100);
+})();

@@ -13,6 +13,11 @@ chmod 0644 dist/certs/ca-certificates.crt
 mkdir -p dist/rootfs/etc
 cp -f /etc/protocols dist/rootfs/etc/protocols
 chmod 0644 dist/rootfs/etc/protocols
+if [ -f /usr/share/nmap/nmap-mac-prefixes ]; then
+  mkdir -p dist/rootfs/usr/share/nmap
+  cp -f /usr/share/nmap/nmap-mac-prefixes dist/rootfs/usr/share/nmap/nmap-mac-prefixes
+  chmod 0644 dist/rootfs/usr/share/nmap/nmap-mac-prefixes
+fi
 
 MTR_BIN="$(command -v mtr)"
 MTR_PACKET_BIN="$(command -v mtr-packet)"

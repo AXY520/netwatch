@@ -12,8 +12,21 @@ import (
 )
 
 func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectivity {
-	domestic := probeTargets(ctx, s.cfg.DomesticSites, s.cfg.HTTPTimeout)
-	global := probeTargets(ctx, s.cfg.GlobalSites, s.cfg.HTTPTimeout)
+	batchCtx, batchCancel := context.WithTimeout(ctx, 4*time.Second)
+	defer batchCancel()
+
+	var domestic, global []TargetResult
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		domestic = probeTargets(batchCtx, s.cfg.DomesticSites, s.cfg.HTTPTimeout)
+	}()
+	go func() {
+		defer wg.Done()
+		global = probeTargets(batchCtx, s.cfg.GlobalSites, s.cfg.HTTPTimeout)
+	}()
+	wg.Wait()
 
 	return WebsiteConnectivity{
 		GeneratedAt:    localTimestamp(),
@@ -27,14 +40,14 @@ func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectiv
 // probeClient 共享 Transport 开启 keep-alive，后续探测复用连接，
 // 这样我们测到的 HEAD 耗时约等于 1 个真实往返 RTT（TLS 握手只在第一次付代价）。
 var probeClient = &http.Client{
-	Timeout: 5 * time.Second,
+	Timeout: 4 * time.Second,
 	Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          20,
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   4 * time.Second,
-		ResponseHeaderTimeout: 4 * time.Second,
+		TLSHandshakeTimeout:   2 * time.Second,
+		ResponseHeaderTimeout: 2 * time.Second,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	},
 }
@@ -93,23 +106,26 @@ func probeHTTPTarget(ctx context.Context, target SiteTarget, timeout time.Durati
 	}
 	defer resp.Body.Close()
 
-	// 某些站点禁用 HEAD，返回 405：回退到 GET 并丢弃 body
+	// HEAD 返回 405：回退到 GET
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		getStart := time.Now()
-		req2, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target.URL, nil)
+		_ = resp.Body.Close()
+		newCtx, newCancel := context.WithTimeout(reqCtx, 3*time.Second)
+		defer newCancel()
+		start := time.Now()
+		req2, err := http.NewRequestWithContext(newCtx, http.MethodGet, target.URL, nil)
 		if err == nil {
 			req2.Header.Set("User-Agent", "netwatch/0.5")
 			resp2, err := probeClient.Do(req2)
 			if err == nil {
-				_, _ = io.Copy(io.Discard, io.LimitReader(resp2.Body, 512))
+				_, _ = io.Copy(io.Discard, resp2.Body)
 				resp2.Body.Close()
-				elapsed = time.Since(getStart)
-				result.Status = statusFromHTTP(resp2.StatusCode)
-				result.LatencyMS = elapsed.Milliseconds()
+				result.LatencyMS = time.Since(start).Milliseconds()
 				return result
 			}
 		}
+		result.Status = StatusDown
+		result.LatencyMS = time.Since(start).Milliseconds()
+		return result
 	}
 
 	result.LatencyMS = elapsed.Milliseconds()
@@ -118,10 +134,9 @@ func probeHTTPTarget(ctx context.Context, target SiteTarget, timeout time.Durati
 }
 
 func statusFromHTTP(code int) ProbeStatus {
-	switch {
-	case code >= 200 && code < 600:
+	// 只要有 HTTP 响应就算正常，延迟才是前端关心的
+	if code > 0 {
 		return StatusOK
-	default:
-		return StatusUnknown
 	}
+	return StatusUnknown
 }

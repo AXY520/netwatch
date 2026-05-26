@@ -130,6 +130,26 @@ type BridgeAppInfo struct {
 	CreatedAt      int64  // earliest container creation unix timestamp
 }
 
+// ContainerRuntimeInfo is the small runtime slice netwatch needs from Docker.
+// Docker's list endpoint does not include HostConfig.NetworkMode or the real
+// host PID, so ListContainerRuntime joins /containers/json with per-container
+// inspect data. This is intentionally kept independent from Lazycat app APIs:
+// labels are enough to group most lzc-docker containers by app/project.
+type ContainerRuntimeInfo struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Image       string            `json:"image,omitempty"`
+	AppID       string            `json:"app_id,omitempty"`
+	Project     string            `json:"project,omitempty"`
+	State       string            `json:"state,omitempty"`
+	Status      string            `json:"status,omitempty"`
+	Created     int64             `json:"created,omitempty"`
+	NetworkMode string            `json:"network_mode,omitempty"`
+	PID         int               `json:"pid,omitempty"`
+	Running     bool              `json:"running,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
 // BuildBridgeMap returns a "host bridge name → app info" map by joining the
 // docker daemon's network list (which carries the bridge name option) with
 // the container list (which carries the `lzcapp.app-id` label).
@@ -196,13 +216,85 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	return out, nil
 }
 
+// ListContainerRuntime returns inspected container metadata for all containers.
+func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
+	if !Available() {
+		return nil, errors.New("docker socket not mounted")
+	}
+	containers, err := listContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ContainerRuntimeInfo, 0, len(containers))
+	for _, c := range containers {
+		info := ContainerRuntimeInfo{
+			ID:      c.ID,
+			Name:    firstContainerName(c.Names),
+			Image:   c.Image,
+			AppID:   c.Labels["lzcapp.app-id"],
+			Project: c.Labels["com.docker.compose.project"],
+			State:   c.State,
+			Status:  c.Status,
+			Created: c.Created,
+			Labels:  c.Labels,
+		}
+		inspect, err := inspectContainer(ctx, c.ID)
+		if err == nil {
+			if inspect.ID != "" {
+				info.ID = inspect.ID
+			}
+			if inspect.Name != "" {
+				info.Name = strings.TrimPrefix(inspect.Name, "/")
+			}
+			if inspect.Config.Image != "" {
+				info.Image = inspect.Config.Image
+			}
+			if inspect.Config.Labels != nil {
+				info.Labels = inspect.Config.Labels
+				info.AppID = inspect.Config.Labels["lzcapp.app-id"]
+				info.Project = inspect.Config.Labels["com.docker.compose.project"]
+			}
+			info.NetworkMode = inspect.HostConfig.NetworkMode
+			info.PID = inspect.State.Pid
+			info.Running = inspect.State.Running
+			if inspect.State.Status != "" {
+				info.State = inspect.State.Status
+			}
+			if created := parseDockerCreated(inspect.Created); created > 0 {
+				info.Created = created
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
 type containerSummary struct {
 	ID      string            `json:"Id"`
 	Names   []string          `json:"Names"`
+	Image   string            `json:"Image"`
 	Labels  map[string]string `json:"Labels"`
 	State   string            `json:"State"`   // "running", "exited", "paused", etc.
 	Status  string            `json:"Status"`  // human-readable, e.g. "Up 2 hours", "Exited (0) 5 days ago"
 	Created int64             `json:"Created"` // unix timestamp
+}
+
+type containerInspect struct {
+	ID      string `json:"Id"`
+	Name    string `json:"Name"`
+	Created string `json:"Created"`
+	State   struct {
+		Status  string `json:"Status"`
+		Running bool   `json:"Running"`
+		Pid     int    `json:"Pid"`
+	} `json:"State"`
+	Config struct {
+		Image  string            `json:"Image"`
+		Labels map[string]string `json:"Labels"`
+	} `json:"Config"`
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 type networkSummary struct {
@@ -226,6 +318,35 @@ func listNetworks(ctx context.Context) ([]networkSummary, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func inspectContainer(ctx context.Context, id string) (containerInspect, error) {
+	var out containerInspect
+	if err := getJSON(ctx, "http://docker/containers/"+id+"/json", &out); err != nil {
+		return containerInspect{}, err
+	}
+	return out, nil
+}
+
+func firstContainerName(names []string) string {
+	for _, name := range names {
+		name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+		if name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func parseDockerCreated(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t.Unix()
+	}
+	return 0
 }
 
 func getJSON(ctx context.Context, url string, target any) error {

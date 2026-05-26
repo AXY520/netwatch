@@ -4,18 +4,27 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
-const maxAppTrafficPoints = 300
+const maxAppTrafficPoints = 1440
 
 // AppTrafficPoint is a single sample of cumulative rx/tx bytes for one bridge.
 type AppTrafficPoint struct {
 	Timestamp string `json:"timestamp"`
 	RxBytes   uint64 `json:"rx_bytes"`
 	TxBytes   uint64 `json:"tx_bytes"`
+}
+
+type AppTrafficTopItem struct {
+	Bridge     string  `json:"bridge"`
+	RxDelta    uint64  `json:"rx_delta"`
+	TxDelta    uint64  `json:"tx_delta"`
+	TotalDelta uint64  `json:"total_delta"`
+	PeakBps    float64 `json:"peak_bps"`
 }
 
 type appTrafficHistoryStore struct {
@@ -69,12 +78,7 @@ func (s *appTrafficHistoryStore) sample(extraBridges []string) {
 	}
 	s.mu.Unlock()
 
-	go func() {
-		body, _ := json.Marshal(fullSnap)
-		if body != nil {
-			_ = os.WriteFile(s.path, body, 0o644)
-		}
-	}()
+	_ = writeJSONFile(s.path, fullSnap, false)
 }
 
 // sampleWithTiming samples bridges whose interval has elapsed since lastSampled.
@@ -122,12 +126,27 @@ func (s *appTrafficHistoryStore) sampleWithTiming(extraBridges []string, lastSam
 	}
 	s.mu.Unlock()
 
-	go func() {
-		body, _ := json.Marshal(fullSnap)
-		if body != nil {
-			_ = os.WriteFile(s.path, body, 0o644)
-		}
-	}()
+	_ = writeJSONFile(s.path, fullSnap, false)
+}
+
+func (s *appTrafficHistoryStore) sampleOne(name string, now time.Time) bool {
+	if !strings.HasPrefix(name, lzcBridgePrefix) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(sysClassNetDir, name, "statistics")); err != nil {
+		return false
+	}
+
+	s.mu.Lock()
+	s.sampleBridge(name, now)
+	fullSnap := make(map[string][]AppTrafficPoint, len(s.history))
+	for k, v := range s.history {
+		fullSnap[k] = append([]AppTrafficPoint(nil), v...)
+	}
+	s.mu.Unlock()
+
+	_ = writeJSONFile(s.path, fullSnap, false)
+	return true
 }
 
 // sampleBridge reads counters for a single bridge and appends a point.
@@ -151,6 +170,122 @@ func (s *appTrafficHistoryStore) snapshot(bridge string, limit int) []AppTraffic
 		return append([]AppTrafficPoint(nil), pts...)
 	}
 	return append([]AppTrafficPoint(nil), pts[len(pts)-limit:]...)
+}
+
+// snapshotSince returns history points newer than since. It includes the
+// previous point when available so rate calculations can cover the first span.
+func (s *appTrafficHistoryStore) snapshotSince(bridge string, since time.Time, limit int) []AppTrafficPoint {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	pts := s.history[bridge]
+	if since.IsZero() {
+		return limitPoints(pts, limit)
+	}
+
+	start := -1
+	for i, p := range pts {
+		ts, err := time.ParseInLocation(time.DateTime, p.Timestamp, time.Local)
+		if err != nil {
+			continue
+		}
+		if !ts.Before(since) {
+			start = i
+			if start > 0 {
+				start--
+			}
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	return limitPoints(pts[start:], limit)
+}
+
+func limitPoints(pts []AppTrafficPoint, limit int) []AppTrafficPoint {
+	if limit <= 0 || limit >= len(pts) {
+		return append([]AppTrafficPoint(nil), pts...)
+	}
+	return append([]AppTrafficPoint(nil), pts[len(pts)-limit:]...)
+}
+
+func (s *appTrafficHistoryStore) topSince(since time.Time, limit int) []AppTrafficTopItem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]AppTrafficTopItem, 0, len(s.history))
+	for bridge, pts := range s.history {
+		scoped := scopePointsSince(pts, since)
+		if len(scoped) < 2 {
+			continue
+		}
+		var rxDelta, txDelta uint64
+		var peak float64
+		for i := 1; i < len(scoped); i++ {
+			prev := scoped[i-1]
+			curr := scoped[i]
+			if curr.RxBytes < prev.RxBytes || curr.TxBytes < prev.TxBytes {
+				continue
+			}
+			rx := curr.RxBytes - prev.RxBytes
+			tx := curr.TxBytes - prev.TxBytes
+			rxDelta += rx
+			txDelta += tx
+			t1, err1 := time.ParseInLocation(time.DateTime, prev.Timestamp, time.Local)
+			t2, err2 := time.ParseInLocation(time.DateTime, curr.Timestamp, time.Local)
+			if err1 == nil && err2 == nil {
+				seconds := t2.Sub(t1).Seconds()
+				if seconds > 0 {
+					if bps := float64(rx+tx) / seconds; bps > peak {
+						peak = bps
+					}
+				}
+			}
+		}
+		total := rxDelta + txDelta
+		if total == 0 && peak == 0 {
+			continue
+		}
+		out = append(out, AppTrafficTopItem{
+			Bridge:     bridge,
+			RxDelta:    rxDelta,
+			TxDelta:    txDelta,
+			TotalDelta: total,
+			PeakBps:    peak,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].TotalDelta > out[j].TotalDelta
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func scopePointsSince(pts []AppTrafficPoint, since time.Time) []AppTrafficPoint {
+	if since.IsZero() {
+		return pts
+	}
+	start := -1
+	for i, p := range pts {
+		ts, err := time.ParseInLocation(time.DateTime, p.Timestamp, time.Local)
+		if err != nil {
+			continue
+		}
+		if !ts.Before(since) {
+			start = i
+			if start > 0 {
+				start--
+			}
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	return pts[start:]
 }
 
 // snapshotAll returns the latest point for every bridge (for overview).

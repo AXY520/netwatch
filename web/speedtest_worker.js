@@ -15,6 +15,11 @@ let clientIp = ""; // client's IP address as reported by getIP.php
 let dlProgress = 0; //progress of download test 0-1
 let ulProgress = 0; //progress of upload test 0-1
 let pingProgress = 0; //progress of ping+jitter test 0-1
+let dlBytes = 0;
+let ulBytes = 0;
+let dlDuration = 0;
+let ulDuration = 0;
+let pingSamples = [];
 let testId = null; //test ID (sent back by telemetry if used, null otherwise)
 
 let log = ""; //telemetry log
@@ -102,6 +107,11 @@ this.addEventListener("message", function(e) {
 				dlProgress: dlProgress,
 				ulProgress: ulProgress,
 				pingProgress: pingProgress,
+				dlBytes: dlBytes,
+				ulBytes: ulBytes,
+				dlDuration: dlDuration,
+				ulDuration: ulDuration,
+				pingSamples: pingSamples,
 				testId: testId
 			})
 		);
@@ -261,6 +271,11 @@ this.addEventListener("message", function(e) {
 		dlProgress = 0;
 		ulProgress = 0;
 		pingProgress = 0;
+		dlBytes = 0;
+		ulBytes = 0;
+		dlDuration = 0;
+		ulDuration = 0;
+		pingSamples = [];
 	}
 });
 // stops all XHR activity, aggressively
@@ -348,6 +363,7 @@ function dlTest(done) {
 					const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
 					if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
 					totLoaded += loadDiff;
+					dlBytes = Math.round(totLoaded);
 					prevLoaded = event.loaded;
 				}.bind(this);
 				xhr[i].onload = function() {
@@ -387,8 +403,9 @@ function dlTest(done) {
 	interval = setInterval(
 		function() {
 			tverb("DL: " + dlStatus + (graceTimeDone ? "" : " (in grace time)"));
-			const t = new Date().getTime() - startT;
-			if (graceTimeDone) dlProgress = (t + bonusT) / (settings.time_dl_max * 1000);
+				const t = new Date().getTime() - startT;
+				if (graceTimeDone) dlDuration = t;
+				if (graceTimeDone) dlProgress = (t + bonusT) / (settings.time_dl_max * 1000);
 			if (t < 200) return;
 			if (!graceTimeDone) {
 				if (t > 1000 * settings.time_dlGraceTime) {
@@ -414,6 +431,8 @@ function dlTest(done) {
 					if (failed || isNaN(dlStatus)) dlStatus = "Fail";
 					clearRequests();
 					clearInterval(interval);
+					dlBytes = Math.round(totLoaded);
+					dlDuration = t;
 					dlProgress = 1;
 					tlog("dlTest: " + dlStatus + ", took " + (new Date().getTime() - startT) + "ms");
 					done();
@@ -499,6 +518,7 @@ function ulTest(done) {
 							const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
 							if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
 							totLoaded += loadDiff;
+							ulBytes = Math.round(totLoaded);
 							prevLoaded = event.loaded;
 						}.bind(this);
 						xhr[i].upload.onload = function() {
@@ -536,6 +556,7 @@ function ulTest(done) {
 			function() {
 				tverb("UL: " + ulStatus + (graceTimeDone ? "" : " (in grace time)"));
 				const t = new Date().getTime() - startT;
+				if (graceTimeDone) ulDuration = t;
 				if (graceTimeDone) ulProgress = (t + bonusT) / (settings.time_ul_max * 1000);
 				if (t < 200) return;
 				if (!graceTimeDone) {
@@ -562,6 +583,8 @@ function ulTest(done) {
 						if (failed || isNaN(ulStatus)) ulStatus = "Fail";
 						clearRequests();
 						clearInterval(interval);
+						ulBytes = Math.round(totLoaded);
+						ulDuration = t;
 						ulProgress = 1;
 						tlog("ulTest: " + ulStatus + ", took " + (new Date().getTime() - startT) + "ms");
 						done();
@@ -625,6 +648,7 @@ function pingTest(done) {
 				//noticed that some browsers randomly have 0ms ping
 				if (instspd < 1) instspd = prevInstspd;
 				if (instspd < 1) instspd = 1;
+				pingSamples.push(instspd);
 				const instjitter = Math.abs(instspd - prevInstspd);
 				if (i === 1) ping = instspd;
 				/* first ping, can't tell jitter yet*/ else {

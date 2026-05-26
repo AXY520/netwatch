@@ -40,6 +40,7 @@ func main() {
 	}
 
 	service := probe.NewService(cfg)
+	defer service.Close()
 	if webhook := os.Getenv("ALERT_WEBHOOK_URL"); webhook != "" {
 		service.UpdateMutableSettings(probe.MutableSettings{AlertWebhookURL: webhook})
 	}

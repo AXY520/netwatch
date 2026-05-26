@@ -1,20 +1,19 @@
 package probe
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
+	"errors"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
-	"sort"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"netwatch/internal/logger"
 )
 
 const maxHistoryItems = 3
+const maxNotificationEvents = 100
 
 type publicIPCacheData struct {
 	IPv4       string
@@ -25,90 +24,147 @@ type publicIPCacheData struct {
 }
 
 type Service struct {
-	cfg                  Config
-	mu                   sync.RWMutex
-	summary              Summary
-	lastError            string
-	nextRefresh          time.Time
-	broadbandHistory     []BroadbandSpeedResult
-	localTransferHistory []LocalTransferResult
-	broadbandTask        BroadbandTaskStatus
-	broadbandTaskCancel  context.CancelFunc
-	timeseries           *timeseriesStore
-	alert                *alertState
-	subs                 []chan Summary
-	subsMu               sync.Mutex
-	alertWebhookURL      string
-	autoRefresh          bool
-	nicStats             *nicStatsTracker
-	nicStop              chan struct{}
-	egressCache          EgressLookupResult
-	egressMu             sync.Mutex
-	egressInflight       bool
-	publicIPCache        publicIPCacheData
-	publicIPMu           sync.Mutex
-	traceMu              sync.Mutex
-	traceTask            TraceResult
-	traceCancel          context.CancelFunc
-	appTrafficHistory        *appTrafficHistoryStore
-	appTrafficStop           chan struct{}
-	appDetailIntervalSec     int
-	chartTimeLabelInterval   int
-	trafficSamplingEnabled   bool
-	trafficSamplingInterval  int // seconds
-	perAppSamplingInterval   map[string]int
-	persistentTrafficBridges []string
+	cfg                         Config
+	mu                          sync.RWMutex
+	closeOnce                   sync.Once
+	summary                     Summary
+	lastError                   string
+	broadbandHistory            []BroadbandSpeedResult
+	localTransferHistory        []LocalTransferResult
+	broadbandTask               BroadbandTaskStatus
+	broadbandTaskCancel         context.CancelFunc
+	timeseries                  *timeseriesStore
+	alert                       *alertState
+	subs                        []chan Summary
+	subsMu                      sync.Mutex
+	alertWebhookURL             string
+	nicStats                    *nicStatsTracker
+	nicStop                     chan struct{}
+	egressCache                 EgressLookupResult
+	egressMu                    sync.Mutex
+	egressCond                  *sync.Cond
+	egressInflight              bool
+	publicIPCache               publicIPCacheData
+	publicIPMu                  sync.Mutex
+	traceMu                     sync.Mutex
+	traceTask                   TraceResult
+	traceCancel                 context.CancelFunc
+	appTrafficHistory           *appTrafficHistoryStore
+	appTrafficStop              chan struct{}
+	appTrafficDone              chan struct{}
+	nicDone                     chan struct{}
+	backgroundMonitorStop       chan struct{}
+	backgroundMonitorDone       chan struct{}
+	lanInterfaceStop            chan struct{}
+	lanInterfaceDone            chan struct{}
+	chartTimeLabelInterval      int
+	trafficSamplingEnabled      bool
+	trafficSamplingInterval     int // seconds
+	perAppSamplingInterval      map[string]int
+	persistentTrafficBridges    []string
+	backgroundMonitorEnabled    bool
+	backgroundMonitorInterval   int
+	notificationsEnabled        bool
+	clientNotificationEnabled   bool
+	notifyAbnormalTraffic       bool
+	notifyEgressChange          bool
+	notifyConnectivityChange    bool
+	notifyLANDeviceChange       bool
+	lanDeviceOfflineAfter       int
+	lanDeviceOnlineAfter        int
+	lanDeviceOfflineNotifyDelay int
+	lanDeviceOnlineNotifyDelay  int
+	abnormalTrafficThreshold    int
+	barkEnabled                 bool
+	barkServerURL               string
+	barkDeviceKey               string
+	barkGroup                   string
+	dndEnabled                  bool
+	dndStart                    string
+	dndEnd                      string
+	scheduledNotifyEnabled      bool
+	scheduledNotifyTime         string
+	lanMu                       sync.Mutex
+	lanSnapshot                 LANDeviceSnapshot
+	lanInterfaceState           map[string]bool
+	lanNotifyCooldown           map[string]time.Time     // MAC -> last notification time
+	lanFlappingHistory          map[string][]time.Time   // MAC -> state change timestamps (sliding window)
+	lanMaxCheckAttempts         int                       // consecutive misses before offline
+	lanNotifyCooldownSec        int                       // min seconds between notifications per device
+	lanFlappingThreshold        int                       // max state changes in window before suppression
+	lanFlappingWindow           time.Duration             // sliding window duration
+	lanDeviceAutoRemoveDays     int                       // auto-remove offline devices after N days (0=disabled)
+	notificationMu              sync.Mutex
+	notificationEvents          []NotificationEvent
+	notificationNextID          int64
+	notificationSubs            []chan NotificationEvent
+	notificationSubsMu          sync.Mutex
+	monitorBaselineReady        bool
+	monitorLastSummary          Summary
+	monitorTrafficHigh          bool
+	closeCtx                    context.Context
+	closeCancel                 context.CancelFunc
 }
 
 func NewService(cfg Config) *Service {
 	s := &Service{
-		cfg:               cfg,
-		timeseries:        newTimeseriesStore(cfg.DataDir),
-		alert:             newAlertState(),
-		nicStats:          newNICStatsTracker(cfg.MonitoredNICs),
-		nicStop:           make(chan struct{}),
-		autoRefresh:       false,
-		appTrafficHistory:        newAppTrafficHistoryStore(cfg.DataDir),
-		appTrafficStop:           make(chan struct{}),
-		appDetailIntervalSec:     10,
-		chartTimeLabelInterval:   0,
-		trafficSamplingEnabled:   true,
-		trafficSamplingInterval:  60,
-		perAppSamplingInterval:   make(map[string]int),
+		cfg:                         cfg,
+		timeseries:                  newTimeseriesStore(cfg.DataDir),
+		alert:                       newAlertState(),
+		nicStats:                    newNICStatsTracker(),
+		nicStop:                     make(chan struct{}),
+		nicDone:                     make(chan struct{}),
+		appTrafficHistory:           newAppTrafficHistoryStore(cfg.DataDir),
+		appTrafficStop:              make(chan struct{}),
+		appTrafficDone:              make(chan struct{}),
+		backgroundMonitorStop:       make(chan struct{}),
+		backgroundMonitorDone:       make(chan struct{}),
+		lanInterfaceStop:            make(chan struct{}),
+		lanInterfaceDone:            make(chan struct{}),
+		lanNotifyCooldown:           make(map[string]time.Time),
+		lanFlappingHistory:          make(map[string][]time.Time),
+		lanMaxCheckAttempts:         3,
+		lanNotifyCooldownSec:        600,  // 10 minutes
+		lanFlappingThreshold:        5,    // 5 state changes
+		lanFlappingWindow:           10 * time.Minute,
+		chartTimeLabelInterval:      0,
+		trafficSamplingEnabled:      true,
+		trafficSamplingInterval:     60,
+		perAppSamplingInterval:      make(map[string]int),
+		backgroundMonitorInterval:   60,
+		notificationsEnabled:        false,
+		clientNotificationEnabled:   true,
+		notifyAbnormalTraffic:       true,
+		notifyEgressChange:          true,
+		notifyConnectivityChange:    true,
+		notifyLANDeviceChange:       true,
+		lanDeviceOfflineAfter:       180,
+		lanDeviceOnlineAfter:        0,
+		lanDeviceOfflineNotifyDelay: 120,
+		lanDeviceOnlineNotifyDelay:  120,
+		abnormalTrafficThreshold:    100,
+		barkServerURL:               "https://api.day.app",
+		barkGroup:                   "Netwatch",
 	}
+	s.egressCond = sync.NewCond(&s.egressMu)
+	s.closeCtx, s.closeCancel = context.WithCancel(context.Background())
 	s.loadHistory()
 	if saved, ok := loadMutableSettings(cfg.DataDir); ok {
 		s.applyMutableSettings(saved, false)
 	}
-	s.nicStats.start(s.nicStop)
+	s.nicStats.start(s.nicStop, s.nicDone)
 	s.startAppTrafficSampling()
+	s.startBackgroundMonitor()
+	s.startLANInterfaceMonitor()
+	s.startScheduledNotifier()
 	return s
 }
 
 func (s *Service) Start(baseCtx context.Context) {
 	startCtx, cancelStart := context.WithCancel(baseCtx)
-	// 不再主动发起外部请求；首次数据由前端打开页面时触发
 
 	go func() {
-		for {
-			s.mu.RLock()
-			interval := s.cfg.RefreshInterval
-			auto := s.autoRefresh
-			s.mu.RUnlock()
-
-			timer := time.NewTimer(interval)
-			select {
-			case <-startCtx.Done():
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			case <-timer.C:
-				if auto {
-					s.refreshFast(startCtx)
-				}
-			}
-		}
+		s.Refresh(startCtx)
 	}()
 
 	go func() {
@@ -117,17 +173,28 @@ func (s *Service) Start(baseCtx context.Context) {
 	}()
 }
 
-func (s *Service) GetAutoRefresh() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.autoRefresh
+// backgroundCtx returns a context cancelled when the service is closed.
+func (s *Service) backgroundCtx() context.Context {
+	return s.closeCtx
 }
 
-func (s *Service) SetAutoRefresh(enabled bool) bool {
-	s.mu.Lock()
-	s.autoRefresh = enabled
-	s.mu.Unlock()
-	return enabled
+// traceCtx returns a cancellable context derived from the service lifecycle.
+func (s *Service) traceCtx() context.Context {
+	return s.closeCtx
+}
+
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		s.closeCancel()
+		close(s.nicStop)
+		close(s.appTrafficStop)
+		close(s.backgroundMonitorStop)
+		close(s.lanInterfaceStop)
+		<-s.nicDone
+		<-s.appTrafficDone
+		<-s.backgroundMonitorDone
+		<-s.lanInterfaceDone
+	})
 }
 
 func (s *Service) Refresh(ctx context.Context) Summary {
@@ -171,8 +238,7 @@ func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResul
 	duration := s.cfg.BroadbandDuration
 	s.mu.RUnlock()
 
-	ctx = context.WithValue(ctx, "service", s)
-	result, completed := executeBroadbandSpeedTest(ctx, duration, nil)
+	result, completed := executeBroadbandSpeedTest(ctx, s, duration, nil)
 	if completed {
 		s.pushBroadbandHistory(result)
 	}
@@ -188,8 +254,7 @@ func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
 	}
 
 	duration := s.cfg.BroadbandDuration
-	ctx, cancel := context.WithCancel(context.Background())
-	ctx = context.WithValue(ctx, "service", s)
+	ctx, cancel := context.WithTimeout(context.Background(), broadbandTaskTimeout(duration))
 	task := BroadbandTaskStatus{
 		ID:              fmt.Sprintf("broadband-%d", time.Now().UnixNano()),
 		Stage:           "starting",
@@ -234,7 +299,7 @@ func (s *Service) CancelBroadbandTask() BroadbandTaskStatus {
 }
 
 func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) {
-	result, completed := executeBroadbandSpeedTest(ctx, duration, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
+	result, completed := executeBroadbandSpeedTest(ctx, s, duration, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
 		s.mu.Lock()
 		s.broadbandTask.Stage = stage
 		s.broadbandTask.ProgressPercent = progress
@@ -253,16 +318,30 @@ func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) 
 	s.broadbandTaskCancel = nil
 
 	switch {
-	case ctx.Err() != nil:
+	case errors.Is(ctx.Err(), context.Canceled):
 		s.broadbandTask.Stage = "canceled"
 		s.broadbandTask.Canceled = true
 		s.broadbandTask.Finished = false
 		s.broadbandTask.Message = "宽带测速已取消"
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		s.broadbandTask.Stage = "error"
+		s.broadbandTask.Finished = false
+		s.broadbandTask.Canceled = false
+		if result.Error == "" {
+			result.Error = "宽带测速超时"
+		}
+		result.FailureStage = "timeout"
+		result.FailureReason = result.Error
+		s.broadbandTask.Result = result
+		s.broadbandTask.Message = result.Error
 	case !completed:
 		s.broadbandTask.Stage = "error"
 		s.broadbandTask.Finished = false
 		if result.Error == "" {
 			result.Error = "测速未完成"
+		}
+		if result.FailureReason == "" {
+			result.FailureReason = result.Error
 		}
 		s.broadbandTask.Result = result
 		s.broadbandTask.Message = result.Error
@@ -277,6 +356,35 @@ func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) 
 }
 
 func (s *Service) RecordLocalTransferResult(result LocalTransferResult) LocalTransferResult {
+	result.DownloadMbps = sanitizeSpeedMetric(result.DownloadMbps, 0, 100000)
+	result.UploadMbps = sanitizeSpeedMetric(result.UploadMbps, 0, 100000)
+	result.PayloadMB = sanitizeSpeedMetric(result.PayloadMB, 0, 1024)
+	result.DownloadMB = sanitizeSpeedMetric(result.DownloadMB, 0, 1024*1024)
+	result.UploadMB = sanitizeSpeedMetric(result.UploadMB, 0, 1024*1024)
+	if result.PayloadMB == 0 {
+		result.PayloadMB = result.DownloadMB + result.UploadMB
+	}
+	if result.DurationMS < 0 || result.DurationMS > int64((10*time.Minute)/time.Millisecond) {
+		result.DurationMS = 0
+	}
+	if result.RoundTripLatencyMS < 0 || result.RoundTripLatencyMS > 600000 {
+		result.RoundTripLatencyMS = 0
+	}
+	if result.RTTMinMS < 0 || result.RTTMinMS > 600000 {
+		result.RTTMinMS = 0
+	}
+	if result.RTTAvgMS < 0 || result.RTTAvgMS > 600000 {
+		result.RTTAvgMS = 0
+	}
+	if result.RTTMaxMS < 0 || result.RTTMaxMS > 600000 {
+		result.RTTMaxMS = 0
+	}
+	if result.RTTAvgMS == 0 {
+		result.RTTAvgMS = result.RoundTripLatencyMS
+	}
+	if result.JitterMS < 0 || result.JitterMS > 600000 {
+		result.JitterMS = 0
+	}
 	if result.Timestamp == "" {
 		result.Timestamp = localTimestamp()
 	}
@@ -304,20 +412,6 @@ func (s *Service) GetSpeedConfig() SpeedConfig {
 		LocalTransferDurationSec: int64(s.cfg.LocalTransferDuration / time.Second),
 		LocalTransferPayloadMB:   s.cfg.LocalTransferPayloadMB,
 	}
-}
-
-func (s *Service) UpdateRefreshInterval(seconds int) Summary {
-	if seconds > 0 {
-		s.mu.Lock()
-		s.cfg.RefreshInterval = time.Duration(seconds) * time.Second
-		s.nextRefresh = time.Now().Add(s.cfg.RefreshInterval)
-		if s.summary.GeneratedAt != "" {
-			s.summary.RefreshIntervalSec = int64(s.cfg.RefreshInterval / time.Second)
-			s.summary.NextRefreshAt = s.nextRefresh.Format(time.DateTime)
-		}
-		s.mu.Unlock()
-	}
-	return s.GetSummary()
 }
 
 func (s *Service) GetSummary() Summary {
@@ -365,29 +459,50 @@ func (s *Service) GetTimeseries(limit int) []TimeseriesPoint {
 func (s *Service) GetMutableSettings() MutableSettings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	appDetailSec := s.appDetailIntervalSec
-	if appDetailSec <= 0 {
-		appDetailSec = 10
-	}
 	perApp := make(map[string]int, len(s.perAppSamplingInterval))
 	for k, v := range s.perAppSamplingInterval {
 		perApp[k] = v
 	}
 	return MutableSettings{
-		RefreshIntervalSec:         int(s.cfg.RefreshInterval / time.Second),
-		AutoRefreshEnabled:         s.autoRefresh,
-		NICRealtimeEnabled:         s.nicStats.enabled(),
-		NICRealtimeIntervalSec:     s.nicStats.intervalSeconds(),
-		AppDetailIntervalSec:       appDetailSec,
-		ChartTimeLabelInterval:     s.chartTimeLabelInterval,
-		BroadbandDomesticOnly:      s.cfg.BroadbandDomesticOnly,
-		TrafficSamplingEnabled:     s.trafficSamplingEnabled,
-		TrafficSamplingIntervalSec: s.trafficSamplingInterval,
-		PerAppSamplingInterval:     perApp,
-		PersistentTrafficBridges:   append([]string(nil), s.persistentTrafficBridges...),
-		DomesticSites:              append([]SiteTarget(nil), s.cfg.DomesticSites...),
-		GlobalSites:                append([]SiteTarget(nil), s.cfg.GlobalSites...),
-		AlertWebhookURL:            s.alertWebhookURL,
+		RefreshIntervalSec:             int(s.cfg.RefreshInterval / time.Second),
+		NICRealtimeEnabled:             s.nicStats.enabled(),
+		NICRealtimeIntervalSec:         s.nicStats.intervalSeconds(),
+		ChartTimeLabelInterval:         s.chartTimeLabelInterval,
+		BroadbandDomesticOnly:          s.cfg.BroadbandDomesticOnly,
+		TrafficSamplingEnabled:         s.trafficSamplingEnabled,
+		TrafficSamplingIntervalSec:     s.trafficSamplingInterval,
+		PerAppSamplingInterval:         perApp,
+		PersistentTrafficBridges:       append([]string(nil), s.persistentTrafficBridges...),
+		DomesticSites:                  append([]SiteTarget(nil), s.cfg.DomesticSites...),
+		GlobalSites:                    append([]SiteTarget(nil), s.cfg.GlobalSites...),
+		AlertWebhookURL:                s.alertWebhookURL,
+		BackgroundMonitorEnabled:       s.backgroundMonitorEnabled,
+		BackgroundMonitorIntervalSec:   s.backgroundMonitorInterval,
+		NotificationsEnabled:           s.notificationsEnabled,
+		ClientNotificationEnabled:      s.clientNotificationEnabled,
+		NotifyAbnormalTraffic:          s.notifyAbnormalTraffic,
+		NotifyEgressChange:             s.notifyEgressChange,
+		NotifyConnectivityChange:       s.notifyConnectivityChange,
+		NotifyLANDeviceChange:          s.notifyLANDeviceChange,
+		LANDeviceOfflineAfterSec:       s.lanDeviceOfflineAfter,
+		LANDeviceOnlineAfterSec:        s.lanDeviceOnlineAfter,
+		LANDeviceOfflineNotifyDelaySec: s.lanDeviceOfflineNotifyDelay,
+		LANDeviceOnlineNotifyDelaySec:  s.lanDeviceOnlineNotifyDelay,
+		AbnormalTrafficThresholdMbps:   s.abnormalTrafficThreshold,
+		BarkEnabled:                    s.barkEnabled,
+		BarkServerURL:                  s.barkServerURL,
+		BarkDeviceKey:                  s.barkDeviceKey,
+		BarkGroup:                      s.barkGroup,
+		DNDEnabled:                     s.dndEnabled,
+		DNDStart:                       s.dndStart,
+		DNDEnd:                         s.dndEnd,
+		ScheduledNotifyEnabled:         s.scheduledNotifyEnabled,
+		ScheduledNotifyTime:            s.scheduledNotifyTime,
+		LANMaxCheckAttempts:            s.lanMaxCheckAttempts,
+		LANNotifyCooldownSec:           s.lanNotifyCooldownSec,
+		LANFlappingThreshold:           s.lanFlappingThreshold,
+		LANFlappingWindowSec:           int(s.lanFlappingWindow.Seconds()),
+		LANDeviceAutoRemoveDays:        s.lanDeviceAutoRemoveDays,
 	}
 }
 
@@ -401,7 +516,6 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	if in.RefreshIntervalSec > 0 {
 		s.cfg.RefreshInterval = time.Duration(in.RefreshIntervalSec) * time.Second
 	}
-	s.autoRefresh = in.AutoRefreshEnabled
 	s.cfg.BroadbandDomesticOnly = in.BroadbandDomesticOnly
 	if len(in.DomesticSites) > 0 {
 		s.cfg.DomesticSites = in.DomesticSites
@@ -410,8 +524,55 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 		s.cfg.GlobalSites = in.GlobalSites
 	}
 	s.alertWebhookURL = in.AlertWebhookURL
-	if in.AppDetailIntervalSec >= 1 {
-		s.appDetailIntervalSec = in.AppDetailIntervalSec
+	s.backgroundMonitorEnabled = in.BackgroundMonitorEnabled
+	if in.BackgroundMonitorIntervalSec >= 10 {
+		s.backgroundMonitorInterval = in.BackgroundMonitorIntervalSec
+	}
+	s.notificationsEnabled = in.NotificationsEnabled
+	s.clientNotificationEnabled = in.ClientNotificationEnabled
+	s.notifyAbnormalTraffic = in.NotifyAbnormalTraffic
+	s.notifyEgressChange = in.NotifyEgressChange
+	s.notifyConnectivityChange = in.NotifyConnectivityChange
+	s.notifyLANDeviceChange = in.NotifyLANDeviceChange
+	if in.LANDeviceOfflineAfterSec >= 10 {
+		s.lanDeviceOfflineAfter = in.LANDeviceOfflineAfterSec
+	}
+	if in.LANDeviceOnlineAfterSec >= 0 {
+		s.lanDeviceOnlineAfter = in.LANDeviceOnlineAfterSec
+	}
+	if in.LANDeviceOfflineNotifyDelaySec >= 0 {
+		s.lanDeviceOfflineNotifyDelay = in.LANDeviceOfflineNotifyDelaySec
+	}
+	if in.LANDeviceOnlineNotifyDelaySec >= 0 {
+		s.lanDeviceOnlineNotifyDelay = in.LANDeviceOnlineNotifyDelaySec
+	}
+	if in.AbnormalTrafficThresholdMbps > 0 {
+		s.abnormalTrafficThreshold = in.AbnormalTrafficThresholdMbps
+	}
+	s.barkEnabled = in.BarkEnabled
+	s.barkServerURL = strings.TrimSpace(in.BarkServerURL)
+	s.barkDeviceKey = strings.TrimSpace(in.BarkDeviceKey)
+	s.barkGroup = strings.TrimSpace(in.BarkGroup)
+	s.dndEnabled = in.DNDEnabled
+	s.dndStart = normalizeHHMM(in.DNDStart, "22:00")
+	s.dndEnd = normalizeHHMM(in.DNDEnd, "08:00")
+	s.scheduledNotifyEnabled = in.ScheduledNotifyEnabled
+	s.scheduledNotifyTime = normalizeHHMM(in.ScheduledNotifyTime, "09:00")
+	if in.LANMaxCheckAttempts >= 1 {
+		s.lanMaxCheckAttempts = in.LANMaxCheckAttempts
+	}
+	if in.LANNotifyCooldownSec >= 60 {
+		s.lanNotifyCooldownSec = in.LANNotifyCooldownSec
+	}
+	if in.LANFlappingThreshold >= 3 {
+		s.lanFlappingThreshold = in.LANFlappingThreshold
+	}
+	if in.LANFlappingWindowSec >= 60 {
+		s.lanFlappingWindow = time.Duration(in.LANFlappingWindowSec) * time.Second
+	}
+	s.lanDeviceAutoRemoveDays = in.LANDeviceAutoRemoveDays
+	if s.notificationsEnabled && !s.barkEnabled && !s.clientNotificationEnabled {
+		s.clientNotificationEnabled = true
 	}
 	s.chartTimeLabelInterval = in.ChartTimeLabelInterval
 	s.trafficSamplingEnabled = in.TrafficSamplingEnabled
@@ -431,12 +592,14 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	s.nicStats.configure(in.NICRealtimeEnabled, in.NICRealtimeIntervalSec)
 	s.alert.setWebhook(in.AlertWebhookURL)
 	if persist {
-		_ = saveMutableSettings(dataDir, s.GetMutableSettings())
+		if err := saveMutableSettings(dataDir, s.GetMutableSettings()); err != nil {
+			logger.Warn("saveMutableSettings: %v", err)
+		}
 	}
 }
 
 func (s *Service) GetRealtimeNetStats() RealtimeNetStats {
-	return s.nicStats.snapshot()
+	return s.nicStats.sampleAndSnapshot()
 }
 
 // GetEgressLookups 返回缓存的多源查询结果，若没缓存则同步触发一次（冷启动场景）。
@@ -463,7 +626,11 @@ func (s *Service) RefreshEgressLookups(ctx context.Context) EgressLookupResult {
 	s.egressMu.Lock()
 	if s.egressInflight {
 		cache := s.egressCache
+		empty := cache.GeneratedAt == ""
 		s.egressMu.Unlock()
+		if empty {
+			return s.waitForEgressLookup(ctx)
+		}
 		return cache
 	}
 	s.egressInflight = true
@@ -476,8 +643,29 @@ func (s *Service) RefreshEgressLookups(ctx context.Context) EgressLookupResult {
 	s.egressMu.Lock()
 	s.egressCache = result
 	s.egressInflight = false
+	s.egressCond.Broadcast()
 	s.egressMu.Unlock()
 	return result
+}
+
+func (s *Service) waitForEgressLookup(ctx context.Context) EgressLookupResult {
+	done := make(chan struct{})
+	go func() {
+		s.egressMu.Lock()
+		for s.egressInflight && s.egressCache.GeneratedAt == "" {
+			s.egressCond.Wait()
+		}
+		s.egressMu.Unlock()
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-done:
+	}
+	s.egressMu.Lock()
+	cache := s.egressCache
+	s.egressMu.Unlock()
+	return cache
 }
 
 func (s *Service) StartTraceTask(host string, maxHops int) TraceResult {
@@ -485,7 +673,7 @@ func (s *Service) StartTraceTask(host string, maxHops int) TraceResult {
 	if s.traceCancel != nil {
 		s.traceCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(s.traceCtx())
 	task := TraceResult{
 		Target:    host,
 		Timestamp: localTimestamp(),
@@ -538,19 +726,16 @@ func (s *Service) refreshFast(ctx context.Context) {
 			s.summary = emptySummary(interval, s.lastError)
 		}
 		s.summary.LastError = s.lastError
-		s.summary.NextRefreshAt = time.Now().Add(interval).Format(time.DateTime)
 		s.mu.Unlock()
 		return
 	}
 
 	summary.NetworkInfo.NAT = currentNAT
 	s.lastError = ""
-	s.nextRefresh = time.Now().Add(interval)
 	s.summary = summary
 	s.summary.Ready = true
 	s.summary.LastError = ""
 	s.summary.RefreshIntervalSec = int64(interval / time.Second)
-	s.summary.NextRefreshAt = s.nextRefresh.Format(time.DateTime)
 	finalSummary := s.summary
 	s.mu.Unlock()
 
@@ -667,321 +852,6 @@ func localTimestamp() string {
 	return time.Now().Format(time.DateTime)
 }
 
-var speedClient = &http.Client{
-	Timeout: 60 * time.Second,
-	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost:  20,
-		DisableCompression: true,
-		IdleConnTimeout:    30 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "speed.cloudflare.com"},
-	},
-}
-
-func measureLatencyAndJitterProgress(ctx context.Context, count int, progress func(done, total int, latency, jitter int64)) (int64, int64) {
-	var samples []int64
-	for i := 0; i < count; i++ {
-		if ctx.Err() != nil {
-			break
-		}
-
-		start := time.Now()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://speed.cloudflare.com/__down?bytes=4096", nil)
-		if err != nil {
-			continue
-		}
-		resp, err := speedClient.Do(req)
-		if err != nil {
-			continue
-		}
-		if resp.Body != nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-			resp.Body.Close()
-		}
-
-		samples = append(samples, time.Since(start).Milliseconds())
-		if progress != nil {
-			progress(len(samples), count, averageInt64(samples), calculateJitter(samples))
-		}
-	}
-	if len(samples) == 0 {
-		return 0, 0
-	}
-	return averageInt64(samples), calculateJitter(samples)
-}
-
-func sustainedDownloadMbpsProgress(ctx context.Context, duration time.Duration, workers int, progress func(mbps float64, elapsed, total time.Duration)) float64 {
-	if workers <= 0 {
-		workers = 1
-	}
-	if duration <= 0 {
-		duration = 10 * time.Second
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, duration)
-	defer cancel()
-
-	var totalBytes int64
-	var wg sync.WaitGroup
-	done := make(chan struct{})
-	startedAt := time.Now()
-	sampler := newThroughputSampler(startedAt)
-
-	go reportThroughputProgress(done, &totalBytes, startedAt, duration, sampler, progress)
-
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ctx.Err() == nil {
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://speed.cloudflare.com/__down?bytes=20000000", nil)
-				if err != nil {
-					return
-				}
-				resp, err := speedClient.Do(req)
-				if err != nil {
-					return
-				}
-				if resp.Body != nil {
-					n, _ := io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
-					if n > 0 {
-						atomic.AddInt64(&totalBytes, n)
-					}
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-	close(done)
-
-	finalBytes := atomic.LoadInt64(&totalBytes)
-	sampler.observe(finalBytes, time.Now())
-	stable := sampler.stableMbps()
-	seconds := time.Since(startedAt).Seconds()
-	if stable > 0 {
-		return stable
-	}
-	if seconds <= 0 || finalBytes <= 0 {
-		return 0
-	}
-	return float64(finalBytes*8) / seconds / 1_000_000
-}
-
-func sustainedUploadMbpsProgress(ctx context.Context, duration time.Duration, workers int, payloadBytes int, progress func(mbps float64, elapsed, total time.Duration)) float64 {
-	if workers <= 0 {
-		workers = 1
-	}
-	if duration <= 0 {
-		duration = 10 * time.Second
-	}
-	if payloadBytes <= 0 {
-		payloadBytes = 4 * 1024 * 1024
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, duration)
-	defer cancel()
-
-	payload := bytes.Repeat([]byte("u"), payloadBytes)
-	var totalBytes int64
-	var wg sync.WaitGroup
-	done := make(chan struct{})
-	startedAt := time.Now()
-	sampler := newThroughputSampler(startedAt)
-
-	go reportThroughputProgress(done, &totalBytes, startedAt, duration, sampler, progress)
-
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ctx.Err() == nil {
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://speed.cloudflare.com/__up", bytes.NewReader(payload))
-				if err != nil {
-					return
-				}
-				req.Header.Set("Content-Type", "application/octet-stream")
-				resp, err := speedClient.Do(req)
-				if err != nil {
-					return
-				}
-				if resp.Body != nil {
-					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
-				}
-				atomic.AddInt64(&totalBytes, int64(payloadBytes))
-			}
-		}()
-	}
-
-	wg.Wait()
-	close(done)
-
-	finalBytes := atomic.LoadInt64(&totalBytes)
-	sampler.observe(finalBytes, time.Now())
-	stable := sampler.stableMbps()
-	seconds := time.Since(startedAt).Seconds()
-	if stable > 0 {
-		return stable
-	}
-	if seconds <= 0 || finalBytes <= 0 {
-		return 0
-	}
-	return float64(finalBytes*8) / seconds / 1_000_000
-}
-
-func reportThroughputProgress(done <-chan struct{}, totalBytes *int64, startedAt time.Time, duration time.Duration, sampler *throughputSampler, progress func(mbps float64, elapsed, total time.Duration)) {
-	if progress == nil {
-		return
-	}
-
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-done:
-			elapsed := time.Since(startedAt)
-			bytes := atomic.LoadInt64(totalBytes)
-			current := sampler.observe(bytes, time.Now())
-			progress(current, elapsed, duration)
-			return
-		case <-ticker.C:
-			elapsed := time.Since(startedAt)
-			bytes := atomic.LoadInt64(totalBytes)
-			current := sampler.observe(bytes, time.Now())
-			progress(current, elapsed, duration)
-		}
-	}
-}
-
-func computeMbps(totalBytes int64, elapsed time.Duration) float64 {
-	if elapsed <= 0 || totalBytes <= 0 {
-		return 0
-	}
-	return float64(totalBytes*8) / elapsed.Seconds() / 1_000_000
-}
-
-type throughputSampler struct {
-	startedAt time.Time
-	lastAt    time.Time
-	lastBytes int64
-	samples   []float64
-}
-
-func newThroughputSampler(startedAt time.Time) *throughputSampler {
-	return &throughputSampler{
-		startedAt: startedAt,
-		lastAt:    startedAt,
-	}
-}
-
-func (s *throughputSampler) observe(totalBytes int64, now time.Time) float64 {
-	if now.Before(s.lastAt) {
-		now = s.lastAt
-	}
-
-	elapsed := now.Sub(s.lastAt)
-	if elapsed > 0 {
-		deltaBytes := totalBytes - s.lastBytes
-		if deltaBytes < 0 {
-			deltaBytes = 0
-		}
-		instMbps := computeMbps(deltaBytes, elapsed)
-		// 只要有数据在跑，就记录样本
-		if now.Sub(s.startedAt) >= 2000*time.Millisecond && instMbps > 0 {
-			s.samples = append(s.samples, instMbps)
-			if len(s.samples) > 120 {
-				s.samples = s.samples[len(s.samples)-120:]
-			}
-		}
-	}
-
-	s.lastBytes = totalBytes
-	s.lastAt = now
-	return s.displayMbps(totalBytes, now)
-}
-
-func (s *throughputSampler) displayMbps(totalBytes int64, now time.Time) float64 {
-	// 显示逻辑优化：如果样本库里有最近的数据，优先使用最近 10 个有效样本的平均值
-	// 这样即使当前 ticker 是 0Mbps（空窗），显示的依然是最近活跃期的平均水平
-	window := 10
-	if len(s.samples) > 0 {
-		count := len(s.samples)
-		if count > window {
-			count = window
-		}
-		return averageFloat64(s.samples[len(s.samples)-count:])
-	}
-	return computeMbps(totalBytes, now.Sub(s.startedAt))
-}
-
-func (s *throughputSampler) stableMbps() float64 {
-	if len(s.samples) == 0 {
-		return 0
-	}
-
-	samples := append([]float64(nil), s.samples...)
-	sortFloat64(samples)
-
-	cut := int(math.Floor(float64(len(samples)) * 0.2))
-	if cut*2 >= len(samples) {
-		return averageFloat64(samples)
-	}
-	return averageFloat64(samples[cut : len(samples)-cut])
-}
-
-func averageFloat64(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	var total float64
-	for _, value := range values {
-		total += value
-	}
-	return total / float64(len(values))
-}
-
-func sortFloat64(values []float64) {
-	sort.Float64s(values)
-}
-
-func calculateJitter(samples []int64) int64 {
-	if len(samples) < 2 {
-		return 0
-	}
-	var diffs []float64
-	for i := 1; i < len(samples); i++ {
-		diffs = append(diffs, math.Abs(float64(samples[i]-samples[i-1])))
-	}
-	var sum float64
-	for _, diff := range diffs {
-		sum += diff
-	}
-	return int64(math.Round(sum / float64(len(diffs))))
-}
-
-func averageInt64(values []int64) int64 {
-	if len(values) == 0 {
-		return 0
-	}
-	var total int64
-	for _, value := range values {
-		total += value
-	}
-	return total / int64(len(values))
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func clampProgress(progress int) int {
 	switch {
 	case progress < 0:
@@ -991,6 +861,40 @@ func clampProgress(progress int) int {
 	default:
 		return progress
 	}
+}
+
+func sanitizeSpeedMetric(value float64, min float64, max float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func validSpeedMbps(primary float64, fallback float64) float64 {
+	if !math.IsNaN(primary) && !math.IsInf(primary, 0) && primary > 0 {
+		return primary
+	}
+	if !math.IsNaN(fallback) && !math.IsInf(fallback, 0) && fallback > 0 {
+		return fallback
+	}
+	return 0
+}
+
+func broadbandTaskTimeout(duration time.Duration) time.Duration {
+	if duration <= 0 {
+		duration = 15 * time.Second
+	}
+	timeout := duration*4 + 90*time.Second
+	if timeout < 2*time.Minute {
+		return 2 * time.Minute
+	}
+	return timeout
 }
 
 func progressRange(elapsed, total time.Duration, width int) int {
@@ -1005,6 +909,13 @@ func progressRange(elapsed, total time.Duration, width int) int {
 		ratio = 1
 	}
 	return int(math.Round(ratio * float64(width)))
+}
+
+func elapsedMS(startedAt time.Time) int64 {
+	if startedAt.IsZero() {
+		return 0
+	}
+	return int64(time.Since(startedAt) / time.Millisecond)
 }
 
 func (s *Service) pushBroadbandHistory(result BroadbandSpeedResult) {
@@ -1029,6 +940,7 @@ func (s *Service) pushLocalTransferHistory(result LocalTransferResult) {
 
 func (s *Service) startAppTrafficSampling() {
 	go func() {
+		defer close(s.appTrafficDone)
 		lastSampled := make(map[string]time.Time)
 		for {
 			enabled, interval, perApp, persistent := s.getTrafficSamplingConfig()
@@ -1105,13 +1017,39 @@ func (s *Service) TogglePersistentTrafficBridge(bridge string, enabled bool) Mut
 	if enabled && !found {
 		s.persistentTrafficBridges = append(s.persistentTrafficBridges, bridge)
 	}
+	settings := s.GetMutableSettings()
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()
 
-	_ = saveMutableSettings(dataDir, s.GetMutableSettings())
-	return s.GetMutableSettings()
+	if err := saveMutableSettings(dataDir, settings); err != nil {
+		logger.Warn("saveMutableSettings: %v", err)
+	}
+	return settings
 }
 
 func (s *Service) GetAppTrafficHistory(bridge string, limit int) []AppTrafficPoint {
 	return s.appTrafficHistory.snapshot(bridge, limit)
+}
+
+func (s *Service) GetAppTrafficHistorySince(bridge string, since time.Time, limit int) []AppTrafficPoint {
+	return s.appTrafficHistory.snapshotSince(bridge, since, limit)
+}
+
+func (s *Service) GetAppTrafficTop(since time.Time, limit int) []AppTrafficTopItem {
+	return s.appTrafficHistory.topSince(since, limit)
+}
+
+func (s *Service) SampleAppTrafficBridge(bridge string, since time.Time, limit int) (AppTrafficLiveResult, bool) {
+	if ok := s.appTrafficHistory.sampleOne(bridge, time.Now()); !ok {
+		return AppTrafficLiveResult{}, false
+	}
+	stats, ok := CollectBridgeTraffic(bridge)
+	if !ok {
+		return AppTrafficLiveResult{}, false
+	}
+	return AppTrafficLiveResult{
+		GeneratedAt: localTimestamp(),
+		Bridge:      stats,
+		History:     s.appTrafficHistory.snapshotSince(bridge, since, limit),
+	}, true
 }

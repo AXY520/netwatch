@@ -3,6 +3,7 @@ package probe
 import (
 	"bufio"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,22 @@ type NICThroughput struct {
 	Timestamp string `json:"timestamp"`
 }
 
+func sortedNICNames(items map[string]NICThroughput) []string {
+	names := make([]string, 0, len(items))
+	for name := range items {
+		names = append(names, name)
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		left := inferLinkType(names[i])
+		right := inferLinkType(names[j])
+		if left != right {
+			return left == "wired"
+		}
+		return names[i] < names[j]
+	})
+	return names
+}
+
 type RealtimeNetStats struct {
 	Timestamp string          `json:"timestamp"`
 	NICs      []NICThroughput `json:"nics"`
@@ -32,16 +49,14 @@ type nicCounters struct {
 
 type nicStatsTracker struct {
 	mu       sync.RWMutex
-	nics     []string
 	last     map[string]nicCounters
 	current  map[string]NICThroughput
 	active   bool
 	interval time.Duration
 }
 
-func newNICStatsTracker(nics []string) *nicStatsTracker {
+func newNICStatsTracker() *nicStatsTracker {
 	return &nicStatsTracker{
-		nics:     append([]string(nil), nics...),
 		last:     make(map[string]nicCounters),
 		current:  make(map[string]NICThroughput),
 		active:   true,
@@ -49,8 +64,9 @@ func newNICStatsTracker(nics []string) *nicStatsTracker {
 	}
 }
 
-func (t *nicStatsTracker) start(stop <-chan struct{}) {
+func (t *nicStatsTracker) start(stop <-chan struct{}, done chan<- struct{}) {
 	go func() {
+		defer close(done)
 		t.sample()
 		for {
 			t.mu.RLock()
@@ -107,11 +123,13 @@ func (t *nicStatsTracker) sample() {
 		return
 	}
 	now := time.Now()
+	nics := autoMonitoredNICNames()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	for _, name := range t.nics {
+	next := make(map[string]NICThroughput, len(nics))
+	for _, name := range nics {
 		cur, ok := snapshot[name]
 		out := NICThroughput{
 			Name:      name,
@@ -139,8 +157,9 @@ func (t *nicStatsTracker) sample() {
 			}
 		}
 		t.last[name] = nicCounters{rx: cur.rx, tx: cur.tx, at: now}
-		t.current[name] = out
+		next[name] = out
 	}
+	t.current = next
 }
 
 func (t *nicStatsTracker) snapshot() RealtimeNetStats {
@@ -148,14 +167,15 @@ func (t *nicStatsTracker) snapshot() RealtimeNetStats {
 	defer t.mu.RUnlock()
 
 	out := RealtimeNetStats{Timestamp: localTimestamp()}
-	for _, name := range t.nics {
-		if v, ok := t.current[name]; ok {
-			out.NICs = append(out.NICs, v)
-		} else {
-			out.NICs = append(out.NICs, NICThroughput{Name: name, Present: false})
-		}
+	for _, name := range sortedNICNames(t.current) {
+		out.NICs = append(out.NICs, t.current[name])
 	}
 	return out
+}
+
+func (t *nicStatsTracker) sampleAndSnapshot() RealtimeNetStats {
+	t.sample()
+	return t.snapshot()
 }
 
 // readOperState reads /sys/class/net/<name>/operstate and returns the lowercase value.

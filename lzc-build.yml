@@ -6,10 +6,19 @@ icon: ./lzc-icon.png
 compose_override:
   services:
     netwatch:
+      # 系统流量分析需要读取宿主机网络/进程命名空间，并为 host 网络容器
+      # 附着 cgroup eBPF 计数程序。host 容器不使用 Docker stats 兜底。
+      privileged: true
+      pid: host
       cap_add:
         - NET_RAW
         - NET_ADMIN
+        - SYS_ADMIN
       volumes:
+        - /sys:/host/sys:ro
+        - /proc:/host/proc:ro
+        # cgroup eBPF 精确统计 host 网络容器需要访问 bpffs。
+        - /sys/fs/bpf:/sys/fs/bpf
         # 只读挂载 lzc 应用 docker daemon 的 socket，用于读取每个应用对应的
         # 网桥名（com.docker.network.bridge.name）做"应用容器流量"映射。
         # 仅在懒猫允许此路径的 bind 时生效；不允许时 netwatch 会自动降级到
