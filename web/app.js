@@ -58,6 +58,7 @@ const state = {
             controlsBound: false,
             notificationPoller: null,
             notificationLastID: Number(localStorage.getItem('netwatch_notification_last_id') || '0') || 0,
+            deviceID: localStorage.getItem('netwatch_device_id') || '',
             lzcGatewayPromise: null,
             notificationUnsupported: localStorage.getItem('netwatch_notification_unsupported') === 'true',
             modalScrollY: 0,
@@ -80,6 +81,7 @@ const state = {
             valGw4: document.getElementById('val-gw4'),
             valPlatformConnectivity: document.getElementById('val-platform-connectivity'),
             nicRealtimeRefreshBtn: document.getElementById('nic-realtime-refresh-btn'),
+            nicRealtimeStatus: document.getElementById('nic-realtime-status'),
             backdrop: document.getElementById('window-backdrop'),
             traceBackdrop: document.getElementById('trace-window-backdrop'),
             openSettingsWindow: document.getElementById('open-settings-window'),
@@ -116,6 +118,10 @@ const state = {
             settingDNDEnd: document.getElementById('setting-dnd-end'),
             settingScheduledNotifyEnabled: document.getElementById('setting-scheduled-notify-enabled'),
             settingScheduledNotifyTime: document.getElementById('setting-scheduled-notify-time'),
+            notificationSettingsWindow: document.getElementById('notification-settings-window'),
+            openNotificationSettings: document.getElementById('open-notification-settings'),
+            closeNotificationSettings: document.getElementById('close-notification-settings'),
+            saveNotificationSettings: document.getElementById('save-notification-settings'),
             broadbandNote: document.getElementById('broadband-note'),
             transferNote: document.getElementById('transfer-note'),
             runBroadbandTest: document.getElementById('run-broadband-test'),
@@ -1046,6 +1052,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.settingsWindow.classList.remove('active');
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
+            elements.notificationSettingsWindow?.classList.remove('active');
             document.getElementById('traffic-settings-window')?.classList.remove('active');
 
             if (name === 'settings') {
@@ -1054,6 +1061,9 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                 elements.broadbandWindow.classList.add('active');
             } else if (name === 'transfer') {
                 elements.transferWindow.classList.add('active');
+            } else if (name === 'notification-settings') {
+                elements.notificationSettingsWindow?.classList.add('active');
+                loadLazycatDevices();
             }
 
             elements.backdrop.classList.add('active');
@@ -1074,6 +1084,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.settingsWindow.classList.remove('active');
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
+            elements.notificationSettingsWindow?.classList.remove('active');
             document.getElementById('traffic-settings-window')?.classList.remove('active');
             elements.backdrop.classList.remove('active');
             unlockModalScroll();
@@ -1148,6 +1159,22 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.closeSettingsWindow.addEventListener('click', closeCurrentWindow);
             elements.closeBroadbandWindow.addEventListener('click', closeCurrentWindow);
             elements.closeTransferWindow.addEventListener('click', closeCurrentWindow);
+            elements.closeNotificationSettings?.addEventListener('click', closeCurrentWindow);
+            elements.openNotificationSettings?.addEventListener('click', () => openWindow('notification-settings'));
+            elements.saveNotificationSettings?.addEventListener('click', saveSettings);
+            const deviceTrigger = document.getElementById('notification-device-trigger');
+            const devicePanel = document.getElementById('notification-device-panel');
+            if (deviceTrigger && devicePanel) {
+                deviceTrigger.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    devicePanel.classList.toggle('open');
+                });
+                document.addEventListener('click', (e) => {
+                    if (!devicePanel.contains(e.target) && !deviceTrigger.contains(e.target)) {
+                        devicePanel.classList.remove('open');
+                    }
+                });
+            }
             elements.backdrop.addEventListener('click', closeCurrentWindow);
             elements.closeTraceWindow?.addEventListener('click', closeTraceWindow);
             elements.traceBackdrop?.addEventListener('click', closeTraceWindow);
@@ -1701,17 +1728,34 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             return state.lzcGatewayPromise;
         }
 
-        async function notifyCurrentDevice(event) {
-            if (state.notificationUnsupported) {
-                throw new Error('当前客户端未注册系统通知服务');
-            }
+        async function notifySelectedDevices(event) {
+            if (state.notificationUnsupported) return;
+            const selectedIDs = state.settings.notification_device_ids;
+            const devices = state.lazycatDevices || [];
             const gateway = await getLazycatGateway();
-            const device = await gateway.currentDevice;
-            await device.notification.Notify({
+            const payload = {
                 title: event.title || 'Netwatch',
                 body: event.body || '',
                 deeplinkUrl: event.deeplink_url || 'lzc://app/cloud.lazycat.app.netwatch'
-            });
+            };
+
+            // If no devices selected, send to current device only
+            if (!selectedIDs || selectedIDs.length === 0) {
+                const device = await gateway.currentDevice;
+                await device.notification.Notify(payload);
+                return;
+            }
+
+            // Send to each selected device
+            for (const dev of devices) {
+                if (!selectedIDs.includes(dev.id)) continue;
+                try {
+                    const proxy = await gateway.getDeviceProxy(dev.id);
+                    await proxy.notification.Notify(payload);
+                } catch (err) {
+                    console.debug(`notify device ${dev.id} failed`, err);
+                }
+            }
         }
 
         function markNotificationSeen(id) {
@@ -1728,7 +1772,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                 return;
             }
             markNotificationSeen(id);
-            notifyCurrentDevice(event).catch((err) => {
+            notifySelectedDevices(event).catch((err) => {
                 console.debug('lazycat notification unavailable', err);
                 if (isNotificationUnsupportedError(err)) {
                     disableClientNotifications();
@@ -1756,6 +1800,78 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             if (!state.settings.background_monitor_enabled || !state.settings.notifications_enabled || state.settings.client_notification_enabled === false || state.notificationUnsupported) return;
             pollNotificationEvents();
             state.notificationPoller = setInterval(pollNotificationEvents, 15000);
+        }
+
+        // --- Device management via Lazycat SDK ---
+        async function loadLazycatDevices() {
+            try {
+                const gateway = await getLazycatGateway();
+                const session = await gateway.session;
+                const result = await gateway.devices.ListEndDevices({ uid: session.uid });
+                const devices = (result.devices || []).map(d => ({
+                    id: d.uniqueDeivceId || '',
+                    name: d.remarkName || d.name || d.model || '',
+                    model: d.model || '',
+                    isOnline: !!d.isOnline,
+                    isMobile: !!d.isMobile,
+                    isCurrent: d.uniqueDeivceId === session.deviceId
+                }));
+                state.lazycatDevices = devices;
+                renderNotificationDeviceList();
+                return devices;
+            } catch (err) {
+                console.debug('load lazycat devices failed', err);
+                state.lazycatDevices = [];
+                renderNotificationDeviceList();
+                return [];
+            }
+        }
+
+        function renderNotificationDeviceList() {
+            const container = document.getElementById('notification-device-list');
+            const summaryEl = document.getElementById('notification-device-summary');
+            if (!container) return;
+            const devices = state.lazycatDevices || [];
+            const selectedIDs = new Set(state.settings.notification_device_ids || []);
+
+            if (devices.length === 0) {
+                container.innerHTML = `<div class="placeholder">${i18n('no_devices_registered')}</div>`;
+                if (summaryEl) summaryEl.textContent = i18n('no_devices_registered');
+                return;
+            }
+
+            container.innerHTML = devices.map(dev => {
+                const isSelected = selectedIDs.size === 0 || selectedIDs.has(dev.id);
+                const label = escapeHtml(dev.name || dev.model || dev.id);
+                return `
+                    <label class="notification-device-item ${isSelected ? 'selected' : ''}">
+                        <input type="checkbox" data-device-id="${escapeHtml(dev.id)}" ${isSelected ? 'checked' : ''}>
+                        <div class="notification-device-status ${dev.isOnline ? 'online' : ''}"></div>
+                        <div class="notification-device-name">${label}${dev.isCurrent ? ' (当前)' : ''}</div>
+                    </label>
+                `;
+            }).join('');
+
+            container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const checked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(el => el.dataset.deviceId);
+                    state.settings.notification_device_ids = checked;
+                    updateDeviceSummary();
+                });
+            });
+
+            updateDeviceSummary();
+
+            function updateDeviceSummary() {
+                if (!summaryEl) return;
+                const total = devices.length;
+                const checkedCount = container.querySelectorAll('input[type="checkbox"]:checked').length;
+                if (checkedCount === total || checkedCount === 0) {
+                    summaryEl.textContent = `全部设备 (${total})`;
+                } else {
+                    summaryEl.textContent = `${checkedCount} / ${total} 台`;
+                }
+            }
         }
 
         function isNotificationUnsupportedError(err) {
@@ -1895,23 +2011,6 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                     await run();
                 }
             });
-        }
-
-        function parseTargetList(text) {
-            return text.split(/[,\n]/).map(s => s.trim()).filter(Boolean).map(raw => {
-                const parts = raw.split('|');
-                if (parts.length === 2) return { name: parts[0].trim(), url: parts[1].trim() };
-                return { name: raw, url: raw };
-            });
-        }
-        function formatTargetList(list) {
-            return (list || []).map(t => `${t.name}|${t.url}`).join(',\n');
-        }
-
-        async function initSettings() {
-            if (state.settingsInitialized) return;
-            state.settingsInitialized = true;
-            await loadSettings();
         }
 
         function applySettingsToForm() {
@@ -2057,11 +2156,13 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                     dnd_start: settingsData.dnd_start || '22:00',
                     dnd_end: settingsData.dnd_end || '08:00',
                     scheduled_notify_enabled: !!settingsData.scheduled_notify_enabled,
-                    scheduled_notify_time: settingsData.scheduled_notify_time || '09:00'
+                    scheduled_notify_time: settingsData.scheduled_notify_time || '09:00',
+                    notification_device_ids: settingsData.notification_device_ids || []
                 };
                 applySettingsToForm();
                 updateTrafficAnalysisLink();
                 initNotificationPolling();
+                loadLazycatDevices();
             } catch (error) {
                 console.error(error);
             }
@@ -2131,7 +2232,8 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                 dnd_start: elements.settingDNDStart?.value || '22:00',
                 dnd_end: elements.settingDNDEnd?.value || '08:00',
                 scheduled_notify_enabled: !!elements.settingScheduledNotifyEnabled?.checked,
-                scheduled_notify_time: elements.settingScheduledNotifyTime?.value || '09:00'
+                scheduled_notify_time: elements.settingScheduledNotifyTime?.value || '09:00',
+                notification_device_ids: state.settings.notification_device_ids || []
             };
 
             try {

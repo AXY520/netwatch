@@ -936,6 +936,126 @@
             gap: .9rem;
         }
 
+        .settings-compact {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+        .settings-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.55rem 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .settings-row:last-child { border-bottom: none; }
+        .settings-row > span { font-size: 0.9rem; }
+        .settings-inline-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .settings-toggle.inline {
+            gap: 0;
+        }
+        .settings-toggle.inline span { display: none; }
+        #settings-window .settings-compact {
+            padding: 0 0.2rem;
+        }
+        .settings-divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 0.3rem 0;
+        }
+        .settings-hint {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-top: -0.25rem;
+            padding-bottom: 0.15rem;
+        }
+        .settings-input {
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-main);
+            padding: 0.3rem 0.5rem;
+            font-size: 0.82rem;
+            min-width: 0;
+        }
+        .settings-input:focus { outline: 1px solid var(--accent-cyan); }
+        .time-input { width: 8.5em; text-align: center; }
+        .settings-range-sep { color: var(--text-muted); font-size: 0.8rem; }
+        .btn-sm {
+            padding: 0.25rem 0.6rem;
+            font-size: 0.78rem;
+            border-radius: 6px;
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            cursor: pointer;
+        }
+        .btn-sm:hover { border-color: var(--accent-cyan); }
+
+        .notify-settings-compact { padding: 0.2rem 0; }
+        #traffic-settings-window {
+            width: min(480px, calc(100vw - 2rem));
+        }
+        #notification-settings-window {
+            width: min(520px, calc(100vw - 2rem));
+            max-height: calc(100vh - 3rem);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #notification-settings-window > .settings-layout {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 0 1rem;
+        }
+        #notification-settings-window > .settings-layout::-webkit-scrollbar { width: 4px; }
+        #notification-settings-window > .settings-layout::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        /* Notification device dropdown */
+        .notification-device-dropdown { position: relative; }
+        .notification-device-trigger {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.3rem 0.6rem;
+            cursor: pointer;
+            font-size: 0.82rem;
+            min-width: 160px;
+            user-select: none;
+        }
+        .notification-device-trigger:hover { border-color: var(--accent-cyan); }
+        .dropdown-arrow { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); }
+        .notification-device-panel {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            z-index: 100;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.4rem;
+            min-width: 240px;
+            max-height: 280px;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            margin-top: 4px;
+        }
+        .notification-device-panel.open { display: block; }
+        .notification-device-panel::-webkit-scrollbar { width: 3px; }
+        .notification-device-panel::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+
         .settings-toggle {
             display: inline-flex;
             align-items: center;
@@ -1724,17 +1844,12 @@
             border-radius: 999px;
             border: 1px solid rgba(0, 255, 157, 0.25);
         }
-        .lan-settings-layout {
-            align-items: stretch;
-            grid-template-columns: minmax(260px, 0.7fr) minmax(380px, 1.3fr);
-        }
         #lan-settings-window {
-            width: min(960px, calc(100vw - 2rem));
-            height: min(820px, calc(100vh - 3rem));
-            max-height: none;
-            overflow: hidden;
+            width: min(480px, calc(100vw - 2rem));
+            max-height: calc(100vh - 3rem);
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
         #lan-note-window {
             width: min(520px, calc(100vw - 2rem));
@@ -1750,49 +1865,14 @@
             justify-content: flex-end;
             margin-top: 0;
         }
-        #lan-settings-window > .note {
-            margin-top: 0.85rem;
-            flex: 0 0 auto;
-        }
-        .lan-monitor-section {
-            min-height: 0;
-        }
         #lan-settings-window .window-head {
             flex: 0 0 auto;
         }
-        #lan-settings-window .lan-settings-layout {
+        #lan-settings-window .settings-compact {
             flex: 1 1 auto;
             min-height: 0;
-            overflow: hidden;
-        }
-        #lan-settings-window .settings-section {
-            min-height: 0;
-            overflow: hidden;
-        }
-        .lan-notify-section {
-            gap: 0.65rem;
             overflow-y: auto;
-            overscroll-behavior: contain;
-            scrollbar-width: thin;
-            padding-right: 0.3rem;
-        }
-        .lan-notify-section::-webkit-scrollbar {
-            width: 4px;
-        }
-        .lan-notify-section::-webkit-scrollbar-thumb {
-            background: var(--border-color);
-            border-radius: 4px;
-        }
-        .lan-notify-section .settings-field {
-            gap: 0.28rem;
-        }
-        .lan-notify-section .settings-toggle {
-            min-height: 1.25rem;
-        }
-        .lan-notify-section .note {
-            margin-top: 0.2rem;
-            font-size: 0.7rem;
-            line-height: 1.4;
+            padding: 0.2rem 0;
         }
         .lan-ignored-section {
             margin-top: 1rem;
@@ -1840,9 +1920,32 @@
             color: var(--text-muted);
             font-size: 0.72rem;
         }
-        .lan-settings-actions {
-            margin-top: auto;
+        .lan-ignored-list-inline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            align-items: center;
         }
+        .lan-ignored-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.15rem 0.4rem;
+            font-size: 0.75rem;
+        }
+        .lan-ignored-remove {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.85rem;
+            line-height: 1;
+            padding: 0;
+        }
+        .lan-ignored-remove:hover { color: var(--accent-red); }
         .system-table th,
         .system-table td {
             white-space: nowrap;
@@ -1973,6 +2076,54 @@
             border-color: rgba(139, 156, 247, 0.38);
             background: rgba(139, 156, 247, 0.07);
         }
+        .notification-device-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            padding: 0.3rem 0;
+        }
+        .notification-device-item {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.5rem 0.7rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--glass-bg);
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .notification-device-item:hover {
+            border-color: var(--accent-cyan);
+        }
+        .notification-device-item.selected {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 242, 255, 0.05);
+        }
+        .notification-device-item input[type="checkbox"] {
+            flex: 0 0 auto;
+            accent-color: var(--accent-cyan);
+        }
+        .notification-device-name {
+            font-weight: 500;
+            font-size: 0.8rem;
+            color: var(--text-main);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .notification-device-status {
+            flex: 0 0 auto;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        .notification-device-status.online {
+            background: var(--accent-green);
+            box-shadow: 0 0 6px rgba(0, 255, 157, 0.4);
+        }
         .lan-status-badge {
             display: inline-flex;
             align-items: center;
@@ -2058,14 +2209,6 @@
             .traffic-page header { align-items: stretch; }
             .traffic-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .traffic-detail-grid { grid-template-columns: 1fr; }
-            .lan-settings-layout { grid-template-columns: 1fr; }
-            #lan-settings-window .lan-settings-layout {
-                overflow-y: auto;
-                scrollbar-width: none;
-            }
-            #lan-settings-window .lan-settings-layout::-webkit-scrollbar {
-                display: none;
-            }
             .lan-ignored-list {
                 flex: 0 0 auto;
                 max-height: 220px;

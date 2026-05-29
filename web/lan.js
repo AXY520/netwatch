@@ -6,6 +6,7 @@
         lzcGatewayPromise: null,
         notificationUnsupported: localStorage.getItem('netwatch_notification_unsupported') === 'true',
         notificationLastID: Number(localStorage.getItem('netwatch_notification_last_id') || '0') || 0,
+        deviceID: localStorage.getItem('netwatch_device_id') || '',
         notificationPoller: null,
         modalScrollY: 0,
         settings: null,
@@ -80,12 +81,12 @@
     }
 
     function statusBadge(status) {
-        if (status === 'online') return '<span class="lan-status-badge online">在线</span>';
-        if (status === 'offline') return '<span class="lan-status-badge offline">离线</span>';
-        if (status === 'interface_down') return '<span class="lan-status-badge offline">网卡断开</span>';
-        if (status === 'interface_pending') return '<span class="lan-status-badge unknown">待确认</span>';
-        if (status === 'online_pending') return '<span class="lan-status-badge unknown">上线确认中</span>';
-        return '<span class="lan-status-badge unknown">未知</span>';
+        if (status === 'online') return `<span class="lan-status-badge online">${i18n('status_online')}</span>`;
+        if (status === 'offline') return `<span class="lan-status-badge offline">${i18n('status_offline')}</span>`;
+        if (status === 'interface_down') return `<span class="lan-status-badge offline">${i18n('status_iface_down')}</span>`;
+        if (status === 'interface_pending') return `<span class="lan-status-badge unknown">${i18n('status_pending')}</span>`;
+        if (status === 'online_pending') return `<span class="lan-status-badge unknown">${i18n('status_online_confirming')}</span>`;
+        return `<span class="lan-status-badge unknown">${i18n('status_unknown')}</span>`;
     }
 
     function tag(label, tone = 'neutral') {
@@ -222,20 +223,20 @@
             const gateway = await getLazycatGateway();
             const device = await gateway.currentDevice;
             await device.notification.Notify({
-                title: els.testTitle?.value || 'Netwatch 测试通知',
-                body: els.testBody?.value || '客户端通知 API 可用。',
+                title: els.testTitle?.value || i18n('test_notify_title'),
+                body: els.testBody?.value || i18n('test_notify_body'),
                 deeplinkUrl: 'lzc://app/cloud.lazycat.app.netwatch'
             });
             state.notificationUnsupported = false;
             localStorage.removeItem('netwatch_notification_unsupported');
-            showToast('测试通知已发送', 'success');
+            showToast(i18n('test_notify_sent'), 'success');
         } catch (err) {
             console.debug('notification test failed', err);
             if (isNotificationUnsupportedError(err)) {
                 state.notificationUnsupported = true;
                 localStorage.setItem('netwatch_notification_unsupported', 'true');
             }
-            showToast(`测试通知失败: ${formatNotificationError(err)}`, 'error');
+            showToast(`${i18n('test_notify_failed')}: ${formatNotificationError(err)}`, 'error');
         } finally {
             els.testSend.disabled = false;
         }
@@ -245,37 +246,6 @@
         if (!Number.isFinite(id) || id <= state.notificationLastID) return;
         state.notificationLastID = id;
         localStorage.setItem('netwatch_notification_last_id', String(id));
-    }
-
-    async function notifyCurrentDevice(event) {
-        if (state.notificationUnsupported) {
-            throw new Error('当前客户端未注册系统通知服务');
-        }
-        const gateway = await getLazycatGateway();
-        const device = await gateway.currentDevice;
-        await device.notification.Notify({
-            title: event.title || 'Netwatch',
-            body: event.body || '',
-            deeplinkUrl: event.deeplink_url || 'lzc://app/cloud.lazycat.app.netwatch'
-        });
-    }
-
-    function handleNotificationEvent(event) {
-        const id = Number(event?.id || 0);
-        if (!id || id <= state.notificationLastID) return;
-        if (!state.settings?.notifications_enabled || state.settings.client_notification_enabled === false) {
-            markNotificationSeen(id);
-            return;
-        }
-        markNotificationSeen(id);
-        notifyCurrentDevice(event).catch(err => {
-            console.debug('lazycat notification unavailable', err);
-            if (isNotificationUnsupportedError(err)) {
-                state.notificationUnsupported = true;
-                localStorage.setItem('netwatch_notification_unsupported', 'true');
-                scheduleNotificationPolling();
-            }
-        });
     }
 
     async function pollNotificationEvents() {
@@ -468,10 +438,10 @@
             applySettingsToForm();
             scheduleBackgroundRefresh();
             scheduleNotificationPolling();
-            if (!silent) showToast('设置已保存', 'success');
+            if (!silent) showToast(i18n('settings_saved'), 'success');
             return state.settings;
         } catch (err) {
-            if (!silent) showToast(`设置保存失败: ${err.message}`, 'error');
+            if (!silent) showToast(`${i18n('settings_save_failed')}: ${err.message}`, 'error');
             throw err;
         } finally {
             if (els.saveSettings) els.saveSettings.disabled = false;
@@ -532,18 +502,14 @@
     function renderIgnoredDevices(devices) {
         if (!els.ignoredList) return;
         const ignored = (devices || []).filter(dev => dev.mac);
+        if (ignored.length === 0) {
+            els.ignoredList.innerHTML = '<span class="placeholder">无</span>';
+            return;
+        }
         els.ignoredList.innerHTML = ignored.map(dev => {
             const name = deviceLabel(dev);
-            return `
-                <div class="lan-ignored-item">
-                    <div>
-                        <strong>${escapeHtml(name)}</strong>
-                        <span class="mono">${escapeHtml(dev.ip || '--')} / ${escapeHtml(dev.mac || '--')}</span>
-                    </div>
-                    <button class="lan-action" data-action="unignore" data-mac="${escapeHtml(dev.mac || '')}">恢复显示</button>
-                </div>
-            `;
-        }).join('') || '<div class="placeholder">无已忽略设备</div>';
+            return `<span class="lan-ignored-tag">${escapeHtml(name)}<button class="lan-ignored-remove" data-action="unignore" data-mac="${escapeHtml(dev.mac || '')}" title="恢复显示">&times;</button></span>`;
+        }).join('');
     }
 
     function deviceLabel(dev) {
@@ -591,7 +557,7 @@
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             render(await resp.json());
         } catch (err) {
-            showToast(`局域网设备加载失败: ${err.message}`, 'error');
+            showToast(`${i18n('lan_load_failed')}: ${err.message}`, 'error');
         } finally {
             if (els.refreshBtn) {
                 els.refreshBtn.disabled = false;
@@ -608,6 +574,7 @@
             applySettingsToForm();
             scheduleBackgroundRefresh();
             scheduleNotificationPolling();
+            loadLazycatDevices();
         } catch (err) {
             console.debug('lan settings load failed', err);
         }
@@ -638,9 +605,9 @@
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             render(await resp.json());
-            showToast('设备标记已更新', 'success');
+            showToast(i18n('device_mark_updated'), 'success');
         } catch (err) {
-            showToast(`设备标记更新失败: ${err.message}`, 'error');
+            showToast(`${i18n('device_mark_failed')}: ${err.message}`, 'error');
         }
     }
 
@@ -734,6 +701,71 @@
             loadSettingsAndScheduleRefresh();
         }
     });
+    async function loadLazycatDevices() {
+        try {
+            const gateway = await getLazycatGateway();
+            const session = await gateway.session;
+            const result = await gateway.devices.ListEndDevices({ uid: session.uid });
+            state.lazycatDevices = (result.devices || []).map(d => ({
+                id: d.uniqueDeivceId || '',
+                name: d.remarkName || d.name || d.model || '',
+                model: d.model || '',
+                isOnline: !!d.isOnline,
+                isMobile: !!d.isMobile,
+                isCurrent: d.uniqueDeivceId === session.deviceId
+            }));
+        } catch (err) {
+            console.debug('load lazycat devices failed', err);
+            state.lazycatDevices = [];
+        }
+    }
+
+    async function notifySelectedDevices(event) {
+        if (state.notificationUnsupported) return;
+        const selectedIDs = state.settings?.notification_device_ids;
+        const devices = state.lazycatDevices || [];
+        const gateway = await getLazycatGateway();
+        const payload = {
+            title: event.title || 'Netwatch',
+            body: event.body || '',
+            deeplinkUrl: event.deeplink_url || 'lzc://app/cloud.lazycat.app.netwatch'
+        };
+
+        if (!selectedIDs || selectedIDs.length === 0) {
+            const device = await gateway.currentDevice;
+            await device.notification.Notify(payload);
+            return;
+        }
+
+        for (const dev of devices) {
+            if (!selectedIDs.includes(dev.id)) continue;
+            try {
+                const proxy = await gateway.getDeviceProxy(dev.id);
+                await proxy.notification.Notify(payload);
+            } catch (err) {
+                console.debug(`notify device ${dev.id} failed`, err);
+            }
+        }
+    }
+
+    function handleNotificationEvent(event) {
+        const id = Number(event?.id || 0);
+        if (!id || id <= state.notificationLastID) return;
+        if (!state.settings?.notifications_enabled || state.settings.client_notification_enabled === false) {
+            markNotificationSeen(id);
+            return;
+        }
+        markNotificationSeen(id);
+        notifySelectedDevices(event).catch(err => {
+            console.debug('lazycat notification unavailable', err);
+            if (isNotificationUnsupportedError(err)) {
+                state.notificationUnsupported = true;
+                localStorage.setItem('netwatch_notification_unsupported', 'true');
+                scheduleNotificationPolling();
+            }
+        });
+    }
+
     load(false);
     loadSettingsAndScheduleRefresh();
 })();

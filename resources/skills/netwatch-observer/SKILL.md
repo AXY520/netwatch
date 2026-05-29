@@ -1,6 +1,6 @@
 ---
 name: netwatch-observer
-description: Check network connectivity (domestic & global websites), egress IP & geolocation, NAT type, interface status, per-app traffic stats, traceroute, and speed tests.
+description: Check network connectivity, egress IP, NAT type, interface status, LAN device discovery, per-app traffic stats, notifications, traceroute, and speed tests.
 ---
 
 ## When to use this skill
@@ -11,6 +11,7 @@ Call Netwatch when the user's request involves any of these scenarios:
 - **Website reachability**: "Can I reach example.com?", "What's the latency to that site?", "Check if domestic/global sites are accessible"
 - **Egress IP / proxy status**: "What's my IP?", "Am I going through a proxy?", "Where is my exit point?", "What's my NAT type?"
 - **Interface & link status**: "Is the wired connection up?", "How's the Wi-Fi signal?", "What's the link speed?"
+- **LAN devices**: "What devices are on the network?", "Is device X online?", "When was device Y last seen?"
 - **Per-app traffic**: "Which app uses the most bandwidth?", "How much has app X uploaded/downloaded?", "Traffic ranking"
 - **Traceroute**: "What's the route to this host?", "Why is it slow to reach X?", "Run a traceroute"
 - **Speed test**: "What's my bandwidth?", "What's the LAN transfer rate?"
@@ -75,6 +76,26 @@ Cumulative upload/download traffic grouped by bridge/app identity.
 |--------|------|-------------|
 | GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic with packets/errors/dropped, container count, domain |
 | GET | `/api/v1/network/app-traffic/history?bridge=<name>&limit=300` | Traffic history (rx/tx bytes over time) for a specific bridge |
+| GET | `/api/v1/network/app-traffic/live` | Live traffic snapshot (current rates) |
+| GET | `/api/v1/network/app-traffic/top` | Top apps by traffic volume |
+| POST | `/api/v1/settings/persistent-traffic-bridges` | Update persistent traffic bridge list |
+
+### LAN devices
+
+Discover and manage devices on the local network.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/lan/devices` | List all discovered LAN devices with status, IP, MAC, vendor info |
+| POST | `/api/v1/lan/devices` | Trigger an immediate LAN device scan |
+| POST | `/api/v1/lan/devices/meta` | Update device metadata (note, pin, ignore). Body: `{"mac": "...", "note": "...", "pinned": true, "ignored": false}` |
+
+### Notifications
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/notifications/events?since=<id>` | Poll notification events since a given ID |
+| POST | `/api/v1/notifications/bark/test` | Send a test Bark push notification |
 
 ### Traceroute
 
@@ -120,6 +141,14 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 | POST | `/api/v1/auto-refresh` | Set auto-refresh. Body: `{"enabled": true, "interval_sec": 30}` |
 | POST | `/api/v1/settings/refresh-interval` | Update refresh interval. Body: `{"interval_sec": 30}` |
 
+## Web pages
+
+| Path | Description |
+|------|-------------|
+| `/` | Main dashboard: connectivity, egress IP, NIC stats, app traffic |
+| `/lan.html` | LAN device discovery and management |
+| `/traffic.html` | Detailed per-app traffic analysis with charts |
+
 ## Notes
 
 - **Prefer `summary`**: it's the combined snapshot and covers most use cases in a single call.
@@ -128,4 +157,6 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 - **Connectivity reporting**: distinguish domestic vs. global targets; quote observed values, not inferences.
 - **Egress IP reporting**: use the returned IP and geolocation directly; do not infer from interface names.
 - **App traffic reporting**: highlight the largest consumers by total bytes; note the sort basis (upload/download/total).
+- **LAN device management**: devices are auto-discovered via ARP scan; users can pin, ignore, or add notes to devices.
 - **Traceroute is async**: `GET /diagnostics/trace?host=<host>` starts a background task; use `/diagnostics/trace/task` to poll intermediate progress.
+- **i18n**: the web UI supports Chinese (zh-CN) and English, auto-detected from browser locale.

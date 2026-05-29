@@ -123,6 +123,18 @@ type MutableSettings struct {
 
 	// Traffic chart settings
 	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
+
+	// Notification device selection
+	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
+}
+
+type RegisteredDevice struct {
+	ID         string `json:"id"`
+	Name       string `json:"name,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+	FirstSeen  string `json:"first_seen"`
+	LastSeen   string `json:"last_seen"`
+	Notify     bool   `json:"notify"`
 }
 
 type NotificationEvent struct {

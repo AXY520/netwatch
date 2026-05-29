@@ -64,6 +64,8 @@ type Service struct {
 	persistentTrafficBridges    []string
 	backgroundMonitorEnabled    bool
 	backgroundMonitorInterval   int
+	lastConnectivityProbe       time.Time
+	lastEgressProbe             time.Time
 	notificationsEnabled        bool
 	clientNotificationEnabled   bool
 	notifyAbnormalTraffic       bool
@@ -94,6 +96,9 @@ type Service struct {
 	lanFlappingThreshold        int                       // max state changes in window before suppression
 	lanFlappingWindow           time.Duration             // sliding window duration
 	lanDeviceAutoRemoveDays     int                       // auto-remove offline devices after N days (0=disabled)
+	notificationDeviceIDs       []string                  // device IDs to receive client notifications; empty = all
+	registeredDevices           map[string]RegisteredDevice
+	registeredDevicesMu         sync.Mutex
 	notificationMu              sync.Mutex
 	notificationEvents          []NotificationEvent
 	notificationNextID          int64
@@ -127,6 +132,7 @@ func NewService(cfg Config) *Service {
 		lanNotifyCooldownSec:        600,  // 10 minutes
 		lanFlappingThreshold:        5,    // 5 state changes
 		lanFlappingWindow:           10 * time.Minute,
+		registeredDevices:           loadRegisteredDevices(cfg.DataDir),
 		chartTimeLabelInterval:      0,
 		trafficSamplingEnabled:      true,
 		trafficSamplingInterval:     60,
@@ -503,6 +509,7 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		LANFlappingThreshold:           s.lanFlappingThreshold,
 		LANFlappingWindowSec:           int(s.lanFlappingWindow.Seconds()),
 		LANDeviceAutoRemoveDays:        s.lanDeviceAutoRemoveDays,
+		NotificationDeviceIDs:          s.notificationDeviceIDs,
 	}
 }
 
@@ -571,6 +578,7 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 		s.lanFlappingWindow = time.Duration(in.LANFlappingWindowSec) * time.Second
 	}
 	s.lanDeviceAutoRemoveDays = in.LANDeviceAutoRemoveDays
+	s.notificationDeviceIDs = in.NotificationDeviceIDs
 	if s.notificationsEnabled && !s.barkEnabled && !s.clientNotificationEnabled {
 		s.clientNotificationEnabled = true
 	}
@@ -810,6 +818,22 @@ func (s *Service) collectFastSummary(ctx context.Context) (Summary, error) {
 		Ready:               true,
 		WebsiteConnectivity: website,
 		NetworkInfo:         networkInfo,
+	}, nil
+}
+
+func (s *Service) collectFastSummaryConditional(ctx context.Context, runConnectivity bool) (Summary, error) {
+	if runConnectivity {
+		return s.collectFastSummary(ctx)
+	}
+	s.mu.RLock()
+	prev := s.summary
+	s.mu.RUnlock()
+	return Summary{
+		GeneratedAt:         localTimestamp(),
+		RefreshIntervalSec:  int64(s.cfg.RefreshInterval / time.Second),
+		Ready:               true,
+		WebsiteConnectivity: prev.WebsiteConnectivity,
+		NetworkInfo:         prev.NetworkInfo,
 	}, nil
 }
 

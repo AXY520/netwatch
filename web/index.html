@@ -316,24 +316,20 @@
                 <button id="close-settings-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
-        <div class="settings-layout">
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="broadband_speedtest">宽带测速 (Broadband)</div>
-                <label class="settings-toggle">
+        <div class="settings-layout settings-compact">
+            <div class="settings-row">
+                <span data-i18n="broadband_speedtest">宽带测速</span>
+                <label class="settings-toggle inline">
                     <input type="checkbox" id="setting-broadband-domestic-only">
-                    <span data-i18n="domestic_nodes_only">仅使用国内测速节点</span>
+                    <span data-i18n="domestic_nodes_only">仅国内节点</span>
                 </label>
-                <div class="note" data-i18n="domestic_nodes_note">开启后将强制筛选中国大陆境内的运营商节点，适用于存在全局代理但需要测试真实物理带宽的场景。</div>
             </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="nic_realtime_monitor">网卡实时监测</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-nic-realtime-enabled">
-                    <span data-i18n="enable_nic_realtime">启用实时速率刷新</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="nic_realtime_interval">实时速率刷新间隔</span>
+            <div class="settings-row">
+                <span data-i18n="nic_realtime_monitor">网卡实时刷新</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline">
+                        <input type="checkbox" id="setting-nic-realtime-enabled">
+                    </label>
                     <select id="setting-nic-realtime-interval-sec">
                         <option value="1" data-i18n="sec_1">1 秒</option>
                         <option value="2" data-i18n="sec_2">2 秒</option>
@@ -341,35 +337,47 @@
                         <option value="5" data-i18n="sec_5">5 秒</option>
                         <option value="10" data-i18n="sec_10">10 秒</option>
                     </select>
-                </label>
-                <div class="note" data-i18n="nic_realtime_note">这里显示的是宿主机该网卡的总出入流量，浏览器、微信、代理软件、后台应用都会计入。</div>
+                </div>
             </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="background_monitor">后台检测与通知</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-background-monitor-enabled">
-                    <span data-i18n="enable_background_monitor">启用后台检测</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="background_monitor_interval">完整检测间隔</span>
+            <div class="settings-row">
+                <span data-i18n="background_monitor">后台检测</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline">
+                        <input type="checkbox" id="setting-background-monitor-enabled">
+                    </label>
                     <select id="setting-background-monitor-interval-sec">
                         <option value="30" data-i18n="sec_30">30 秒</option>
                         <option value="60" data-i18n="sec_60">60 秒</option>
                         <option value="120" data-i18n="sec_120">120 秒</option>
                         <option value="300" data-i18n="sec_300">300 秒</option>
                     </select>
-                </label>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-notifications-enabled">
-                    <span data-i18n="enable_notifications">启用通知</span>
-                </label>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-notify-abnormal-traffic">
-                    <span data-i18n="notify_abnormal_traffic">异常流量通知</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="abnormal_traffic_threshold">异常流量阈值</span>
+                    <button id="open-notification-settings" data-i18n="notification_settings_btn">通知设置</button>
+                </div>
+            </div>
+        </div>
+    </section>
+    <section class="floating-window" id="notification-settings-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="notification_settings">通知设置</div>
+                <div class="note" data-i18n="notification_settings_desc">配置通知触发条件、通知渠道、设备选择和免打扰时段。</div>
+            </div>
+            <div class="window-actions">
+                <button id="save-notification-settings" data-i18n="save_btn">保存</button>
+                <button id="close-notification-settings" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div class="settings-layout settings-compact notify-settings-compact">
+            <div class="settings-row">
+                <span data-i18n="notification_triggers">通知触发</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-notifications-enabled"><span data-i18n="enable_notifications">启用</span></label>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="notify_abnormal_traffic">异常流量</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-abnormal-traffic"><span>on</span></label>
                     <select id="setting-abnormal-traffic-threshold-mbps">
                         <option value="50">50 Mbps</option>
                         <option value="100">100 Mbps</option>
@@ -377,97 +385,92 @@
                         <option value="500">500 Mbps</option>
                         <option value="1000">1000 Mbps</option>
                     </select>
-                </label>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-notify-egress-change">
-                    <span data-i18n="notify_egress_change">国内外出口 IP 变动通知</span>
-                </label>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-notify-connectivity-change">
-                    <span data-i18n="notify_connectivity_change">全球互联连接/断开通知</span>
-                </label>
-                <div class="note" data-i18n="background_monitor_note">完整检测间隔控制后台主动检测网络身份、出口、互联状态和局域网设备扫描；网卡连接/断开使用本地轻量状态检测，会更快更新。</div>
-            </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="notification_channels">通知渠道</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-client-notification-enabled">
-                    <span data-i18n="client_notification">客户端通知</span>
-                </label>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-bark-enabled">
-                    <span data-i18n="bark_enabled">启用 Bark 推送</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="bark_server_url">Bark 服务地址</span>
-                    <input id="setting-bark-server-url" placeholder="https://api.day.app">
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="bark_device_key">Bark Device Key</span>
-                    <input id="setting-bark-device-key" placeholder="xxxxxxxxxxxxxxxxxxxx">
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="bark_group">Bark 分组</span>
-                    <input id="setting-bark-group" placeholder="Netwatch">
-                </label>
-                <div class="window-actions">
-                    <button id="test-bark-notification" data-i18n="test_bark_notification">测试 Bark 推送</button>
                 </div>
             </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="dnd_settings">免打扰</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-dnd-enabled">
-                    <span data-i18n="dnd_enabled">启用免打扰</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="dnd_start">免打扰开始</span>
-                    <input type="time" id="setting-dnd-start" value="22:00">
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="dnd_end">免打扰结束</span>
-                    <input type="time" id="setting-dnd-end" value="08:00">
-                </label>
-                <div class="note" data-i18n="dnd_note">免打扰时段内，所有推送通知（Bark 和客户端）将被静默。</div>
+            <div class="settings-row">
+                <span data-i18n="notify_egress_change">出口 IP 变动</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-egress-change"><span>on</span></label>
             </div>
-
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="scheduled_notify">定时通知</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="setting-scheduled-notify-enabled">
-                    <span data-i18n="scheduled_notify_enabled">启用定时通知</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="scheduled_notify_time">每日通知时间</span>
-                    <input type="time" id="setting-scheduled-notify-time" value="09:00">
-                </label>
-                <div class="note" data-i18n="scheduled_notify_note">每天在指定时间发送网络状态摘要通知，包含出口 IP、全球互联状态和局域网设备统计。</div>
+            <div class="settings-row">
+                <span data-i18n="notify_connectivity_change">全球互联断开</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-connectivity-change"><span>on</span></label>
             </div>
-
+            <div class="settings-row">
+                <span data-i18n="notify_lan_device_change">局域网设备变动</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-lan-device-change"><span>on</span></label>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="notification_devices">通知设备</span>
+                <div class="notification-device-dropdown" id="notification-device-dropdown">
+                    <div class="notification-device-trigger" id="notification-device-trigger">
+                        <span id="notification-device-summary" data-i18n="loading">加载中...</span>
+                        <span class="dropdown-arrow">▾</span>
+                    </div>
+                    <div class="notification-device-panel" id="notification-device-panel">
+                        <div id="notification-device-list" class="notification-device-list">
+                            <div class="placeholder" data-i18n="no_devices_registered">暂无设备</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-divider"></div>
+            <div class="settings-row">
+                <span data-i18n="client_notification">客户端通知</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-client-notification-enabled"><span>on</span></label>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="bark_enabled">Bark 推送</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-bark-enabled"><span>on</span></label>
+                    <button id="test-bark-notification" class="btn-sm" data-i18n="test_bark_notification">测试</button>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="bark_device_key">Bark Key</span>
+                <input id="setting-bark-device-key" class="settings-input" placeholder="Device Key">
+            </div>
+            <div class="settings-row">
+                <span data-i18n="bark_server_url">Bark 地址</span>
+                <input id="setting-bark-server-url" class="settings-input" placeholder="https://api.day.app">
+            </div>
+            <div class="settings-row">
+                <span data-i18n="bark_group">Bark 分组</span>
+                <input id="setting-bark-group" class="settings-input" placeholder="Netwatch">
+            </div>
+            <div class="settings-divider"></div>
+            <div class="settings-row">
+                <span data-i18n="dnd_settings">免打扰</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-dnd-enabled"><span>on</span></label>
+                    <input type="time" id="setting-dnd-start" value="22:00" class="settings-input time-input">
+                    <span class="settings-range-sep">-</span>
+                    <input type="time" id="setting-dnd-end" value="08:00" class="settings-input time-input">
+                </div>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="scheduled_notify">定时通知</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-scheduled-notify-enabled"><span>on</span></label>
+                    <input type="time" id="setting-scheduled-notify-time" value="09:00" class="settings-input time-input">
+                </div>
+            </div>
         </div>
     </section>
     <section class="floating-window" id="traffic-settings-window">
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="traffic_analysis_settings">流量分析设置</div>
-                <div class="note" data-i18n="traffic_settings_note">配置流量趋势采样、刷新间隔和单独应用采样频率。</div>
             </div>
             <div class="window-actions">
                 <button id="ts-save-btn" data-i18n="save_btn">保存</button>
                 <button id="close-traffic-settings-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
-        <div class="settings-layout" style="padding: 1rem 1.2rem">
-            <div class="settings-section">
-                <div class="table-subtitle" data-i18n="sampling_control">采样控制</div>
-                <label class="settings-toggle">
-                    <input type="checkbox" id="ts-sampling-enabled">
-                    <span data-i18n="enable_traffic_analysis">启用流量分析</span>
-                </label>
-                <label class="settings-field">
-                    <span data-i18n="global_sampling_interval">全局采样间隔</span>
+        <div class="settings-layout settings-compact" style="padding: 0.2rem 1rem">
+            <div class="settings-row">
+                <span data-i18n="enable_traffic_analysis">流量分析</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="ts-sampling-enabled"><span>on</span></label>
                     <select id="ts-global-interval">
                         <option value="10" data-i18n="sec_10">10 秒</option>
                         <option value="30" data-i18n="sec_30">30 秒</option>
@@ -475,12 +478,12 @@
                         <option value="120" data-i18n="sec_120">120 秒</option>
                         <option value="300" data-i18n="sec_300">300 秒</option>
                     </select>
-                </label>
+                </div>
             </div>
-        </div>
-        <div style="padding: 0 1.2rem 1rem">
-            <div class="table-subtitle" style="margin-bottom:0.5rem" data-i18n="per_app_sampling">单独采样间隔</div>
-            <div class="note" style="margin-bottom:0.5rem" data-i18n="per_app_sampling_note">对特定应用设置独立的采样频率，覆盖全局间隔。</div>
+            <div class="settings-divider"></div>
+            <div class="settings-row" style="margin-bottom:0.3rem">
+                <span data-i18n="per_app_sampling">单独应用采样</span>
+            </div>
             <div id="ts-per-app-list" class="ts-per-app-list"></div>
         </div>
     </section>

@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -317,6 +320,8 @@ func (s *Service) startBackgroundMonitor() {
 	}()
 }
 
+const connectivityProbeInterval = 300 * time.Second // 出口IP/互联检测固定5分钟
+
 func (s *Service) runBackgroundMonitorTick() {
 	s.mu.RLock()
 	interval := time.Duration(s.backgroundMonitorInterval) * time.Second
@@ -327,14 +332,24 @@ func (s *Service) runBackgroundMonitorTick() {
 
 	ctx, cancel := context.WithTimeout(s.backgroundCtx(), interval)
 	defer cancel()
+
+	now := time.Now()
 	s.mu.RLock()
 	notifyEgress := s.notifyEgressChange
 	notifyLAN := s.notifyLANDeviceChange
+	runConnectivity := now.Sub(s.lastConnectivityProbe) >= connectivityProbeInterval
 	s.mu.RUnlock()
-	if notifyEgress {
-		s.ClearPublicIPCache()
+
+	if runConnectivity {
+		s.mu.Lock()
+		s.lastConnectivityProbe = now
+		s.mu.Unlock()
+		if notifyEgress {
+			s.ClearPublicIPCache()
+		}
 	}
-	summary, err := s.collectFastSummary(ctx)
+
+	summary, err := s.collectFastSummaryConditional(ctx, runConnectivity)
 	if err != nil {
 		s.pushNotification("background_probe_failed", "warn", "Netwatch 后台检测失败",
 			fmt.Sprintf("后台定时检测出错，请检查服务状态。\n错误信息：%s", err.Error()))
@@ -462,4 +477,107 @@ func statusText(status ProbeStatus) string {
 	default:
 		return string(status)
 	}
+}
+
+// --- Device registration for client notifications ---
+
+func registeredDevicesPath(dataDir string) string {
+	return filepath.Join(dataDir, "registered_devices.json")
+}
+
+type registeredDevicesStore struct {
+	Devices map[string]RegisteredDevice `json:"devices"`
+}
+
+func loadRegisteredDevices(dataDir string) map[string]RegisteredDevice {
+	out := map[string]RegisteredDevice{}
+	if dataDir == "" {
+		return out
+	}
+	body, err := os.ReadFile(registeredDevicesPath(dataDir))
+	if err != nil {
+		return out
+	}
+	var store registeredDevicesStore
+	if err := json.Unmarshal(body, &store); err != nil {
+		return out
+	}
+	return store.Devices
+}
+
+func (s *Service) saveRegisteredDevices() error {
+	if s.cfg.DataDir == "" {
+		return nil
+	}
+	return writeJSONFile(registeredDevicesPath(s.cfg.DataDir), registeredDevicesStore{Devices: s.registeredDevices}, true)
+}
+
+func (s *Service) RegisterDevice(id, name, platform string) []RegisteredDevice {
+	if id == "" {
+		return s.GetRegisteredDevices()
+	}
+	s.registeredDevicesMu.Lock()
+	defer s.registeredDevicesMu.Unlock()
+	now := localTimestamp()
+	if dev, ok := s.registeredDevices[id]; ok {
+		dev.LastSeen = now
+		dev.Name = firstNonEmpty(name, dev.Name)
+		dev.Platform = firstNonEmpty(platform, dev.Platform)
+		s.registeredDevices[id] = dev
+	} else {
+		s.registeredDevices[id] = RegisteredDevice{
+			ID:        id,
+			Name:      name,
+			Platform:  platform,
+			FirstSeen: now,
+			LastSeen:  now,
+			Notify:    true,
+		}
+	}
+	_ = s.saveRegisteredDevices()
+	return s.getRegisteredDevicesLocked()
+}
+
+func (s *Service) GetRegisteredDevices() []RegisteredDevice {
+	s.registeredDevicesMu.Lock()
+	defer s.registeredDevicesMu.Unlock()
+	return s.getRegisteredDevicesLocked()
+}
+
+func (s *Service) getRegisteredDevicesLocked() []RegisteredDevice {
+	out := make([]RegisteredDevice, 0, len(s.registeredDevices))
+	for _, dev := range s.registeredDevices {
+		out = append(out, dev)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastSeen > out[j].LastSeen
+	})
+	return out
+}
+
+func (s *Service) SetNotificationDeviceIDs(ids []string) {
+	s.mu.Lock()
+	s.notificationDeviceIDs = ids
+	s.mu.Unlock()
+}
+
+func (s *Service) GetNotificationDeviceIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.notificationDeviceIDs
+}
+
+func (s *Service) ShouldNotifyDevice(deviceID string) bool {
+	s.mu.RLock()
+	ids := s.notificationDeviceIDs
+	s.mu.RUnlock()
+	if len(ids) == 0 {
+		return true
+	}
+	for _, id := range ids {
+		if id == deviceID {
+			return true
+		}
+	}
+	return false
 }

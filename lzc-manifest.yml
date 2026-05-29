@@ -1,23 +1,21 @@
 lzc-sdk-version: "0.1"
 package: cloud.lazycat.app.netwatch
-version: "0.6.0"
+version: "0.7.0"
 name: 网络监测
-description: 主机网络诊断与出口观测面板
-#homepage: https://github.com/axy/netwatch
-#author: axy
+description: 主机网络诊断、出口观测、局域网设备发现、流量分析与通知
 locales:
   zh:
     name: 网络监测
-    description: 主机网络诊断与出口观测面板
+    description: 主机网络诊断、出口观测、局域网设备发现、流量分析与通知
   zh-CN:
     name: 网络监测
-    description: 主机网络诊断与出口观测面板
+    description: 主机网络诊断、出口观测、局域网设备发现、流量分析与通知
   en:
     name: Netwatch
-    description: Network diagnostics and egress observation dashboard
+    description: Network diagnostics, egress observation, LAN device discovery, traffic analysis and notifications
   en-US:
     name: Netwatch
-    description: Network diagnostics and egress observation dashboard
+    description: Network diagnostics, egress observation, LAN device discovery, traffic analysis and notifications
 application:
   subdomain: netwatch
   background_task: true
