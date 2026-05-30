@@ -48,11 +48,12 @@ type nicCounters struct {
 }
 
 type nicStatsTracker struct {
-	mu       sync.RWMutex
-	last     map[string]nicCounters
-	current  map[string]NICThroughput
-	active   bool
-	interval time.Duration
+	mu        sync.RWMutex
+	last      map[string]nicCounters
+	current   map[string]NICThroughput
+	active    bool
+	interval  time.Duration
+	onSampled func(RealtimeNetStats)
 }
 
 func newNICStatsTracker() *nicStatsTracker {
@@ -126,7 +127,6 @@ func (t *nicStatsTracker) sample() {
 	nics := autoMonitoredNICNames()
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	next := make(map[string]NICThroughput, len(nics))
 	for _, name := range nics {
@@ -138,7 +138,7 @@ func (t *nicStatsTracker) sample() {
 			Timestamp: now.Format(time.DateTime),
 		}
 		if !ok {
-			t.current[name] = out
+			next[name] = out
 			continue
 		}
 		out.RxTotal = cur.rx
@@ -160,6 +160,16 @@ func (t *nicStatsTracker) sample() {
 		next[name] = out
 	}
 	t.current = next
+	out := RealtimeNetStats{Timestamp: localTimestamp()}
+	for _, name := range sortedNICNames(next) {
+		out.NICs = append(out.NICs, next[name])
+	}
+	callback := t.onSampled
+	t.mu.Unlock()
+
+	if callback != nil {
+		callback(out)
+	}
 }
 
 func (t *nicStatsTracker) snapshot() RealtimeNetStats {

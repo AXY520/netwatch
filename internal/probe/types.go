@@ -126,6 +126,10 @@ type MutableSettings struct {
 
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
+
+	// Notification content templates (Go template syntax, empty = default)
+	NotifyTemplateTitle string `json:"notify_template_title,omitempty"`
+	NotifyTemplateBody  string `json:"notify_template_body,omitempty"`
 }
 
 type RegisteredDevice struct {

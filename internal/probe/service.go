@@ -97,6 +97,8 @@ type Service struct {
 	lanFlappingWindow           time.Duration             // sliding window duration
 	lanDeviceAutoRemoveDays     int                       // auto-remove offline devices after N days (0=disabled)
 	notificationDeviceIDs       []string                  // device IDs to receive client notifications; empty = all
+	notifyTemplateTitle         string
+	notifyTemplateBody          string
 	registeredDevices           map[string]RegisteredDevice
 	registeredDevicesMu         sync.Mutex
 	notificationMu              sync.Mutex
@@ -104,6 +106,10 @@ type Service struct {
 	notificationNextID          int64
 	notificationSubs            []chan NotificationEvent
 	notificationSubsMu          sync.Mutex
+	nicSubs                     []chan RealtimeNetStats
+	nicSubsMu                   sync.Mutex
+	lanDeviceSubs               []chan LANDeviceSnapshot
+	lanDeviceSubsMu             sync.Mutex
 	monitorBaselineReady        bool
 	monitorLastSummary          Summary
 	monitorTrafficHigh          bool
@@ -153,6 +159,7 @@ func NewService(cfg Config) *Service {
 		barkGroup:                   "Netwatch",
 	}
 	s.egressCond = sync.NewCond(&s.egressMu)
+	s.nicStats.onSampled = s.broadcastNICRealtime
 	s.closeCtx, s.closeCancel = context.WithCancel(context.Background())
 	s.loadHistory()
 	if saved, ok := loadMutableSettings(cfg.DataDir); ok {
@@ -458,6 +465,66 @@ func (s *Service) broadcast(summary Summary) {
 	}
 }
 
+func (s *Service) SubscribeNICRealtime() (<-chan RealtimeNetStats, func()) {
+	ch := make(chan RealtimeNetStats, 2)
+	s.nicSubsMu.Lock()
+	s.nicSubs = append(s.nicSubs, ch)
+	s.nicSubsMu.Unlock()
+	return ch, func() {
+		s.nicSubsMu.Lock()
+		defer s.nicSubsMu.Unlock()
+		for i, c := range s.nicSubs {
+			if c == ch {
+				s.nicSubs = append(s.nicSubs[:i], s.nicSubs[i+1:]...)
+				close(ch)
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) broadcastNICRealtime(snap RealtimeNetStats) {
+	s.nicSubsMu.Lock()
+	subs := append([]chan RealtimeNetStats(nil), s.nicSubs...)
+	s.nicSubsMu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- snap:
+		default:
+		}
+	}
+}
+
+func (s *Service) SubscribeLANDevices() (<-chan LANDeviceSnapshot, func()) {
+	ch := make(chan LANDeviceSnapshot, 2)
+	s.lanDeviceSubsMu.Lock()
+	s.lanDeviceSubs = append(s.lanDeviceSubs, ch)
+	s.lanDeviceSubsMu.Unlock()
+	return ch, func() {
+		s.lanDeviceSubsMu.Lock()
+		defer s.lanDeviceSubsMu.Unlock()
+		for i, c := range s.lanDeviceSubs {
+			if c == ch {
+				s.lanDeviceSubs = append(s.lanDeviceSubs[:i], s.lanDeviceSubs[i+1:]...)
+				close(ch)
+				return
+			}
+		}
+	}
+}
+
+func (s *Service) broadcastLANDevices(devices LANDeviceSnapshot) {
+	s.lanDeviceSubsMu.Lock()
+	subs := append([]chan LANDeviceSnapshot(nil), s.lanDeviceSubs...)
+	s.lanDeviceSubsMu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- devices:
+		default:
+		}
+	}
+}
+
 func (s *Service) GetTimeseries(limit int) []TimeseriesPoint {
 	return s.timeseries.snapshot(limit)
 }
@@ -510,6 +577,8 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		LANFlappingWindowSec:           int(s.lanFlappingWindow.Seconds()),
 		LANDeviceAutoRemoveDays:        s.lanDeviceAutoRemoveDays,
 		NotificationDeviceIDs:          s.notificationDeviceIDs,
+		NotifyTemplateTitle:            s.notifyTemplateTitle,
+		NotifyTemplateBody:             s.notifyTemplateBody,
 	}
 }
 
@@ -579,6 +648,8 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	}
 	s.lanDeviceAutoRemoveDays = in.LANDeviceAutoRemoveDays
 	s.notificationDeviceIDs = in.NotificationDeviceIDs
+	s.notifyTemplateTitle = in.NotifyTemplateTitle
+	s.notifyTemplateBody = in.NotifyTemplateBody
 	if s.notificationsEnabled && !s.barkEnabled && !s.clientNotificationEnabled {
 		s.clientNotificationEnabled = true
 	}

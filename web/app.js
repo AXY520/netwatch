@@ -48,7 +48,6 @@ const state = {
             runningTest: null,
             broadbandPoller: null,
             transferAbortController: null,
-            nicRealtimeInterval: null,
             sse: null,
             initialized: false,
             settingsInitialized: false,
@@ -56,7 +55,6 @@ const state = {
             nicRealtimeInitialized: false,
             traceInitialized: false,
             controlsBound: false,
-            notificationPoller: null,
             notificationLastID: Number(localStorage.getItem('netwatch_notification_last_id') || '0') || 0,
             deviceID: localStorage.getItem('netwatch_device_id') || '',
             lzcGatewayPromise: null,
@@ -122,6 +120,12 @@ const state = {
             openNotificationSettings: document.getElementById('open-notification-settings'),
             closeNotificationSettings: document.getElementById('close-notification-settings'),
             saveNotificationSettings: document.getElementById('save-notification-settings'),
+            openNotifyTemplate: document.getElementById('open-notify-template'),
+            closeNotifyTemplate: document.getElementById('close-notify-template'),
+            saveNotifyTemplate: document.getElementById('save-notify-template'),
+            notifyTemplateWindow: document.getElementById('notify-template-window'),
+            notifyTemplateTitle: document.getElementById('notify-template-title'),
+            notifyTemplateBody: document.getElementById('notify-template-body'),
             broadbandNote: document.getElementById('broadband-note'),
             transferNote: document.getElementById('transfer-note'),
             runBroadbandTest: document.getElementById('run-broadband-test'),
@@ -1053,6 +1057,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
             elements.notificationSettingsWindow?.classList.remove('active');
+            elements.notifyTemplateWindow?.classList.remove('active');
             document.getElementById('traffic-settings-window')?.classList.remove('active');
 
             if (name === 'settings') {
@@ -1070,7 +1075,9 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             lockModalScroll();
             state.activeWindow = name;
             updateWindowControls();
-            await loadSpeedHistory();
+            if (name === 'broadband' || name === 'transfer') {
+                await loadSpeedHistory();
+            }
         }
 
         function closeCurrentWindow() {
@@ -1085,6 +1092,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.broadbandWindow.classList.remove('active');
             elements.transferWindow.classList.remove('active');
             elements.notificationSettingsWindow?.classList.remove('active');
+            elements.notifyTemplateWindow?.classList.remove('active');
             document.getElementById('traffic-settings-window')?.classList.remove('active');
             elements.backdrop.classList.remove('active');
             unlockModalScroll();
@@ -1162,6 +1170,22 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.closeNotificationSettings?.addEventListener('click', closeCurrentWindow);
             elements.openNotificationSettings?.addEventListener('click', () => openWindow('notification-settings'));
             elements.saveNotificationSettings?.addEventListener('click', saveSettings);
+            elements.openNotifyTemplate?.addEventListener('click', () => {
+                const w = elements.notifyTemplateWindow;
+                if (!w) return;
+                w.classList.add('active');
+                elements.notifyTemplateTitle.value = state.settings.notify_template_title || '';
+                elements.notifyTemplateBody.value = state.settings.notify_template_body || '';
+            });
+            elements.closeNotifyTemplate?.addEventListener('click', () => {
+                elements.notifyTemplateWindow?.classList.remove('active');
+            });
+            elements.saveNotifyTemplate?.addEventListener('click', async () => {
+                state.settings.notify_template_title = elements.notifyTemplateTitle.value.trim();
+                state.settings.notify_template_body = elements.notifyTemplateBody.value.trim();
+                await saveSettings();
+                elements.notifyTemplateWindow?.classList.remove('active');
+            });
             const deviceTrigger = document.getElementById('notification-device-trigger');
             const devicePanel = document.getElementById('notification-device-panel');
             if (deviceTrigger && devicePanel) {
@@ -1195,12 +1219,10 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             elements.settingNotificationsEnabled?.addEventListener('change', () => {
                 state.settings.notifications_enabled = !!elements.settingNotificationsEnabled.checked;
                 applySettingsToForm();
-                initNotificationPolling();
             });
             elements.settingClientNotificationEnabled?.addEventListener('change', () => {
                 state.settings.client_notification_enabled = !!elements.settingClientNotificationEnabled.checked;
                 applySettingsToForm();
-                initNotificationPolling();
             });
             elements.settingNotifyAbnormalTraffic?.addEventListener('change', () => {
                 state.settings.notify_abnormal_traffic = !!elements.settingNotifyAbnormalTraffic.checked;
@@ -1646,7 +1668,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             const statusEl = document.getElementById('nic-realtime-status');
             if (!listEl) return;
 
-            const render = (data) => {
+            window.renderNICRealtime = (data) => {
                 if (!data.nics || data.nics.length === 0) {
                     listEl.innerHTML = `<div class="nic-realtime-item"><small>${i18n('no_monitored_nics')}</small></div>`;
                     statusEl.textContent = i18n('no_data');
@@ -1681,7 +1703,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                     if (manual && elements.nicRealtimeRefreshBtn) elements.nicRealtimeRefreshBtn.disabled = true;
                     const resp = await fetch('/api/v1/network/realtime', { cache: 'no-store' });
                     if (!resp.ok) return;
-                    render(await resp.json());
+                    window.renderNICRealtime(await resp.json());
                 } catch (_) {
                     if (statusEl) statusEl.textContent = i18n('sampling_failed');
                 } finally {
@@ -1691,7 +1713,7 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             updateNICRealtimeRefreshButton();
             elements.nicRealtimeRefreshBtn?.addEventListener('click', () => tick(true));
             tick();
-            startNICRealtimePolling(tick);
+            applySettingsToForm();
         }
 
         function initSSE() {
@@ -1710,7 +1732,14 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                         handleNotificationEvent(JSON.parse(ev.data));
                     } catch (_) {}
                 });
-                es.onerror = () => { /* browser will reconnect */ };
+                es.addEventListener('nic_realtime', (ev) => {
+                    try {
+                        if (state.settings.nic_realtime_enabled && typeof window.renderNICRealtime === 'function') {
+                            window.renderNICRealtime(JSON.parse(ev.data));
+                        }
+                    } catch (_) {}
+                });
+                es.onerror = () => { /* browser auto-reconnects */ };
                 state.sse = es;
             } catch (_) {}
         }
@@ -1778,28 +1807,6 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                     disableClientNotifications();
                 }
             });
-        }
-
-        async function pollNotificationEvents() {
-            if (!state.settings.background_monitor_enabled || !state.settings.notifications_enabled || state.settings.client_notification_enabled === false || state.notificationUnsupported) return;
-            try {
-                const resp = await fetch(`/api/v1/notifications/events?since=${state.notificationLastID}`, { cache: 'no-store' });
-                if (!resp.ok) return;
-                const data = await resp.json();
-                (data.events || []).forEach(handleNotificationEvent);
-            } catch (err) {
-                console.debug('notification poll failed', err);
-            }
-        }
-
-        function initNotificationPolling() {
-            if (state.notificationPoller) {
-                clearInterval(state.notificationPoller);
-                state.notificationPoller = null;
-            }
-            if (!state.settings.background_monitor_enabled || !state.settings.notifications_enabled || state.settings.client_notification_enabled === false || state.notificationUnsupported) return;
-            pollNotificationEvents();
-            state.notificationPoller = setInterval(pollNotificationEvents, 15000);
         }
 
         // --- Device management via Lazycat SDK ---
@@ -1886,10 +1893,6 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
         function disableClientNotifications() {
             state.notificationUnsupported = true;
             localStorage.setItem('netwatch_notification_unsupported', 'true');
-            if (state.notificationPoller) {
-                clearInterval(state.notificationPoller);
-                state.notificationPoller = null;
-            }
         }
 
         function initTrace() {
@@ -2157,11 +2160,12 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                     dnd_end: settingsData.dnd_end || '08:00',
                     scheduled_notify_enabled: !!settingsData.scheduled_notify_enabled,
                     scheduled_notify_time: settingsData.scheduled_notify_time || '09:00',
-                    notification_device_ids: settingsData.notification_device_ids || []
+                    notification_device_ids: settingsData.notification_device_ids || [],
+                    notify_template_title: settingsData.notify_template_title || '',
+                    notify_template_body: settingsData.notify_template_body || ''
                 };
                 applySettingsToForm();
                 updateTrafficAnalysisLink();
-                initNotificationPolling();
                 loadLazycatDevices();
             } catch (error) {
                 console.error(error);
@@ -2177,27 +2181,6 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
             const link = document.getElementById('traffic-analysis-link');
             if (!link) return;
             link.hidden = !state.settings.traffic_sampling_enabled;
-        }
-
-        function stopNICRealtimePolling() {
-            if (state.nicRealtimeInterval) {
-                clearInterval(state.nicRealtimeInterval);
-                state.nicRealtimeInterval = null;
-            }
-        }
-
-        function startNICRealtimePolling(tick) {
-            stopNICRealtimePolling();
-            if (!state.settings.nic_realtime_enabled) {
-                if (elements.nicRealtimeStatus) {
-                    elements.nicRealtimeStatus.textContent = i18n('real_time_rate_disabled');
-                }
-                applySettingsToForm();
-                return;
-            }
-            const intervalSec = Math.max(1, Number.parseInt(state.settings.nic_realtime_interval_sec, 10) || 1);
-            state.nicRealtimeInterval = setInterval(tick, intervalSec * 1000);
-            applySettingsToForm();
         }
 
         async function saveSettings() {
@@ -2233,7 +2216,9 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                 dnd_end: elements.settingDNDEnd?.value || '08:00',
                 scheduled_notify_enabled: !!elements.settingScheduledNotifyEnabled?.checked,
                 scheduled_notify_time: elements.settingScheduledNotifyTime?.value || '09:00',
-                notification_device_ids: state.settings.notification_device_ids || []
+                notification_device_ids: state.settings.notification_device_ids || [],
+                notify_template_title: state.settings.notify_template_title || '',
+                notify_template_body: state.settings.notify_template_body || ''
             };
 
             try {
@@ -2250,7 +2235,6 @@ const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
                 applySettingsToForm();
                 state.nicRealtimeInitialized = false;
                 initNICRealtime();
-                initNotificationPolling();
                 showToast(i18n('save_settings_success'), 'success');
             } catch (error) {
                 console.error(error);

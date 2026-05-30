@@ -41,7 +41,7 @@ Authentication: forward the real user's ticket according to Lazycat's inter-app 
 |--------|------|-------------|
 | GET | `/healthz` | App health, server time, whether probe data is ready |
 | GET | `/api/v1/summary` | Combined snapshot: connectivity, egress IP, NAT, interfaces — preferred first call |
-| GET | `/api/v1/events` | SSE stream; pushes `summary_update` events after probe cycles |
+| GET | `/api/v1/events` | SSE stream; pushes `summary`, `notification`, `nic_realtime`, `lan_devices` events in real-time |
 
 ### Website connectivity
 
@@ -134,12 +134,9 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/settings` | Current settings (read-only) |
-| GET | `/api/v1/auto-refresh` | Auto-refresh state (enabled, interval seconds) |
-| GET | `/api/v1/settings/refresh-interval` | Current refresh interval |
+| GET | `/api/v1/settings` | Current settings (all mutable settings including notification templates, DND, scheduling) |
+| POST | `/api/v1/settings` | Update settings. Body: full `MutableSettings` JSON |
 | POST | `/api/v1/probe/run` | Trigger a full probe (website checks, egress IP, NAT, etc.) |
-| POST | `/api/v1/auto-refresh` | Set auto-refresh. Body: `{"enabled": true, "interval_sec": 30}` |
-| POST | `/api/v1/settings/refresh-interval` | Update refresh interval. Body: `{"interval_sec": 30}` |
 
 ## Web pages
 

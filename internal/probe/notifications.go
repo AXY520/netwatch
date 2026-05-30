@@ -13,9 +13,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"netwatch/internal/logger"
+	"netwatch/internal/lzcsdk"
 )
 
 func (s *Service) SubscribeNotifications() (<-chan NotificationEvent, func()) {
@@ -56,6 +58,8 @@ func (s *Service) pushNotification(kind, severity, title, body string) {
 	dndEnabled := s.dndEnabled
 	dndStart := s.dndStart
 	dndEnd := s.dndEnd
+	tmplTitle := s.notifyTemplateTitle
+	tmplBody := s.notifyTemplateBody
 	s.mu.RUnlock()
 	if !enabled {
 		return
@@ -64,13 +68,24 @@ func (s *Service) pushNotification(kind, severity, title, body string) {
 		return
 	}
 
+	// Apply custom templates if configured.
+	if tmplTitle != "" {
+		if rendered, err := renderNotifyTemplate(tmplTitle, kind, severity, title, body); err == nil {
+			title = rendered
+		}
+	}
+	if tmplBody != "" {
+		if rendered, err := renderNotifyTemplate(tmplBody, kind, severity, title, body); err == nil {
+			body = rendered
+		}
+	}
+
 	ev := NotificationEvent{
-		Kind:        kind,
-		Severity:    severity,
-		Title:       title,
-		Body:        body,
-		DeeplinkURL: "lzc://app/cloud.lazycat.app.netwatch",
-		CreatedAt:   localTimestamp(),
+		Kind:      kind,
+		Severity:  severity,
+		Title:     title,
+		Body:      body,
+		CreatedAt: localTimestamp(),
 	}
 	s.notificationMu.Lock()
 	s.notificationNextID++
@@ -95,19 +110,54 @@ func (s *Service) pushNotification(kind, severity, title, body string) {
 
 func (s *Service) sendExternalNotification(ev NotificationEvent) {
 	s.mu.RLock()
-	enabled := s.barkEnabled
+	barkEnabled := s.barkEnabled
 	serverURL := s.barkServerURL
 	deviceKey := s.barkDeviceKey
 	group := s.barkGroup
+	clientEnabled := s.clientNotificationEnabled
 	s.mu.RUnlock()
 
-	if enabled && serverURL != "" && deviceKey != "" {
+	if barkEnabled && serverURL != "" && deviceKey != "" {
 		go func() {
 			if err := sendBarkNotification(context.Background(), serverURL, deviceKey, group, ev); err != nil {
 				logger.Warn("bark push failed: %v", err)
 			}
 		}()
 	}
+
+	if clientEnabled {
+		go func() {
+			if err := s.sendLazycatNotification(ev); err != nil {
+				logger.Debug("lazycat client notify: %v", err)
+			}
+		}()
+	}
+}
+
+func (s *Service) sendLazycatNotification(ev NotificationEvent) error {
+	if !lzcsdk.GatewayAvailable() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	devices, err := lzcsdk.ListDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("list devices: %w", err)
+	}
+	var lastErr error
+	for _, dev := range devices {
+		if !dev.IsOnline || dev.DeviceAPIURL == "" {
+			continue
+		}
+		if !s.ShouldNotifyDevice(dev.ID) {
+			continue
+		}
+		if err := lzcsdk.NotifyDevice(ctx, dev.DeviceAPIURL, ev.Title, ev.Body, ev.DeeplinkURL); err != nil {
+			logger.Debug("notify device %s failed: %v", dev.ID, err)
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 func (s *Service) TestBarkNotification() error {
@@ -120,11 +170,10 @@ func (s *Service) TestBarkNotification() error {
 		return fmt.Errorf("bark device key is empty")
 	}
 	return sendBarkNotification(context.Background(), serverURL, deviceKey, group, NotificationEvent{
-		Severity:    "info",
-		Title:       "Netwatch 测试通知",
-		Body:        fmt.Sprintf("Bark 推送通道测试成功，通知功能正常工作。\n\n服务地址：%s\n分组名称：%s\n测试时间：%s", serverURL, firstNonEmpty(group, "Netwatch"), localTimestamp()),
-		CreatedAt:   localTimestamp(),
-		DeeplinkURL: "lzc://app/cloud.lazycat.app.netwatch",
+		Severity:  "info",
+		Title:     "Netwatch 测试通知",
+		Body:      fmt.Sprintf("Bark 推送通道测试成功，通知功能正常工作。\n\n服务地址：%s\n分组名称：%s\n测试时间：%s", serverURL, firstNonEmpty(group, "Netwatch"), localTimestamp()),
+		CreatedAt: localTimestamp(),
 	})
 }
 
@@ -134,18 +183,15 @@ func sendBarkNotification(ctx context.Context, serverURL, deviceKey, group strin
 		return err
 	}
 	payload := map[string]any{
-		"title":  ev.Title,
-		"body":   ev.Body,
-		"group":  firstNonEmpty(group, "Netwatch"),
-		"level":  barkLevel(ev.Severity),
-		"sound":  barkSound(ev.Severity),
-		"icon":   "https://img.icons8.com/fluency/96/network.png",
+		"title": ev.Title,
+		"body":  ev.Body,
+		"group": firstNonEmpty(group, "Netwatch"),
+		"level": barkLevel(ev.Severity),
+		"sound": barkSound(ev.Severity),
+		"icon":  "https://img.icons8.com/fluency/96/network.png",
 	}
 	if ev.CreatedAt != "" {
 		payload["timestamp"] = ev.CreatedAt
-	}
-	if ev.DeeplinkURL != "" {
-		payload["url"] = ev.DeeplinkURL
 	}
 	body, _ := json.Marshal(payload)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -215,6 +261,25 @@ func isWithinDNDPeriod(start, end string) bool {
 		return hhmm >= start && hhmm < end
 	}
 	return hhmm >= start || hhmm < end
+}
+
+type notifyTemplateData struct {
+	Kind     string
+	Severity string
+	Title    string
+	Body     string
+}
+
+func renderNotifyTemplate(tmplStr, kind, severity, title, body string) (string, error) {
+	t, err := template.New("").Parse(tmplStr)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, notifyTemplateData{Kind: kind, Severity: severity, Title: title, Body: body}); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 func barkLevel(severity string) string {

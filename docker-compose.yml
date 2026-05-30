@@ -6,6 +6,10 @@ services:
     # host 网络模式：容器共享宿主机的 network namespace，/proc/net/dev 读到真实网卡统计
     network_mode: host
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 223.5.5.5
     volumes:
       - ./data:/app/data
     environment:

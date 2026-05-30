@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 type basicAuthCreds struct {
@@ -58,6 +59,10 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 	notifyCh, notifyUnsub := h.service.SubscribeNotifications()
 	defer notifyUnsub()
+	nicCh, nicUnsub := h.service.SubscribeNICRealtime()
+	defer nicUnsub()
+	lanCh, lanUnsub := h.service.SubscribeLANDevices()
+	defer lanUnsub()
 
 	writeEvent := func(name string, data []byte) bool {
 		_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
@@ -71,6 +76,17 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if initial, err := json.Marshal(h.service.GetSummary()); err == nil {
 		if !writeEvent("summary", initial) {
 			return
+		}
+	}
+	if since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64); err == nil && since >= 0 {
+		for _, ev := range h.service.GetNotificationEvents(since) {
+			body, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			if !writeEvent("notification", body) {
+				return
+			}
 		}
 	}
 
@@ -99,6 +115,28 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if !writeEvent("notification", body) {
+				return
+			}
+		case snap, ok := <-nicCh:
+			if !ok {
+				return
+			}
+			body, err := json.Marshal(snap)
+			if err != nil {
+				continue
+			}
+			if !writeEvent("nic_realtime", body) {
+				return
+			}
+		case devices, ok := <-lanCh:
+			if !ok {
+				return
+			}
+			body, err := json.Marshal(devices)
+			if err != nil {
+				continue
+			}
+			if !writeEvent("lan_devices", body) {
 				return
 			}
 		}

@@ -1,4 +1,5 @@
 (function () {
+    const i18n = window.__;
     const state = {
         theme: localStorage.getItem('theme') || 'dark',
         logoClicks: 0,
@@ -7,10 +8,9 @@
         notificationUnsupported: localStorage.getItem('netwatch_notification_unsupported') === 'true',
         notificationLastID: Number(localStorage.getItem('netwatch_notification_last_id') || '0') || 0,
         deviceID: localStorage.getItem('netwatch_device_id') || '',
-        notificationPoller: null,
         modalScrollY: 0,
         settings: null,
-        refreshTimer: null,
+        sse: null,
         noteMAC: '',
         noteButton: null
     };
@@ -248,28 +248,19 @@
         localStorage.setItem('netwatch_notification_last_id', String(id));
     }
 
-    async function pollNotificationEvents() {
-        const settings = state.settings || {};
-        if (!settings.background_monitor_enabled || !settings.notifications_enabled || settings.client_notification_enabled === false || state.notificationUnsupported) return;
+    function startSSE() {
+        if (state.sse) return;
         try {
-            const resp = await fetch(`/api/v1/notifications/events?since=${state.notificationLastID}`, { cache: 'no-store' });
-            if (!resp.ok) return;
-            const data = await resp.json();
-            (data.events || []).forEach(handleNotificationEvent);
-        } catch (err) {
-            console.debug('notification poll failed', err);
-        }
-    }
-
-    function scheduleNotificationPolling() {
-        if (state.notificationPoller) {
-            clearInterval(state.notificationPoller);
-            state.notificationPoller = null;
-        }
-        const settings = state.settings || {};
-        if (!settings.background_monitor_enabled || !settings.notifications_enabled || settings.client_notification_enabled === false || state.notificationUnsupported) return;
-        pollNotificationEvents();
-        state.notificationPoller = setInterval(pollNotificationEvents, 15000);
+            const es = new EventSource('/api/v1/events');
+            es.addEventListener('notification', (ev) => {
+                try { handleNotificationEvent(JSON.parse(ev.data)); } catch (_) {}
+            });
+            es.addEventListener('lan_devices', (ev) => {
+                try { render(JSON.parse(ev.data)); } catch (_) {}
+            });
+            es.onerror = () => { /* browser auto-reconnects */ };
+            state.sse = es;
+        } catch (_) {}
     }
 
     function isNotificationUnsupportedError(err) {
@@ -436,8 +427,7 @@
             }
             state.settings = normalizeSettings(await resp.json());
             applySettingsToForm();
-            scheduleBackgroundRefresh();
-            scheduleNotificationPolling();
+            startSSE();
             if (!silent) showToast(i18n('settings_saved'), 'success');
             return state.settings;
         } catch (err) {
@@ -572,28 +562,11 @@
             if (!resp.ok) return;
             state.settings = normalizeSettings(await resp.json());
             applySettingsToForm();
-            scheduleBackgroundRefresh();
-            scheduleNotificationPolling();
+            startSSE();
             loadLazycatDevices();
         } catch (err) {
             console.debug('lan settings load failed', err);
         }
-    }
-
-    function scheduleBackgroundRefresh() {
-        if (state.refreshTimer) {
-            clearInterval(state.refreshTimer);
-            state.refreshTimer = null;
-        }
-        const settings = state.settings || {};
-        if (!settings.background_monitor_enabled) {
-            return;
-        }
-        const intervalSec = 2;
-        state.refreshTimer = setInterval(() => {
-            if (document.hidden) return;
-            load(false);
-        }, intervalSec * 1000);
     }
 
     async function updateDeviceMeta(payload) {
@@ -612,7 +585,7 @@
     }
 
     function handleTableClick(ev) {
-        const btn = ev.target.closest('.lan-action, .lan-name-edit');
+        const btn = ev.target.closest('.lan-action, .lan-name-edit, .lan-ignored-remove');
         if (!btn) return;
         const mac = btn.dataset.mac;
         if (!mac) return;
@@ -654,8 +627,7 @@
     els.settingNotifyLANDeviceChange?.addEventListener('change', () => {
         state.settings = { ...normalizeSettings(state.settings || {}), notify_lan_device_change: !!els.settingNotifyLANDeviceChange.checked };
         applySettingsToForm();
-        scheduleBackgroundRefresh();
-        scheduleNotificationPolling();
+        startSSE();
     });
     els.settingLANOfflineAfterSec?.addEventListener('change', () => {
         state.settings = { ...normalizeSettings(state.settings || {}), lan_device_offline_after_sec: Math.max(10, Number.parseInt(els.settingLANOfflineAfterSec.value || '180', 10) || 180) };
@@ -761,7 +733,6 @@
             if (isNotificationUnsupportedError(err)) {
                 state.notificationUnsupported = true;
                 localStorage.setItem('netwatch_notification_unsupported', 'true');
-                scheduleNotificationPolling();
             }
         });
     }

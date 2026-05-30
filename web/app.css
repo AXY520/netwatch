@@ -1019,6 +1019,25 @@
             border-radius: 4px;
         }
 
+        .sub-window {
+            z-index: 1201;
+            transform: translate(-50%, -50%) scale(0.92) translateX(20px);
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s ease;
+        }
+        .sub-window.active {
+            transform: translate(-50%, -50%) scale(1) translateX(0);
+            opacity: 1;
+        }
+        .settings-textarea {
+            resize: vertical;
+            min-height: 2.4rem;
+            font-size: 0.82rem;
+            line-height: 1.5;
+            font-family: monospace;
+            width: 100%;
+        }
+
         /* Notification device dropdown */
         .notification-device-dropdown { position: relative; }
         .notification-device-trigger {

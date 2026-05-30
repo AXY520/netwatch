@@ -301,6 +301,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	s.lanMu.Lock()
 	s.lanSnapshot = snap
 	s.lanMu.Unlock()
+	s.broadcastLANDevices(snap)
 	s.mu.RLock()
 	notifyLAN := allowNotify && s.notifyLANDeviceChange
 	s.mu.RUnlock()
@@ -588,8 +589,10 @@ func (s *Service) UpdateLANDeviceMeta(in LANDeviceMetaUpdate) LANDeviceSnapshot 
 			}
 		}
 	}
+	snap := s.lanSnapshot
 	s.lanMu.Unlock()
-	return s.lanSnapshot
+	s.broadcastLANDevices(snap)
+	return snap
 }
 
 func discoverLANScanNetworks() []LANScanNetwork {
