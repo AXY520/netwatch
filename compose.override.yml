@@ -1,11 +1,13 @@
 services:
   netwatch:
-    privileged: true
-    pid: host
     cap_add:
       - NET_RAW
       - NET_ADMIN
       - SYS_ADMIN
+      - SYS_PTRACE
+      - SYS_RESOURCE
+      - BPF
+    pid: host
     volumes:
       - /sys:/host/sys:ro
       - /proc:/host/proc:ro

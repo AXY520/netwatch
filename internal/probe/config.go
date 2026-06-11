@@ -27,11 +27,10 @@ type FileConfig struct {
 	DataDir               string `json:"data_dir"`
 	BroadbandTestSec      int    `json:"broadband_test_sec"`
 	BroadbandDomesticOnly *bool  `json:"broadband_domestic_only"`
+	BroadbandStreams      int    `json:"broadband_streams"`
 	LocalTransferTestSec  int    `json:"local_transfer_test_sec"`
 
 	LocalTransferPayloadMB int    `json:"local_transfer_payload_mb"`
-	IPv6HighPortProbeHost  string `json:"ipv6_high_port_probe_host"`
-	IPv6HighPortProbePort  int    `json:"ipv6_high_port_probe_port"`
 }
 
 func LoadConfig(path string) (FileConfig, error) {
@@ -77,17 +76,14 @@ func (f FileConfig) Apply(cfg *Config) error {
 	if f.BroadbandDomesticOnly != nil {
 		cfg.BroadbandDomesticOnly = *f.BroadbandDomesticOnly
 	}
+	if f.BroadbandStreams > 0 {
+		cfg.BroadbandStreams = f.BroadbandStreams
+	}
 	if f.LocalTransferTestSec > 0 {
 		cfg.LocalTransferDuration = time.Duration(f.LocalTransferTestSec) * time.Second
 	}
 	if f.LocalTransferPayloadMB > 0 {
 		cfg.LocalTransferPayloadMB = f.LocalTransferPayloadMB
-	}
-	if f.IPv6HighPortProbeHost != "" {
-		cfg.IPv6HighPortProbeHost = f.IPv6HighPortProbeHost
-	}
-	if f.IPv6HighPortProbePort > 0 {
-		cfg.IPv6HighPortProbePort = f.IPv6HighPortProbePort
 	}
 	return nil
 }
@@ -122,10 +118,9 @@ type Config struct {
 	DataDir                string
 	BroadbandDuration      time.Duration
 	BroadbandDomesticOnly  bool
+	BroadbandStreams       int
 	LocalTransferDuration  time.Duration
 	LocalTransferPayloadMB int
-	IPv6HighPortProbeHost  string
-	IPv6HighPortProbePort  int
 }
 
 func DefaultConfig() Config {
@@ -152,10 +147,9 @@ func DefaultConfig() Config {
 		DataDir:                envOrDefault("DATA_DIR", "/app/data"),
 		BroadbandDuration:      envDurationValue("BROADBAND_TEST_SEC", 15*time.Second),
 		BroadbandDomesticOnly:  envBool("BROADBAND_DOMESTIC_ONLY", true),
+		BroadbandStreams:       envInt("BROADBAND_STREAMS", 8),
 		LocalTransferDuration:  envDurationValue("LOCAL_TRANSFER_TEST_SEC", 10*time.Second),
 		LocalTransferPayloadMB: envInt("LOCAL_TRANSFER_PAYLOAD_MB", 32),
-		IPv6HighPortProbeHost:  envOrDefault("IPV6_HIGH_PORT_PROBE_HOST", "2a05:46c0:100:1007::5"),
-		IPv6HighPortProbePort:  envInt("IPV6_HIGH_PORT_PROBE_PORT", 9240),
 	}
 }
 

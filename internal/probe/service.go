@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"netwatch/internal/logger"
+	"netwatch/internal/lzcsdk"
 )
 
 const maxHistoryItems = 3
 const maxNotificationEvents = 100
+const maxBroadbandSteps = 50
 
 type publicIPCacheData struct {
 	IPv4       string
@@ -81,6 +83,9 @@ type Service struct {
 	barkServerURL               string
 	barkDeviceKey               string
 	barkGroup                   string
+	pushPlusEnabled             bool
+	pushPlusToken               string
+	pushPlusTopic               string
 	dndEnabled                  bool
 	dndStart                    string
 	dndEnd                      string
@@ -89,16 +94,14 @@ type Service struct {
 	lanMu                       sync.Mutex
 	lanSnapshot                 LANDeviceSnapshot
 	lanInterfaceState           map[string]bool
-	lanNotifyCooldown           map[string]time.Time     // MAC -> last notification time
-	lanFlappingHistory          map[string][]time.Time   // MAC -> state change timestamps (sliding window)
-	lanMaxCheckAttempts         int                       // consecutive misses before offline
-	lanNotifyCooldownSec        int                       // min seconds between notifications per device
-	lanFlappingThreshold        int                       // max state changes in window before suppression
-	lanFlappingWindow           time.Duration             // sliding window duration
-	lanDeviceAutoRemoveDays     int                       // auto-remove offline devices after N days (0=disabled)
-	notificationDeviceIDs       []string                  // device IDs to receive client notifications; empty = all
-	notifyTemplateTitle         string
-	notifyTemplateBody          string
+	lanNotifyCooldown           map[string]time.Time   // MAC -> last notification time
+	lanFlappingHistory          map[string][]time.Time // MAC -> state change timestamps (sliding window)
+	lanMaxCheckAttempts         int                    // consecutive misses before offline
+	lanNotifyCooldownSec        int                    // min seconds between notifications per device
+	lanFlappingThreshold        int                    // max state changes in window before suppression
+	lanFlappingWindow           time.Duration          // sliding window duration
+	lanDeviceAutoRemoveDays     int                    // auto-remove offline devices after N days (0=disabled)
+	notificationDeviceIDs       []string               // device IDs to receive client notifications; empty = all
 	registeredDevices           map[string]RegisteredDevice
 	registeredDevicesMu         sync.Mutex
 	notificationMu              sync.Mutex
@@ -135,8 +138,8 @@ func NewService(cfg Config) *Service {
 		lanNotifyCooldown:           make(map[string]time.Time),
 		lanFlappingHistory:          make(map[string][]time.Time),
 		lanMaxCheckAttempts:         3,
-		lanNotifyCooldownSec:        600,  // 10 minutes
-		lanFlappingThreshold:        5,    // 5 state changes
+		lanNotifyCooldownSec:        600, // 10 minutes
+		lanFlappingThreshold:        5,   // 5 state changes
 		lanFlappingWindow:           10 * time.Minute,
 		registeredDevices:           loadRegisteredDevices(cfg.DataDir),
 		chartTimeLabelInterval:      0,
@@ -251,7 +254,7 @@ func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResul
 	duration := s.cfg.BroadbandDuration
 	s.mu.RUnlock()
 
-	result, completed := executeBroadbandSpeedTest(ctx, s, duration, nil)
+	result, completed := executeBroadbandSpeedTest(ctx, s, duration, nil, nil)
 	if completed {
 		s.pushBroadbandHistory(result)
 	}
@@ -311,6 +314,27 @@ func (s *Service) CancelBroadbandTask() BroadbandTaskStatus {
 	return task
 }
 
+// appendBroadbandStep 追加一条测速过程步骤(供前端实时展示),并限制最多保留 maxBroadbandSteps 条。
+func (s *Service) appendBroadbandStep(stage, status, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seq := 1
+	if n := len(s.broadbandTask.Steps); n > 0 {
+		seq = s.broadbandTask.Steps[n-1].Seq + 1
+	}
+	s.broadbandTask.Steps = append(s.broadbandTask.Steps, BroadbandTaskStep{
+		Seq:     seq,
+		Time:    localTimestamp(),
+		Stage:   stage,
+		Status:  status,
+		Message: message,
+	})
+	if len(s.broadbandTask.Steps) > maxBroadbandSteps {
+		s.broadbandTask.Steps = s.broadbandTask.Steps[len(s.broadbandTask.Steps)-maxBroadbandSteps:]
+	}
+	s.broadbandTask.UpdatedAt = localTimestamp()
+}
+
 func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) {
 	result, completed := executeBroadbandSpeedTest(ctx, s, duration, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
 		s.mu.Lock()
@@ -320,6 +344,8 @@ func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) 
 		s.broadbandTask.Result = partial
 		s.broadbandTask.UpdatedAt = localTimestamp()
 		s.mu.Unlock()
+	}, func(stage, status, message string) {
+		s.appendBroadbandStep(stage, status, message)
 	})
 
 	s.mu.Lock()
@@ -566,6 +592,9 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		BarkServerURL:                  s.barkServerURL,
 		BarkDeviceKey:                  s.barkDeviceKey,
 		BarkGroup:                      s.barkGroup,
+		PushPlusEnabled:                s.pushPlusEnabled,
+		PushPlusToken:                  s.pushPlusToken,
+		PushPlusTopic:                  s.pushPlusTopic,
 		DNDEnabled:                     s.dndEnabled,
 		DNDStart:                       s.dndStart,
 		DNDEnd:                         s.dndEnd,
@@ -577,8 +606,6 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		LANFlappingWindowSec:           int(s.lanFlappingWindow.Seconds()),
 		LANDeviceAutoRemoveDays:        s.lanDeviceAutoRemoveDays,
 		NotificationDeviceIDs:          s.notificationDeviceIDs,
-		NotifyTemplateTitle:            s.notifyTemplateTitle,
-		NotifyTemplateBody:             s.notifyTemplateBody,
 	}
 }
 
@@ -629,6 +656,9 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	s.barkServerURL = strings.TrimSpace(in.BarkServerURL)
 	s.barkDeviceKey = strings.TrimSpace(in.BarkDeviceKey)
 	s.barkGroup = strings.TrimSpace(in.BarkGroup)
+	s.pushPlusEnabled = in.PushPlusEnabled
+	s.pushPlusToken = strings.TrimSpace(in.PushPlusToken)
+	s.pushPlusTopic = strings.TrimSpace(in.PushPlusTopic)
 	s.dndEnabled = in.DNDEnabled
 	s.dndStart = normalizeHHMM(in.DNDStart, "22:00")
 	s.dndEnd = normalizeHHMM(in.DNDEnd, "08:00")
@@ -648,8 +678,6 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	}
 	s.lanDeviceAutoRemoveDays = in.LANDeviceAutoRemoveDays
 	s.notificationDeviceIDs = in.NotificationDeviceIDs
-	s.notifyTemplateTitle = in.NotifyTemplateTitle
-	s.notifyTemplateBody = in.NotifyTemplateBody
 	if s.notificationsEnabled && !s.barkEnabled && !s.clientNotificationEnabled {
 		s.clientNotificationEnabled = true
 	}
@@ -1147,4 +1175,56 @@ func (s *Service) SampleAppTrafficBridge(bridge string, since time.Time, limit i
 		Bridge:      stats,
 		History:     s.appTrafficHistory.snapshotSince(bridge, since, limit),
 	}, true
+}
+
+// IPv6RenewNIC 是一块可执行 IPv6 续约的网卡(透传给前端选择)。
+type IPv6RenewNIC struct {
+	Device     string `json:"device"`
+	Type       string `json:"type"`
+	State      string `json:"state"`
+	Connection string `json:"connection,omitempty"`
+}
+
+// IPv6RenewResult 是续约操作的结果。
+type IPv6RenewResult struct {
+	OK     bool   `json:"ok"`
+	Device string `json:"device,omitempty"`
+	Output string `json:"output,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// ListIPv6RenewNICs 列出当前可续约的网卡(经 lzc-sdk 调用系统 nmcli)。
+// SDK 不可用(非懒猫环境)时返回 error,前端据此隐藏功能。
+func (s *Service) ListIPv6RenewNICs(ctx context.Context) ([]IPv6RenewNIC, error) {
+	if !lzcsdk.Available() {
+		return nil, errors.New("lzc-sdk 不可用(非懒猫环境)")
+	}
+	devs, err := lzcsdk.ListReapplicableNICs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]IPv6RenewNIC, 0, len(devs))
+	for _, d := range devs {
+		out = append(out, IPv6RenewNIC{
+			Device:     d.Device,
+			Type:       d.Type,
+			State:      d.State,
+			Connection: d.Connection,
+		})
+	}
+	return out, nil
+}
+
+// RenewIPv6 对指定网卡执行 reapply,触发其重新获取 IPv6 配置。
+func (s *Service) RenewIPv6(ctx context.Context, iface string) IPv6RenewResult {
+	if !lzcsdk.Available() {
+		return IPv6RenewResult{Error: "lzc-sdk 不可用(非懒猫环境)"}
+	}
+	out, err := lzcsdk.ReapplyNIC(ctx, iface)
+	if err != nil {
+		logger.Warn("ipv6 renew failed iface=%s err=%v", iface, err)
+		return IPv6RenewResult{Device: iface, Error: err.Error()}
+	}
+	logger.Info("ipv6 renew ok iface=%s out=%q", iface, strings.TrimSpace(out))
+	return IPv6RenewResult{OK: true, Device: iface, Output: strings.TrimSpace(out)}
 }

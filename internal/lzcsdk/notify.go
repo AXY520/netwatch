@@ -2,7 +2,6 @@ package lzcsdk
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"net/url"
 	"sync"
@@ -54,7 +53,18 @@ func ListDevices(ctx context.Context) ([]Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := g.Devices.ListEndDevices(ctx, &common.ListEndDeviceRequest{})
+
+	// Get current user's UID. Try ListUIDs and use the first one.
+	uidsResp, err := g.Users.ListUIDs(ctx, &common.ListUIDsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list uids: %w", err)
+	}
+	if len(uidsResp.Uids) == 0 {
+		return nil, fmt.Errorf("no users found")
+	}
+	uid := uidsResp.Uids[0]
+
+	resp, err := g.Devices.ListEndDevices(ctx, &common.ListEndDeviceRequest{Uid: uid})
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
@@ -117,37 +127,78 @@ func NotifyDevice(ctx context.Context, deviceAPIURL, title, body, deeplinkURL st
 		return fmt.Errorf("auth token: %w", err)
 	}
 
+	// Build NotifyRequest message.
+	req := &notifyRequest{
+		Title:       title,
+		Body:        body,
+		DeeplinkURL: deeplinkURL,
+	}
+
 	// Invoke NotificationService/Notify with auth token.
 	method := "/cloud.lazycat.apis.localdevice.NotificationService/Notify"
-	reqBytes := encodeNotifyRequest(title, body, deeplinkURL)
-	var respBytes []byte
-	err = conn.Invoke(ctx, method, reqBytes, &respBytes, grpc.PerRPCCredentials(tokenCred{at.Token}))
+	var resp notifyResponse
+	err = conn.Invoke(ctx, method, req, &resp, grpc.PerRPCCredentials(tokenCred{at.Token}))
 	if err != nil {
 		return fmt.Errorf("notify invoke: %w", err)
 	}
 	return nil
 }
 
-// encodeNotifyRequest manually encodes a NotifyRequest protobuf message.
-// Fields: 1=title(string), 2=body(string), 3=deeplink_url(string, optional).
-func encodeNotifyRequest(title, body, deeplinkURL string) []byte {
+// notifyRequest implements proto.Message for NotificationService.Notify request.
+type notifyRequest struct {
+	Title       string
+	Body        string
+	DeeplinkURL string
+}
+
+func (m *notifyRequest) Reset()         { *m = notifyRequest{} }
+func (m *notifyRequest) String() string { return fmt.Sprintf("title:%s body:%s", m.Title, m.Body) }
+func (*notifyRequest) ProtoMessage()    {}
+
+func (m *notifyRequest) Marshal() ([]byte, error) {
 	var buf []byte
-	buf = appendProtoString(buf, 1, title)
-	buf = appendProtoString(buf, 2, body)
-	if deeplinkURL != "" {
-		buf = appendProtoString(buf, 3, deeplinkURL)
+	if m.Title != "" {
+		buf = appendProtoString(buf, 1, m.Title)
 	}
-	return buf
+	if m.Body != "" {
+		buf = appendProtoString(buf, 2, m.Body)
+	}
+	if m.DeeplinkURL != "" {
+		buf = appendProtoString(buf, 3, m.DeeplinkURL)
+	}
+	return buf, nil
+}
+
+func (m *notifyRequest) Unmarshal([]byte) error {
+	return fmt.Errorf("unmarshal not implemented")
+}
+
+// notifyResponse implements proto.Message for NotificationService.Notify response (empty).
+type notifyResponse struct{}
+
+func (m *notifyResponse) Reset()         {}
+func (m *notifyResponse) String() string { return "" }
+func (*notifyResponse) ProtoMessage()    {}
+
+func (m *notifyResponse) Marshal() ([]byte, error) {
+	return []byte{}, nil
+}
+
+func (m *notifyResponse) Unmarshal([]byte) error {
+	return nil
 }
 
 func appendProtoString(buf []byte, fieldNum int, val string) []byte {
+	// field tag: (fieldNum << 3) | wireType(2=length-delimited)
 	buf = appendVarint(buf, uint64((fieldNum<<3)|2))
 	buf = appendVarint(buf, uint64(len(val)))
 	return append(buf, val...)
 }
 
 func appendVarint(buf []byte, v uint64) []byte {
-	var tmp [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(tmp[:], v)
-	return append(buf, tmp[:n]...)
+	for v >= 0x80 {
+		buf = append(buf, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(buf, byte(v))
 }

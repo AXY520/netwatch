@@ -258,3 +258,102 @@ func ListApps(ctx context.Context) (map[string]AppInfo, error) {
 	}
 	return out, nil
 }
+
+// NMDevice 是一块由 NetworkManager 管理的网络设备(用于 IPv6 续约选择)。
+type NMDevice struct {
+	Device     string // 网卡名,如 enp2s0 / wlp4s0
+	Type       string // ethernet / wifi / ...
+	State      string // connected / disconnected / unavailable / unmanaged ...
+	Connection string // 活动连接名,如 "Wired connection 1"
+}
+
+// nmcliCall 调用系统 NetworkManager 的 nmcli(经 lzc-sdk),返回其标准输出。
+// args 原样作为 nmcli 的命令行参数,不经过 shell,无注入风险。
+func nmcliCall(ctx context.Context, args []string, timeout time.Duration) (string, error) {
+	cc, err := dial()
+	if err != nil {
+		return "", err
+	}
+	cli := syspb.NewNetworkManagerClient(cc)
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	reply, err := cli.NmcliCall(c, &syspb.NmcliCallRequest{Args: args})
+	if err != nil {
+		if isConnectionError([]string{err.Error()}) {
+			markStale()
+		}
+		return "", err
+	}
+	return reply.GetOut(), nil
+}
+
+// ListReapplicableNICs 返回当前可对其执行 IPv6 续约的网卡:
+// 即由 NetworkManager 管理、已连接(connected)且类型为 ethernet/wifi 的物理网卡。
+// 过滤掉 bridge/veth/tun/loopback/unmanaged 等虚拟或不可操作设备。
+func ListReapplicableNICs(ctx context.Context) ([]NMDevice, error) {
+	// terse 模式输出: DEVICE:TYPE:STATE:CONNECTION,字段以 ':' 分隔(冒号转义为 '\:')
+	out, err := nmcliCall(ctx, []string{"-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"}, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var devices []NMDevice
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := splitNmcliTerse(line)
+		if len(fields) < 3 {
+			continue
+		}
+		dev := NMDevice{Device: fields[0], Type: fields[1], State: fields[2]}
+		if len(fields) >= 4 {
+			dev.Connection = fields[3]
+		}
+		if dev.Type != "ethernet" && dev.Type != "wifi" {
+			continue
+		}
+		// 只保留已连接、且属于真实物理网卡的(排除 veth/容器虚拟网卡)。
+		if !strings.HasPrefix(dev.State, "connected") {
+			continue
+		}
+		if strings.HasPrefix(dev.Device, "veth") || strings.HasPrefix(dev.Device, "lzc-br") {
+			continue
+		}
+		devices = append(devices, dev)
+	}
+	return devices, nil
+}
+
+// ReapplyNIC 对指定网卡执行 `nmcli device reapply`,触发其重新获取 IP(含 IPv6)配置。
+// 这是热重应用,比 `connection up` 温和,通常不会中断已有连接。
+func ReapplyNIC(ctx context.Context, iface string) (string, error) {
+	iface = strings.TrimSpace(iface)
+	if iface == "" {
+		return "", errors.New("lzc-sdk: empty interface name")
+	}
+	return nmcliCall(ctx, []string{"device", "reapply", iface}, 15*time.Second)
+}
+
+// splitNmcliTerse 按 nmcli terse 模式的规则拆分一行:字段以 ':' 分隔,
+// 字段内的字面冒号会被转义为 '\:'。
+func splitNmcliTerse(line string) []string {
+	var fields []string
+	var cur strings.Builder
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c == '\\' && i+1 < len(line) && line[i+1] == ':' {
+			cur.WriteByte(':')
+			i++
+			continue
+		}
+		if c == ':' {
+			fields = append(fields, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	fields = append(fields, cur.String())
+	return fields
+}

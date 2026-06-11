@@ -34,17 +34,17 @@ bash build.sh
 
 # 4) 打包 .lpk
 echo "==> 打包 lpk (lzc-cli project build)"
-rm -f "${LPK}"
+rm -f "dist/${LPK}"
 lzc-cli project build
 
-if [[ ! -f "${LPK}" ]]; then
-    echo "❌ 找不到 ${LPK}，检查 lzc-cli project build 的输出" >&2
+if [[ ! -f "dist/${LPK}" ]]; then
+    echo "❌ 找不到 dist/${LPK}，检查 lzc-cli project build 的输出" >&2
     exit 1
 fi
 
 # 5) 安装到默认盒子
 echo "==> 安装到默认盒子 (lzc-cli app install)"
-lzc-cli app install "./${LPK}"
+lzc-cli app install "dist/${LPK}"
 
 echo
 echo "✅ 部署完成: ${LPK}"

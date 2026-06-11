@@ -1,11 +1,13 @@
 #!/bin/sh
 set -eu
 
+GOARCH="${GOARCH:-amd64}"
+
 go test ./...
 rm -rf dist
 mkdir -p dist
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/netwatch ./cmd/server
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/netwatch-proxy ./cmd/hostproxy
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -trimpath -ldflags="-s -w" -o dist/netwatch ./cmd/server
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -trimpath -ldflags="-s -w" -o dist/netwatch-proxy ./cmd/hostproxy
 cp -R web dist/web
 mkdir -p dist/certs
 cp -f /etc/ssl/certs/ca-certificates.crt dist/certs/ca-certificates.crt
@@ -31,20 +33,24 @@ copy_binary_with_libs() {
   root="$2"
   mkdir -p "${root}$(dirname "${bin}")"
   cp -L "${bin}" "${root}${bin}"
-  if command -v readelf >/dev/null 2>&1; then
-    interp="$(readelf -l "${bin}" 2>/dev/null | awk '/Requesting program interpreter/ {gsub(/[\[\]]/, "", $4); print $4; exit}')"
-    if [ -n "${interp}" ]; then
-      real_interp="$(readlink -f "${interp}" 2>/dev/null || printf '%s' "${interp}")"
-      if [ -f "${real_interp}" ]; then
-        mkdir -p "${root}$(dirname "${interp}")"
-        cp -L "${real_interp}" "${root}${interp}"
-      fi
+  if ! command -v readelf >/dev/null 2>&1; then
+    echo "readelf not found, cannot copy dynamic linker" >&2
+    return 1
+  fi
+  interp="$(readelf -l "${bin}" 2>/dev/null | awk '/Requesting program interpreter/ {gsub(/[\[\]]/, "", $4); print $4; exit}')"
+  if [ -n "${interp}" ]; then
+    real_interp="$(readlink -f "${interp}" 2>/dev/null || printf '%s' "${interp}")"
+    if [ -f "${real_interp}" ]; then
+      mkdir -p "${root}$(dirname "${interp}")"
+      cp -L "${real_interp}" "${root}${interp}"
     fi
   fi
-  ldd "${bin}" | awk '/=> \// {print $3} /^\/.*ld-linux/ {print $1}' | sort -u | while read -r lib; do
+  readelf -d "${bin}" 2>/dev/null | awk '/NEEDED/ {print $NF}' | sort -u | while read -r lib; do
     [ -n "${lib}" ] || continue
-    mkdir -p "${root}$(dirname "${lib}")"
-    cp -L "${lib}" "${root}${lib}"
+    found="$(find /usr/lib /lib -name "${lib}" -type f 2>/dev/null | head -1)"
+    [ -n "${found}" ] || continue
+    mkdir -p "${root}$(dirname "${found}")"
+    cp -L "${found}" "${root}${found}"
   done
 }
 

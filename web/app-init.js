@@ -1,9 +1,3 @@
-/*
- * Netwatch — frontend boot entry point.
- * app.js has been split into domain modules for maintainability.
- * This file is kept as the canonical boot location.
- */
-
 window.__app = window.__app || {};
 
 (function () {
@@ -92,8 +86,8 @@ function bindControls() {
 
     var A = window.__app;
 
-    els.refreshBtn.addEventListener('click', function () { A.debounce('refresh', function () { if (A.runFastRefresh) A.runFastRefresh(true); }); });
-    els.websiteRefreshBtn.addEventListener('click', function () { A.debounce('website', function () { if (A.runWebsiteRefresh) A.runWebsiteRefresh(); }); });
+    els.refreshBtn.addEventListener('click', function () { window.__app.debounce('refresh', function () { if (A.runFastRefresh) A.runFastRefresh(true); }); });
+    els.websiteRefreshBtn.addEventListener('click', function () { window.__app.debounce('website', function () { if (A.runWebsiteRefresh) A.runWebsiteRefresh(); }); });
     els.openSettingsWindow.addEventListener('click', function () { openWindow('settings'); });
     els.openBroadbandWindow.addEventListener('click', function () { openWindow('broadband'); });
     els.openTransferWindow.addEventListener('click', function () { openWindow('transfer'); });

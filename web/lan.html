@@ -7,13 +7,15 @@
     <script>
         document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
     </script>
-    <script src="/i18n.js"></script>
-    <script src="/vendor/lazycat-sdk.js"></script>
+    <script src="/i18n.js" defer></script>
+    <script src="/vendor/lazycat-sdk.js" defer></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
     <div id="toast" class="toast"></div>
     <div id="lan-test-backdrop" class="window-backdrop"></div>
+    <div id="lan-settings-backdrop" class="window-backdrop"></div>
+    <div id="lan-note-backdrop" class="window-backdrop"></div>
     <div class="container traffic-page lan-page">
         <header>
             <div class="traffic-header-copy">
@@ -62,6 +64,7 @@
             </div>
         </div>
         <div class="settings-layout settings-compact">
+            <div id="lan-settings-status" class="settings-hint" style="padding:0.3rem 0"></div>
             <div class="settings-row">
                 <span data-i18n="notify_lan_device_change">设备变动通知</span>
                 <label class="settings-toggle inline"><input type="checkbox" id="lan-setting-notify-lan-device-change"><span>on</span></label>
@@ -177,10 +180,12 @@
     </section>
 
     <section class="floating-window lan-note-window" id="lan-note-window">
+        <div id="lan-note-device" class="note" style="margin-bottom:0.5rem"></div>
         <input id="lan-note-input" class="traffic-search" placeholder="备注">
         <div class="window-actions">
             <button id="lan-note-save">保存</button>
             <button id="lan-note-cancel">取消</button>
+            <button id="lan-note-close" hidden>关闭</button>
         </div>
     </section>
 
@@ -211,6 +216,7 @@
         </div>
     </section>
 
-    <script src="/lan.js"></script>
+    <script src="/shared.js" defer></script>
+    <script src="/lan.js" defer></script>
 </body>
 </html>

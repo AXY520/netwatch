@@ -8,12 +8,12 @@ COPY internal ./internal
 RUN go build -trimpath -ldflags="-s -w" -o /out/netwatch ./cmd/server
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata traceroute mtr \
+RUN apk add --no-cache ca-certificates tzdata mtr \
     && adduser -D -H -u 10001 netwatch
 WORKDIR /app
 COPY --from=build /out/netwatch /app/netwatch
 COPY web /app/web
-RUN mkdir -p /app/data && chown -R netwatch:netwatch /app
+RUN mkdir -p /app/data /app/data && chown netwatch:netwatch /app/data && chmod 755 /app && chmod 755 /app/netwatch
 USER netwatch
 EXPOSE 8080
 ENV TZ=Asia/Shanghai \

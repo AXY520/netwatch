@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' *;">
     <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
     <script>
         document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
     </script>
-    <script src="/i18n.js"></script>
-    <script src="/vendor/lazycat-sdk.js"></script>
+    <script src="/i18n.js" defer></script>
+    <script src="/vendor/lazycat-sdk.js" defer></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -89,12 +90,12 @@
                         <div class="identity-ip-meta" id="domestic-ipv4-location" data-i18n="waiting">等待查询</div>
                     </div>
                     <div class="identity-ip-card">
-                        <div class="table-subtitle" data-i18n="domestic_ipv6">国内 IPv6</div>
+                        <div class="identity-ip-card-head">
+                            <div class="table-subtitle" id="domestic-ipv6-title" data-i18n="domestic_ipv6">国内 IPv6</div>
+                            <button type="button" class="ipv6-detail-btn" id="ipv6-detail-btn" data-i18n="ipv6_view_detail">查看详情</button>
+                        </div>
                         <div class="identity-ip-main" id="domestic-ipv6-ip">---</div>
                         <div class="identity-ip-meta" id="domestic-ipv6-location" data-i18n="waiting">等待查询</div>
-                        <div class="identity-ip-badges">
-                            <span class="identity-badge" id="domestic-ipv6-port" data-i18n="high_port_not_checked">高位端口未检测</span>
-                        </div>
                     </div>
                 </div>
 
@@ -158,7 +159,7 @@
                     </div>
                 </div>
                 <table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="download">下行</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="upload">上行</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
+                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
                     <tbody></tbody>
                 </table>
             </section>
@@ -186,11 +187,11 @@
             <div class="st-dual">
                 <div class="st-panel download" id="broadband-panel-download">
                     <div class="st-panel-head"><span data-i18n="download">下载</span><span class="arrow">↓</span></div>
-                    <div><span class="st-num" id="broadband-download">--</span><span class="st-unit">Mbps</span></div>
+                    <div><span class="st-num" id="broadband-download">--</span><span class="st-unit">Mbit/s</span></div>
                 </div>
                 <div class="st-panel upload" id="broadband-panel-upload">
                     <div class="st-panel-head"><span data-i18n="upload">上传</span><span class="arrow">↑</span></div>
-                    <div><span class="st-num" id="broadband-upload">--</span><span class="st-unit">Mbps</span></div>
+                    <div><span class="st-num" id="broadband-upload">--</span><span class="st-unit">Mbit/s</span></div>
                 </div>
             </div>
 
@@ -224,6 +225,11 @@
                 </div>
             </div>
 
+            <div class="st-log" id="broadband-steps-panel">
+                <div class="st-detail-title" data-i18n="broadband_steps_title">操作日志</div>
+                <div class="st-log-list" id="broadband-steps"></div>
+            </div>
+
         </div>
         <div class="window-head">
             <div class="window-title" data-i18n="history_title">历史记录</div>
@@ -251,11 +257,11 @@
             <div class="st-dual">
                 <div class="st-panel download" id="transfer-panel-download">
                     <div class="st-panel-head"><span data-i18n="download">下载</span><span class="arrow">↓</span></div>
-                    <div><span class="st-num" id="transfer-download">--</span><span class="st-unit">Mbps</span></div>
+                    <div><span class="st-num" id="transfer-download">--</span><span class="st-unit">Mbit/s</span></div>
                 </div>
                 <div class="st-panel upload" id="transfer-panel-upload">
                     <div class="st-panel-head"><span data-i18n="upload">上传</span><span class="arrow">↑</span></div>
-                    <div><span class="st-num" id="transfer-upload">--</span><span class="st-unit">Mbps</span></div>
+                    <div><span class="st-num" id="transfer-upload">--</span><span class="st-unit">Mbit/s</span></div>
                 </div>
             </div>
 
@@ -302,6 +308,69 @@
         </div>
         <div id="trace-output" class="trace-results">
             <div class="trace-empty" data-i18n="trace_not_started">尚未开始追踪</div>
+        </div>
+    </section>
+
+    <section class="floating-window" id="ipv6-detail-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="ipv6_detail_title">IPv6 可用性详情</div>
+                <div class="note" data-i18n="ipv6_detail_note">分层检测本机 IPv6 的真实可用性，全部使用国内目标。</div>
+            </div>
+            <div class="window-actions">
+                <button id="close-ipv6-detail-window" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div class="ipv6-detail-body">
+            <div class="ipv6-detail-summary">
+                <span data-i18n="ipv6_detail_conclusion">综合结论</span>
+                <span class="identity-badge" id="ipv6-detail-summary" data-i18n="ipv6_checking">检测中</span>
+            </div>
+            <div class="ipv6-detail-list">
+                <div class="ipv6-detail-item">
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-addr">·</span><span data-i18n="ipv6_layer_addr">公网地址</span><strong id="ipv6-detail-addr-val"></strong></div>
+                    <div class="ipv6-detail-desc" data-i18n="ipv6_detail_addr_desc">是否拥有可路由的公网 IPv6 地址（排除 fe80::/fc00:: 等私有段）。</div>
+                </div>
+                <div class="ipv6-detail-item">
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-outbound">·</span><span data-i18n="ipv6_layer_outbound">出站连通</span><strong id="ipv6-detail-outbound-val"></strong></div>
+                    <div class="ipv6-detail-desc" data-i18n="ipv6_detail_outbound_desc">能否通过 IPv6 连接到外部网络（国内大厂 anycast / 双栈站点）。</div>
+                </div>
+                <div class="ipv6-detail-item">
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-https">·</span><span data-i18n="ipv6_layer_https">HTTPS over IPv6</span></div>
+                    <div class="ipv6-detail-desc" data-i18n="ipv6_detail_https_desc">应用层能否通过 IPv6 完成 HTTPS 访问（国内双栈域名）。</div>
+                </div>
+                <div class="ipv6-detail-item">
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-dns">·</span><span data-i18n="ipv6_layer_dns">DNS AAAA 解析</span></div>
+                    <div class="ipv6-detail-desc" data-i18n="ipv6_detail_dns_desc">DNS 能否返回 AAAA 记录（应用走 IPv6 的前提）。</div>
+                </div>
+            </div>
+            <div class="ipv6-detail-checked" id="ipv6-detail-checked"></div>
+        </div>
+    </section>
+    <div id="ipv6-detail-window-backdrop" class="window-backdrop"></div>
+
+    <div id="ipv6-renew-window-backdrop" class="window-backdrop"></div>
+    <section class="floating-window" id="ipv6-renew-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="ipv6_renew_title">IPv6 地址续约</div>
+                <div class="note" data-i18n="ipv6_renew_note">当 IPv6 租约过期、地址未自动更新时，可让系统重新获取。选择网卡后执行，过程平滑不中断现有连接。</div>
+            </div>
+            <div class="window-actions">
+                <button id="ipv6-renew-refresh-btn" data-i18n="ipv6_renew_refresh">刷新网卡</button>
+                <button id="close-ipv6-renew-window" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div class="ipv6-renew-body">
+            <div class="ipv6-renew-field">
+                <label data-i18n="ipv6_renew_select_nic">选择网卡</label>
+                <select id="ipv6-renew-nic-select"></select>
+            </div>
+            <div class="ipv6-renew-actions">
+                <button id="ipv6-renew-exec-btn" data-i18n="ipv6_renew_exec">重新获取 IPv6</button>
+            </div>
+            <div class="ipv6-renew-status" id="ipv6-renew-status"></div>
+            <pre class="ipv6-renew-output" id="ipv6-renew-output" hidden></pre>
         </div>
     </section>
 
@@ -379,11 +448,11 @@
                 <div class="settings-inline-controls">
                     <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-abnormal-traffic"><span>on</span></label>
                     <select id="setting-abnormal-traffic-threshold-mbps">
-                        <option value="50">50 Mbps</option>
-                        <option value="100">100 Mbps</option>
-                        <option value="300">300 Mbps</option>
-                        <option value="500">500 Mbps</option>
-                        <option value="1000">1000 Mbps</option>
+                        <option value="50">50 Mbit/s</option>
+                        <option value="100">100 Mbit/s</option>
+                        <option value="300">300 Mbit/s</option>
+                        <option value="500">500 Mbit/s</option>
+                        <option value="1000">1000 Mbit/s</option>
                     </select>
                 </div>
             </div>
@@ -439,6 +508,22 @@
             </div>
             <div class="settings-divider"></div>
             <div class="settings-row">
+                <span>PushPlus</span>
+                <div class="settings-inline-controls">
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-pushplus-enabled"><span>on</span></label>
+                    <button id="test-pushplus-notification" class="btn-sm" data-i18n="test_pushplus">测试</button>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span data-i18n="pushplus_token">PushPlus Token</span>
+                <input id="setting-pushplus-token" class="settings-input" placeholder="Token">
+            </div>
+            <div class="settings-row">
+                <span data-i18n="pushplus_topic">PushPlus 群组</span>
+                <input id="setting-pushplus-topic" class="settings-input" placeholder="留空则不转发">
+            </div>
+            <div class="settings-divider"></div>
+            <div class="settings-row">
                 <span data-i18n="dnd_settings">免打扰</span>
                 <div class="settings-inline-controls">
                     <label class="settings-toggle inline"><input type="checkbox" id="setting-dnd-enabled"><span>on</span></label>
@@ -453,37 +538,6 @@
                     <label class="settings-toggle inline"><input type="checkbox" id="setting-scheduled-notify-enabled"><span>on</span></label>
                     <input type="time" id="setting-scheduled-notify-time" value="09:00" class="settings-input time-input">
                 </div>
-            </div>
-            <div class="settings-divider"></div>
-            <div class="settings-row">
-                <span data-i18n="notify_content">通知内容</span>
-                <button id="open-notify-template" class="btn-sm" data-i18n="notify_content_edit">自定义</button>
-            </div>
-        </div>
-    </section>
-    <section class="floating-window sub-window" id="notify-template-window">
-        <div class="window-head">
-            <div>
-                <div class="window-title" data-i18n="notify_content">通知内容</div>
-                <div class="note" data-i18n="notify_content_desc">自定义通知标题和正文模板，留空则使用默认格式。支持模板变量。</div>
-            </div>
-            <div class="window-actions">
-                <button id="save-notify-template" data-i18n="save_btn">保存</button>
-                <button id="close-notify-template" data-i18n="close_btn">关闭</button>
-            </div>
-        </div>
-        <div class="settings-layout settings-compact" style="padding: 0.2rem 0">
-            <div class="settings-row" style="flex-direction:column; align-items:stretch; gap:0.3rem">
-                <span data-i18n="notify_template_title">标题模板</span>
-                <textarea id="notify-template-title" class="settings-input settings-textarea" rows="2" placeholder="{{.Title}}"></textarea>
-            </div>
-            <div class="settings-row" style="flex-direction:column; align-items:stretch; gap:0.3rem">
-                <span data-i18n="notify_template_body">正文模板</span>
-                <textarea id="notify-template-body" class="settings-input settings-textarea" rows="4" placeholder="{{.Body}}"></textarea>
-            </div>
-            <div class="settings-hint" style="padding:0.5rem 0">
-                <div data-i18n="notify_template_vars">可用变量：</div>
-                <code>{{.Title}}</code> <code>{{.Body}}</code> <code>{{.Kind}}</code> <code>{{.Severity}}</code>
             </div>
         </div>
     </section>
@@ -519,7 +573,12 @@
         </div>
     </section>
 
-    <script src="/speedtest.js"></script>
-    <script src="/app.js"></script>
+    <script src="/speedtest.js" defer></script>
+    <script src="/shared.js" defer></script>
+    <script src="/app-core.js" defer></script>
+    <script src="/app-network.js" defer></script>
+    <script src="/app-speedtest.js" defer></script>
+    <script src="/app-settings.js" defer></script>
+    <script src="/app.js" defer></script>
 </body>
 </html>

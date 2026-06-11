@@ -1,3 +1,16 @@
 .git
 .gitignore
 README.md
+*.lpk
+.cache/
+.lzc-cli-build*/
+.lzc-cli-cache/
+.lzc-build.yml.deploy-backup
+.codex-go/
+test.html
+.zread/
+@lazycatcloud_lzc-file-pickers - npm.html
+*.md
+.DS_Store
+.vscode/
+.idea/

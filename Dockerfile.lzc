@@ -9,4 +9,5 @@ COPY dist/rootfs/ /
 
 ENV PATH=/usr/bin:/bin
 EXPOSE 23087
+USER 10001:10001
 CMD ["/app/netwatch"]

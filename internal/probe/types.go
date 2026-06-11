@@ -99,6 +99,11 @@ type MutableSettings struct {
 	BarkDeviceKey                  string `json:"bark_device_key"`
 	BarkGroup                      string `json:"bark_group"`
 
+	// PushPlus settings
+	PushPlusEnabled bool   `json:"pushplus_enabled"`
+	PushPlusToken   string `json:"pushplus_token"`
+	PushPlusTopic   string `json:"pushplus_topic"`
+
 	// Do Not Disturb settings
 	DNDEnabled bool   `json:"dnd_enabled"`
 	DNDStart   string `json:"dnd_start"` // "HH:MM"
@@ -109,10 +114,10 @@ type MutableSettings struct {
 	ScheduledNotifyTime    string `json:"scheduled_notify_time"` // "HH:MM"
 
 	// LAN detection settings
-	LANMaxCheckAttempts     int `json:"lan_max_check_attempts"`     // consecutive misses before offline
-	LANNotifyCooldownSec    int `json:"lan_notify_cooldown_sec"`    // min seconds between notifications per device
-	LANFlappingThreshold    int `json:"lan_flapping_threshold"`     // max state changes in window before suppression
-	LANFlappingWindowSec    int `json:"lan_flapping_window_sec"`    // sliding window duration in seconds
+	LANMaxCheckAttempts     int `json:"lan_max_check_attempts"`      // consecutive misses before offline
+	LANNotifyCooldownSec    int `json:"lan_notify_cooldown_sec"`     // min seconds between notifications per device
+	LANFlappingThreshold    int `json:"lan_flapping_threshold"`      // max state changes in window before suppression
+	LANFlappingWindowSec    int `json:"lan_flapping_window_sec"`     // sliding window duration in seconds
 	LANDeviceAutoRemoveDays int `json:"lan_device_auto_remove_days"` // auto-remove offline devices after N days (0 = disabled)
 
 	// Traffic sampling settings
@@ -126,19 +131,15 @@ type MutableSettings struct {
 
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
-
-	// Notification content templates (Go template syntax, empty = default)
-	NotifyTemplateTitle string `json:"notify_template_title,omitempty"`
-	NotifyTemplateBody  string `json:"notify_template_body,omitempty"`
 }
 
 type RegisteredDevice struct {
-	ID         string `json:"id"`
-	Name       string `json:"name,omitempty"`
-	Platform   string `json:"platform,omitempty"`
-	FirstSeen  string `json:"first_seen"`
-	LastSeen   string `json:"last_seen"`
-	Notify     bool   `json:"notify"`
+	ID        string `json:"id"`
+	Name      string `json:"name,omitempty"`
+	Platform  string `json:"platform,omitempty"`
+	FirstSeen string `json:"first_seen"`
+	LastSeen  string `json:"last_seen"`
+	Notify    bool   `json:"notify"`
 }
 
 type NotificationEvent struct {
@@ -233,12 +234,27 @@ type DomesticIPEntry struct {
 	HasPublicPath bool                `json:"has_public_path"`
 	Source        string              `json:"source,omitempty"`
 	Error         string              `json:"error,omitempty"`
-	PortProbe     IPReachabilityProbe `json:"port_probe,omitempty"`
 }
 
 type DomesticIPSnapshot struct {
-	IPv4 DomesticIPEntry `json:"ipv4"`
-	IPv6 DomesticIPEntry `json:"ipv6"`
+	IPv4      DomesticIPEntry  `json:"ipv4"`
+	IPv6      DomesticIPEntry  `json:"ipv6"`
+	IPv6Avail IPv6Availability `json:"ipv6_availability,omitempty"`
+}
+
+// IPv6Availability 是 IPv6 真实可用性的分层检测结果(地址→出站→应用层→DNS),
+// 帮助区分"有地址"与"真能用"。Summary 取值:
+// fully_usable / outbound_only / address_only / no_global。
+type IPv6Availability struct {
+	HasGlobalAddress  bool                `json:"has_global_address"`
+	GlobalAddress     string              `json:"global_address,omitempty"`
+	OutboundReachable bool                `json:"outbound_reachable"`
+	OutboundLatencyMS int64               `json:"outbound_latency_ms,omitempty"`
+	OutboundTarget    string              `json:"outbound_target,omitempty"`
+	HTTPSReachable    bool                `json:"https_reachable"`
+	DNSResolvable     bool                `json:"dns_resolvable"`
+	Summary           string `json:"summary"`
+	CheckedAt         string `json:"checked_at,omitempty"`
 }
 
 type WebsiteConnectivity struct {
@@ -329,7 +345,11 @@ type BroadbandSpeedResult struct {
 	FailureStage   string                  `json:"failure_stage,omitempty"`
 	FailureReason  string                  `json:"failure_reason,omitempty"`
 	StageDurations BroadbandStageDurations `json:"stage_durations,omitempty"`
-	Error          string                  `json:"error,omitempty"`
+	// 诊断字段:稳态采样口径(最终值)与库 EWMA 口径并存,用于校准"测准"参数。
+	DownloadMbpsEWMA float64 `json:"download_mbps_ewma,omitempty"`
+	UploadMbpsEWMA   float64 `json:"upload_mbps_ewma,omitempty"`
+	DownloadStreams  int     `json:"download_streams,omitempty"`
+	Error            string  `json:"error,omitempty"`
 }
 
 type BroadbandStageDurations struct {
@@ -372,6 +392,17 @@ type BroadbandTaskStatus struct {
 	Message         string               `json:"message,omitempty"`
 	UpdatedAt       string               `json:"updated_at"`
 	Result          BroadbandSpeedResult `json:"result"`
+	Steps           []BroadbandTaskStep  `json:"steps,omitempty"`
+}
+
+// BroadbandTaskStep 记录测速过程中的一步操作,供前端实时展示后端正在做什么。
+// Status 取值:running(进行中) / ok(成功) / fail(失败) / info(信息)。
+type BroadbandTaskStep struct {
+	Seq     int    `json:"seq"`
+	Time    string `json:"time"`
+	Stage   string `json:"stage"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 type Summary struct {

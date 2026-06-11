@@ -42,44 +42,19 @@
     const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
 
     function initTheme() {
-        document.documentElement.setAttribute('data-theme', state.theme);
-        els.themeToggle?.addEventListener('click', () => {
-            state.theme = state.theme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', state.theme);
-            localStorage.setItem('theme', state.theme);
-        });
+        NetwatchShared.initTheme(state, els.themeToggle);
     }
 
-    function showToast(message, type = 'info') {
-        if (!els.toast) return;
-        els.toast.textContent = message;
-        els.toast.className = `toast show ${type}`;
-        clearTimeout(showToast.timer);
-        showToast.timer = setTimeout(() => {
-            els.toast.className = 'toast';
-        }, 2600);
+    function showToast(message, type) {
+        NetwatchShared.showToast(message, type);
     }
 
     function escapeHtml(value) {
-        return String(value ?? '')
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#39;');
+        return NetwatchShared.escapeHtml(value);
     }
 
     function formatBytes(n) {
-        const value = Number(n) || 0;
-        if (value <= 0) return '0 B';
-        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        let i = 0;
-        let v = value;
-        while (v >= 1024 && i < units.length - 1) {
-            v /= 1024;
-            i++;
-        }
-        return (i === 0 ? String(Math.round(v)) : v.toFixed(v < 10 ? 2 : 1)) + ' ' + units[i];
+        return NetwatchShared.formatBytes(n);
     }
 
     function formatSpeed(n) {
@@ -241,9 +216,9 @@
         `;
     }
 
-    function renderChart(points) {
+    function renderChart(scopedIn, summaryIn) {
         renderSingleLegend();
-        const scoped = filteredHistory(points);
+        const scoped = scopedIn || filteredHistory(state.selectedHistory);
         const rates = computeRates(scoped);
         if (rates.length === 0) {
             els.chart.innerHTML = '<div class="placeholder" style="padding:2rem">' + i18n('data_insufficient') + '</div>';
@@ -262,7 +237,8 @@
         const xS = (i) => pad.left + (i / Math.max(1, rates.length - 1)) * cw;
         const yS = (v) => pad.top + ch - (Math.min(v, maxVal) / maxVal) * ch;
         const line = (key) => rates.map((d, i) => `${xS(i).toFixed(1)},${yS(d[key]).toFixed(1)}`).join(' ');
-        const anomalies = detectAnomalies(scoped, summarize(scoped, selectedApp()));
+        const summaryForAnomaly = summaryIn || summarize(scoped, selectedApp());
+        const anomalies = detectAnomalies(scoped, summaryForAnomaly);
         const anomalyByTimestamp = new Map(anomalies.map(item => [item.timestamp, item]));
 
         let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
@@ -311,7 +287,7 @@
         els.chart.innerHTML = svg;
     }
 
-    function renderTables(current, points, summary) {
+    function renderTables(current, scoped, summary) {
         const f = (n) => (Number(n) || 0).toLocaleString();
         els.counterTable.innerHTML = `
             <tbody>
@@ -325,7 +301,6 @@
             </tbody>
         `;
 
-        const scoped = filteredHistory(points);
         const first = scoped[0]?.timestamp || '-';
         const last = scoped[scoped.length - 1]?.timestamp || '-';
         const avgInterval = summary.rates.length > 0
@@ -374,11 +349,14 @@
 
     function topRows() {
         const apps = (state.snapshot?.bridges || []).filter(b => !isNetwatchBridge(b));
-        return (state.topItems || []).filter(item => {
-            const app = apps.find(row => row.bridge === item.bridge);
-            return !!app;
-        }).map((item) => {
-            const app = apps.find(row => row.bridge === item.bridge);
+        var appMap = {};
+        for (var i = 0; i < apps.length; i++) {
+            appMap[apps[i].bridge] = apps[i];
+        }
+        return (state.topItems || []).filter(function (item) {
+            return !!appMap[item.bridge];
+        }).map(function (item) {
+            var app = appMap[item.bridge];
             return {
                 title: appTitle(app),
                 delta: item.total_delta || 0,
@@ -402,9 +380,7 @@
     }
 
     function isNetwatchBridge(b) {
-        const id = (b.app_id || '').toLowerCase();
-        const proj = (b.project || '').toLowerCase();
-        return id === 'cloud.lazycat.app.netwatch' || id === 'netwatch' || proj.includes('netwatch');
+        return NetwatchShared.isNetwatchBridge(b);
     }
 
     function filteredApps() {
@@ -555,7 +531,7 @@
 
         const scoped = filteredHistory(state.selectedHistory);
         const summary = summarize(scoped, current);
-        const firstSample = state.selectedHistory.find(p => parseTimestamp(p.timestamp) > 0)?.timestamp || '';
+        const firstSample = scoped.length > 0 ? scoped[0].timestamp || '' : '';
         els.title.textContent = appTitle(current);
         els.sub.textContent = appSubtitle(current) || i18n('app_traffic_title');
         if (firstSample) {
@@ -566,9 +542,9 @@
             els.note.textContent = i18n('waiting_for_first_sample');
         }
         renderSummary(summary);
-        renderChart(state.selectedHistory);
+        renderChart(scoped, summary);
         renderTopTable();
-        renderTables(current, state.selectedHistory, summary);
+        renderTables(current, scoped, summary);
         requestAnimationFrame(syncSidebarBottom);
     }
 
@@ -670,6 +646,16 @@
                 selectBridge(btn.dataset.bridge);
             }
         });
+        els.rangeControls?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-range]');
+            if (!btn) return;
+            state.range = btn.dataset.range;
+            state._cachedScoped = null;
+            state._cachedSummary = null;
+            localStorage.setItem('trafficRange', state.range);
+            initRangeButtons();
+            refreshSelectedOnly();
+        });
         els.labelDensity?.addEventListener('change', async () => {
             state.settings.chart_time_label_interval = Number.parseInt(els.labelDensity.value || '0', 10) || 0;
             renderSelected();
@@ -690,27 +676,14 @@
             state.liveIntervalSec = Math.max(1, Number.parseInt(els.liveInterval.value || '2', 10) || 2);
             localStorage.setItem('trafficLiveIntervalSec', String(state.liveIntervalSec));
             if (els.liveToggle?.checked && !document.hidden) {
-                startLiveRefresh();
+                refreshSelectedOnly();
             }
-        });
-        els.rangeControls?.addEventListener('click', async (e) => {
-            const btn = e.target.closest('button[data-range]');
-            if (!btn) return;
-            state.range = btn.dataset.range || '1h';
-            localStorage.setItem('trafficRange', state.range);
-            els.rangeControls.querySelectorAll('button[data-range]').forEach(item => {
-                item.classList.toggle('active', item.dataset.range === state.range);
-            });
-            if (els.sub) els.sub.textContent = i18n('loading');
-            await Promise.all([
-                loadHistory(state.selectedBridge),
-                loadTop()
-            ]);
-            renderSelected();
         });
         window.addEventListener('resize', () => {
             clearTimeout(state.resizeTimer);
             state.resizeTimer = setTimeout(() => {
+                state._cachedScoped = null;
+                state._cachedSummary = null;
                 renderSelected();
                 syncSidebarBottom();
             }, 160);

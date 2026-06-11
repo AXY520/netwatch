@@ -37,6 +37,8 @@
         testSend: document.getElementById('lan-notify-test-send'),
         testTitle: document.getElementById('lan-notify-test-title'),
         testBody: document.getElementById('lan-notify-test-body'),
+        settingsBackdrop: document.getElementById('lan-settings-backdrop'),
+        noteBackdrop: document.getElementById('lan-note-backdrop'),
         settingsStatus: document.getElementById('lan-settings-status'),
         saveSettings: document.getElementById('lan-save-settings'),
         settingNotifyLANDeviceChange: document.getElementById('lan-setting-notify-lan-device-change'),
@@ -53,31 +55,15 @@
     };
 
     function initTheme() {
-        document.documentElement.setAttribute('data-theme', state.theme);
-        els.themeToggle?.addEventListener('click', () => {
-            state.theme = state.theme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', state.theme);
-            localStorage.setItem('theme', state.theme);
-        });
+        NetwatchShared.initTheme(state, els.themeToggle);
     }
 
-    function showToast(message, type = 'info') {
-        if (!els.toast) return;
-        els.toast.textContent = message;
-        els.toast.className = `toast show ${type}`;
-        clearTimeout(showToast.timer);
-        showToast.timer = setTimeout(() => {
-            els.toast.className = 'toast';
-        }, 2600);
+    function showToast(message, type) {
+        NetwatchShared.showToast(message, type);
     }
 
     function escapeHtml(value) {
-        return String(value ?? '')
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#39;');
+        return NetwatchShared.escapeHtml(value);
     }
 
     function statusBadge(status) {
@@ -103,20 +89,11 @@
     }
 
     function lockModalScroll() {
-        state.modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
-        const hasStableGutter = window.CSS?.supports?.('scrollbar-gutter: stable');
-        const scrollbarWidth = hasStableGutter ? 0 : Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-        document.documentElement.style.setProperty('--scrollbar-compensation', `${scrollbarWidth}px`);
-        document.body.style.top = `-${state.modalScrollY}px`;
-        document.body.classList.add('modal-scroll-locked');
+        NetwatchShared.lockModalScroll();
     }
 
     function unlockModalScroll() {
-        const y = state.modalScrollY || 0;
-        document.body.classList.remove('modal-scroll-locked');
-        document.body.style.top = '';
-        document.documentElement.style.removeProperty('--scrollbar-compensation');
-        window.scrollTo(0, y);
+        NetwatchShared.unlockModalScroll();
     }
 
     function openTestWindow() {
@@ -127,17 +104,19 @@
 
     function closeTestWindow() {
         els.testWindow?.classList.remove('active');
+        els.testBackdrop?.classList.remove('active');
         closeBackdropIfIdle();
     }
 
     function openSettingsWindow() {
         els.settingsWindow?.classList.add('active');
-        els.testBackdrop?.classList.add('active');
+        els.settingsBackdrop?.classList.add('active');
         ensureModalLock();
     }
 
     function closeSettingsWindow() {
         els.settingsWindow?.classList.remove('active');
+        els.settingsBackdrop?.classList.remove('active');
         closeBackdropIfIdle();
     }
 
@@ -145,7 +124,6 @@
         if (els.testWindow?.classList.contains('active') || els.settingsWindow?.classList.contains('active') || els.noteWindow?.classList.contains('active')) {
             return;
         }
-        els.testBackdrop?.classList.remove('active');
         unlockModalScroll();
     }
 
@@ -153,6 +131,9 @@
         els.testWindow?.classList.remove('active');
         els.settingsWindow?.classList.remove('active');
         els.noteWindow?.classList.remove('active');
+        els.testBackdrop?.classList.remove('active');
+        els.settingsBackdrop?.classList.remove('active');
+        els.noteBackdrop?.classList.remove('active');
         closeBackdropIfIdle();
     }
 
@@ -167,13 +148,14 @@
             els.noteDevice.textContent = `MAC：${state.noteMAC}`;
         }
         els.noteWindow?.classList.add('active');
-        els.testBackdrop?.classList.add('active');
+        els.noteBackdrop?.classList.add('active');
         ensureModalLock();
         setTimeout(() => els.noteInput?.focus(), 0);
     }
 
     function closeNoteWindow() {
         els.noteWindow?.classList.remove('active');
+        els.noteBackdrop?.classList.remove('active');
         state.noteMAC = '';
         state.noteButton = null;
         closeBackdropIfIdle();
@@ -203,18 +185,7 @@
     }
 
     async function getLazycatGateway() {
-        if (state.lzcGatewayPromise) return state.lzcGatewayPromise;
-        state.lzcGatewayPromise = (async () => {
-            const Gateway = window.lzcAPIGateway || window.LazycatSDK?.lzcAPIGateway;
-            if (!Gateway) {
-                throw new Error('Lazycat SDK 未加载，请确认当前客户端支持系统通知');
-            }
-            return new Gateway(window.location.origin, false);
-        })();
-        state.lzcGatewayPromise.catch(() => {
-            state.lzcGatewayPromise = null;
-        });
-        return state.lzcGatewayPromise;
+        return NetwatchShared.getLazycatGateway(state);
     }
 
     async function sendTestNotification() {
@@ -243,9 +214,7 @@
     }
 
     function markNotificationSeen(id) {
-        if (!Number.isFinite(id) || id <= state.notificationLastID) return;
-        state.notificationLastID = id;
-        localStorage.setItem('netwatch_notification_last_id', String(id));
+        NetwatchShared.markNotificationSeen(id, state);
     }
 
     function startSSE() {
@@ -264,12 +233,7 @@
     }
 
     function isNotificationUnsupportedError(err) {
-        const message = String(err?.message || err || '').toLowerCase();
-        return message.includes('notificationservice') && (
-            message.includes('not registered') ||
-            message.includes('unimplemented') ||
-            message.includes('unknown service')
-        );
+        return NetwatchShared.isNotificationUnsupportedError(err);
     }
 
     function formatNotificationError(err) {
@@ -721,20 +685,7 @@
     }
 
     function handleNotificationEvent(event) {
-        const id = Number(event?.id || 0);
-        if (!id || id <= state.notificationLastID) return;
-        if (!state.settings?.notifications_enabled || state.settings.client_notification_enabled === false) {
-            markNotificationSeen(id);
-            return;
-        }
-        markNotificationSeen(id);
-        notifySelectedDevices(event).catch(err => {
-            console.debug('lazycat notification unavailable', err);
-            if (isNotificationUnsupportedError(err)) {
-                state.notificationUnsupported = true;
-                localStorage.setItem('netwatch_notification_unsupported', 'true');
-            }
-        });
+        NetwatchShared.handleNotificationEvent(event, state);
     }
 
     load(false);

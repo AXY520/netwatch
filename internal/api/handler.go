@@ -53,6 +53,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
 	mux.HandleFunc("/api/v1/notifications/events", h.handleNotificationEvents)
 	mux.HandleFunc("/api/v1/notifications/bark/test", h.handleBarkNotificationTest)
+	mux.HandleFunc("/api/v1/notifications/pushplus/test", h.handlePushPlusNotificationTest)
 	mux.HandleFunc("/api/v1/lan/devices", h.handleLANDevices)
 	mux.HandleFunc("/api/v1/lan/devices/meta", h.handleLANDeviceMeta)
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
@@ -60,7 +61,42 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/app-traffic/live", h.handleAppTrafficLive)
 	mux.HandleFunc("/api/v1/network/app-traffic/top", h.handleAppTrafficTop)
 	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
+	mux.HandleFunc("/api/v1/network/ipv6/renew-nics", h.handleIPv6RenewNICs)
+	mux.HandleFunc("/api/v1/network/ipv6/renew", h.handleIPv6Renew)
 	mux.HandleFunc("/metrics", h.handleMetrics)
+}
+
+func (h *Handler) handleIPv6RenewNICs(w http.ResponseWriter, r *http.Request) {
+	nics, err := h.service.ListIPv6RenewNICs(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nics": nics})
+}
+
+func (h *Handler) handleIPv6Renew(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if req.Device == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device required"})
+		return
+	}
+	result := h.service.RenewIPv6(r.Context(), req.Device)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusInternalServerError
+	}
+	writeJSON(w, status, result)
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -325,7 +361,6 @@ func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, _ *http.Request)
 	writeJSON(w, http.StatusOK, h.service.GetRealtimeNetStats())
 }
 
-
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		h.service.ClearPublicIPCache()
@@ -348,6 +383,18 @@ func (h *Handler) handleBarkNotificationTest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.service.TestBarkNotification(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (h *Handler) handlePushPlusNotificationTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if err := h.service.TestPushPlusNotification(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

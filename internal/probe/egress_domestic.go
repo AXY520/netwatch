@@ -50,11 +50,8 @@ func lookupDomesticIPs(ctx context.Context, cfg Config) DomesticIPSnapshot {
 		if out.IPv6.IP == "" {
 			out.IPv6 = lookupDomesticIPv6(ctx)
 		}
-		if out.IPv6.IP != "" {
-			out.IPv6.PortProbe = probeIPv6HighPort(ctx, cfg)
-		} else {
-			out.IPv6.PortProbe = IPReachabilityProbe{Status: "unavailable", Error: "未检测到 IPv6 出口"}
-		}
+		// IPv6 真实可用性分层检测(地址→出站→HTTPS→DNS)。
+		out.IPv6Avail = probeIPv6Availability(ctx, out.IPv6.IP)
 	}()
 	wg.Wait()
 	return out
@@ -387,37 +384,6 @@ func fetchZXINCLocation(ctx context.Context, ip string) (string, string, error) 
 		return "", "", fmt.Errorf("query failed")
 	}
 	return firstNonEmpty(payload.Data.Location, payload.Data.Country), payload.Data.Local, nil
-}
-
-func probeIPv6HighPort(ctx context.Context, cfg Config) IPReachabilityProbe {
-	host := strings.TrimSpace(cfg.IPv6HighPortProbeHost)
-	port := cfg.IPv6HighPortProbePort
-	if host == "" || port <= 0 {
-		return IPReachabilityProbe{Status: "unavailable", Error: "未配置探针"}
-	}
-
-	dialCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-
-	start := time.Now()
-	conn, err := (&net.Dialer{Timeout: 4 * time.Second}).DialContext(dialCtx, "tcp6", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
-	if err != nil {
-		status := "blocked"
-		if strings.Contains(strings.ToLower(err.Error()), "refused") {
-			status = "closed"
-		}
-		return IPReachabilityProbe{
-			Status: status,
-			Error:  err.Error(),
-		}
-	}
-	defer conn.Close()
-
-	return IPReachabilityProbe{
-		Status:     "reachable",
-		LatencyMS:  time.Since(start).Milliseconds(),
-		RemoteAddr: conn.RemoteAddr().String(),
-	}
 }
 
 func isPublicIP(raw string) bool {

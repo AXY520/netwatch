@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	"netwatch/internal/logger"
@@ -58,26 +57,12 @@ func (s *Service) pushNotification(kind, severity, title, body string) {
 	dndEnabled := s.dndEnabled
 	dndStart := s.dndStart
 	dndEnd := s.dndEnd
-	tmplTitle := s.notifyTemplateTitle
-	tmplBody := s.notifyTemplateBody
 	s.mu.RUnlock()
 	if !enabled {
 		return
 	}
 	if dndEnabled && isWithinDNDPeriod(dndStart, dndEnd) {
 		return
-	}
-
-	// Apply custom templates if configured.
-	if tmplTitle != "" {
-		if rendered, err := renderNotifyTemplate(tmplTitle, kind, severity, title, body); err == nil {
-			title = rendered
-		}
-	}
-	if tmplBody != "" {
-		if rendered, err := renderNotifyTemplate(tmplBody, kind, severity, title, body); err == nil {
-			body = rendered
-		}
 	}
 
 	ev := NotificationEvent{
@@ -114,6 +99,9 @@ func (s *Service) sendExternalNotification(ev NotificationEvent) {
 	serverURL := s.barkServerURL
 	deviceKey := s.barkDeviceKey
 	group := s.barkGroup
+	ppEnabled := s.pushPlusEnabled
+	ppToken := s.pushPlusToken
+	ppTopic := s.pushPlusTopic
 	clientEnabled := s.clientNotificationEnabled
 	s.mu.RUnlock()
 
@@ -121,6 +109,14 @@ func (s *Service) sendExternalNotification(ev NotificationEvent) {
 		go func() {
 			if err := sendBarkNotification(context.Background(), serverURL, deviceKey, group, ev); err != nil {
 				logger.Warn("bark push failed: %v", err)
+			}
+		}()
+	}
+
+	if ppEnabled && ppToken != "" {
+		go func() {
+			if err := sendPushPlusNotification(context.Background(), ppToken, ppTopic, ev); err != nil {
+				logger.Warn("pushplus push failed: %v", err)
 			}
 		}()
 	}
@@ -136,6 +132,7 @@ func (s *Service) sendExternalNotification(ev NotificationEvent) {
 
 func (s *Service) sendLazycatNotification(ev NotificationEvent) error {
 	if !lzcsdk.GatewayAvailable() {
+		logger.Debug("lazycat gateway not available")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -144,19 +141,27 @@ func (s *Service) sendLazycatNotification(ev NotificationEvent) error {
 	if err != nil {
 		return fmt.Errorf("list devices: %w", err)
 	}
+	logger.Debug("lazycat notification: found %d devices", len(devices))
 	var lastErr error
+	sentCount := 0
 	for _, dev := range devices {
 		if !dev.IsOnline || dev.DeviceAPIURL == "" {
+			logger.Debug("skip device %s: online=%v url=%s", dev.ID, dev.IsOnline, dev.DeviceAPIURL)
 			continue
 		}
 		if !s.ShouldNotifyDevice(dev.ID) {
+			logger.Debug("skip device %s: not in notification list", dev.ID)
 			continue
 		}
 		if err := lzcsdk.NotifyDevice(ctx, dev.DeviceAPIURL, ev.Title, ev.Body, ev.DeeplinkURL); err != nil {
 			logger.Debug("notify device %s failed: %v", dev.ID, err)
 			lastErr = err
+		} else {
+			sentCount++
+			logger.Debug("notify device %s success", dev.ID)
 		}
 	}
+	logger.Debug("lazycat notification: sent to %d devices", sentCount)
 	return lastErr
 }
 
@@ -217,6 +222,61 @@ func sendBarkNotification(ctx context.Context, serverURL, deviceKey, group strin
 	return nil
 }
 
+func sendPushPlusNotification(ctx context.Context, token, topic string, ev NotificationEvent) error {
+	payload := map[string]any{
+		"token":   token,
+		"title":   ev.Title,
+		"content": strings.ReplaceAll(ev.Body, "\n", "<br>"),
+		"template": "txt",
+	}
+	if topic != "" {
+		payload["topic"] = topic
+	}
+	body, _ := json.Marshal(payload)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://www.pushplus.plus/send", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	var result struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(respBody, &result)
+	if result.Code != 200 {
+		msg := strings.TrimSpace(result.Msg)
+		if msg == "" {
+			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		return fmt.Errorf("pushplus: %s", msg)
+	}
+	return nil
+}
+
+func (s *Service) TestPushPlusNotification() error {
+	s.mu.RLock()
+	token := s.pushPlusToken
+	topic := s.pushPlusTopic
+	s.mu.RUnlock()
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("pushplus token is empty")
+	}
+	return sendPushPlusNotification(context.Background(), token, topic, NotificationEvent{
+		Severity:  "info",
+		Title:     "Netwatch 测试通知",
+		Body:      fmt.Sprintf("PushPlus 推送通道测试成功，通知功能正常工作。\n\n分组：%s\n测试时间：%s", firstNonEmpty(topic, "默认"), localTimestamp()),
+		CreatedAt: localTimestamp(),
+	})
+}
+
 func buildBarkEndpoint(raw, deviceKey string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -261,25 +321,6 @@ func isWithinDNDPeriod(start, end string) bool {
 		return hhmm >= start && hhmm < end
 	}
 	return hhmm >= start || hhmm < end
-}
-
-type notifyTemplateData struct {
-	Kind     string
-	Severity string
-	Title    string
-	Body     string
-}
-
-func renderNotifyTemplate(tmplStr, kind, severity, title, body string) (string, error) {
-	t, err := template.New("").Parse(tmplStr)
-	if err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, notifyTemplateData{Kind: kind, Severity: severity, Title: title, Body: body}); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }
 
 func barkLevel(severity string) string {
