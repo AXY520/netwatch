@@ -565,7 +565,7 @@
 
         #ipv6-renew-exec-btn:hover:not(:disabled) {
             background: var(--accent-cyan);
-            color: var(--bg-main);
+            color: var(--bg-color);
         }
 
         #ipv6-renew-exec-btn:disabled {
@@ -885,6 +885,11 @@
         .app-traffic-table-fixed .col-rx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-tx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-total  { width: 16%; text-align: right; font-weight: 600; }
+        .traffic-note {
+            font-size: .78rem;
+            color: var(--text-secondary);
+            padding: 0.3rem 0.5rem;
+        }
         .sort-header {
             display: inline-flex;
             align-items: center;

@@ -61,7 +61,7 @@ func main() {
 		Addr:              addr,
 		Handler:           api.BasicAuth(accessLogMiddleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       0,
+		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -76,7 +76,7 @@ func main() {
 	logger.Info("netwatch listening on %s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server error: %v", err)
-		os.Exit(1)
+		return
 	}
 }
 

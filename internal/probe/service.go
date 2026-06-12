@@ -761,9 +761,23 @@ func (s *Service) waitForEgressLookup(ctx context.Context) EgressLookupResult {
 		s.egressMu.Lock()
 		for s.egressInflight && s.egressCache.GeneratedAt == "" {
 			s.egressCond.Wait()
+			select {
+			case <-ctx.Done():
+				s.egressMu.Unlock()
+				close(done)
+				return
+			default:
+			}
 		}
 		s.egressMu.Unlock()
 		close(done)
+	}()
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.egressCond.Broadcast()
+		case <-done:
+		}
 	}()
 	select {
 	case <-ctx.Done():
@@ -1140,10 +1154,10 @@ func (s *Service) TogglePersistentTrafficBridge(bridge string, enabled bool) Mut
 	if enabled && !found {
 		s.persistentTrafficBridges = append(s.persistentTrafficBridges, bridge)
 	}
-	settings := s.GetMutableSettings()
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()
 
+	settings := s.GetMutableSettings()
 	if err := saveMutableSettings(dataDir, settings); err != nil {
 		logger.Warn("saveMutableSettings: %v", err)
 	}

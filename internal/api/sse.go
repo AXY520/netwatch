@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+
+	"netwatch/internal/logger"
 )
 
 type basicAuthCreds struct {
@@ -101,6 +103,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			body, err := json.Marshal(summary)
 			if err != nil {
+				logger.Error("sse summary marshal: %v", err)
 				continue
 			}
 			if !writeEvent("summary", body) {
@@ -112,6 +115,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			body, err := json.Marshal(ev)
 			if err != nil {
+				logger.Error("sse notification marshal: %v", err)
 				continue
 			}
 			if !writeEvent("notification", body) {
@@ -123,6 +127,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			body, err := json.Marshal(snap)
 			if err != nil {
+				logger.Error("sse nic_realtime marshal: %v", err)
 				continue
 			}
 			if !writeEvent("nic_realtime", body) {
@@ -134,6 +139,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 			body, err := json.Marshal(devices)
 			if err != nil {
+				logger.Error("sse lan_devices marshal: %v", err)
 				continue
 			}
 			if !writeEvent("lan_devices", body) {

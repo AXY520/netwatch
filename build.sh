@@ -45,9 +45,9 @@ copy_binary_with_libs() {
       cp -L "${real_interp}" "${root}${interp}"
     fi
   fi
-  readelf -d "${bin}" 2>/dev/null | awk '/NEEDED/ {print $NF}' | sort -u | while read -r lib; do
+  readelf -d "${bin}" 2>/dev/null | sed -n 's/.*\[\(.*\)\].*/\1/p' | sort -u | while read -r lib; do
     [ -n "${lib}" ] || continue
-    found="$(find /usr/lib /lib -name "${lib}" -type f 2>/dev/null | head -1)"
+    found="$(find /usr/lib /usr/lib64 /lib /lib64 -name "${lib}" \( -type f -o -type l \) 2>/dev/null | head -1)"
     [ -n "${found}" ] || continue
     mkdir -p "${root}$(dirname "${found}")"
     cp -L "${found}" "${root}${found}"

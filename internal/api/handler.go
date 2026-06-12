@@ -245,7 +245,13 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 
 	mb := parseMB(r.URL.Query().Get("mb"), 8)
 	remaining := mb * 1024 * 1024
+	ctx := r.Context()
 	for remaining > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		n := len(downloadPayload)
 		if remaining < n {
 			n = remaining

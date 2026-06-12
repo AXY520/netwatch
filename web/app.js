@@ -48,7 +48,8 @@ function openWindow(name) {
 }
 
 function closeCurrentWindow() {
-    if (state.runningTest === 'broadband' || state.runningTest === 'transfer') {
+    if ((state.runningTest === 'broadband' && els.broadbandWindow.classList.contains('active')) ||
+        (state.runningTest === 'transfer' && els.transferWindow.classList.contains('active'))) {
         if (!confirm(i18n('confirm_cancel_test'))) return;
         if (state.runningTest === 'broadband' && window.__app.cancelBroadbandTest) {
             window.__app.cancelBroadbandTest(true);
@@ -85,6 +86,9 @@ function closeTraceWindow() {
     }
     NetwatchShared.unlockModalScroll();
 }
+
+window.__app.openTraceWindow = openTraceWindow;
+window.__app.closeTraceWindow = closeTraceWindow;
 
 function bindControls() {
     if (state.controlsBound) return;
@@ -285,6 +289,7 @@ function initWithRetry(maxRetries) {
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
         if (window.__app.loadSummary) return window.__app.loadSummary(false, true);
     }).then(function () {
+        initSSE();
         if (!state.summary || !state.summary.ready) {
             if (maxRetries > 0) {
                 setTimeout(function () { initWithRetry(maxRetries - 1); }, 2000);
@@ -296,8 +301,6 @@ function initWithRetry(maxRetries) {
         var btn = document.getElementById('app-traffic-refresh-btn');
         if (btn) btn.click();
     }
-
-    initSSE();
     if (window.__app.initTrace) window.__app.initTrace();
     if (window.__app.initEgressLookups) window.__app.initEgressLookups();
     if (window.__app.initAppTraffic) window.__app.initAppTraffic();

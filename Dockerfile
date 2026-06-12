@@ -8,7 +8,8 @@ COPY internal ./internal
 RUN go build -trimpath -ldflags="-s -w" -o /out/netwatch ./cmd/server
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata mtr \
+RUN apk add --no-cache ca-certificates tzdata mtr libcap \
+    && setcap cap_net_raw+ep /usr/bin/mtr-packet \
     && adduser -D -H -u 10001 netwatch
 WORKDIR /app
 COPY --from=build /out/netwatch /app/netwatch

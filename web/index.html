@@ -162,6 +162,7 @@
                     <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
                     <tbody></tbody>
                 </table>
+                <div id="app-traffic-note" class="traffic-note"></div>
             </section>
 
         </main>
@@ -446,7 +447,7 @@
             <div class="settings-row">
                 <span data-i18n="notify_abnormal_traffic">异常流量</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-abnormal-traffic"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-abnormal-traffic"><span data-i18n="toggle_on">on</span></label>
                     <select id="setting-abnormal-traffic-threshold-mbps">
                         <option value="50">50 Mbit/s</option>
                         <option value="100">100 Mbit/s</option>
@@ -458,15 +459,15 @@
             </div>
             <div class="settings-row">
                 <span data-i18n="notify_egress_change">出口 IP 变动</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-egress-change"><span>on</span></label>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-egress-change"><span data-i18n="toggle_on">on</span></label>
             </div>
             <div class="settings-row">
                 <span data-i18n="notify_connectivity_change">全球互联断开</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-connectivity-change"><span>on</span></label>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-connectivity-change"><span data-i18n="toggle_on">on</span></label>
             </div>
             <div class="settings-row">
                 <span data-i18n="notify_lan_device_change">局域网设备变动</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-lan-device-change"><span>on</span></label>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-notify-lan-device-change"><span data-i18n="toggle_on">on</span></label>
             </div>
             <div class="settings-row">
                 <span data-i18n="notification_devices">通知设备</span>
@@ -485,12 +486,12 @@
             <div class="settings-divider"></div>
             <div class="settings-row">
                 <span data-i18n="client_notification">客户端通知</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-client-notification-enabled"><span>on</span></label>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-client-notification-enabled"><span data-i18n="toggle_on">on</span></label>
             </div>
             <div class="settings-row">
                 <span data-i18n="bark_enabled">Bark 推送</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="setting-bark-enabled"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-bark-enabled"><span data-i18n="toggle_on">on</span></label>
                     <button id="test-bark-notification" class="btn-sm" data-i18n="test_bark_notification">测试</button>
                 </div>
             </div>
@@ -510,7 +511,7 @@
             <div class="settings-row">
                 <span>PushPlus</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="setting-pushplus-enabled"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-pushplus-enabled"><span data-i18n="toggle_on">on</span></label>
                     <button id="test-pushplus-notification" class="btn-sm" data-i18n="test_pushplus">测试</button>
                 </div>
             </div>
@@ -526,7 +527,7 @@
             <div class="settings-row">
                 <span data-i18n="dnd_settings">免打扰</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="setting-dnd-enabled"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-dnd-enabled"><span data-i18n="toggle_on">on</span></label>
                     <input type="time" id="setting-dnd-start" value="22:00" class="settings-input time-input">
                     <span class="settings-range-sep">-</span>
                     <input type="time" id="setting-dnd-end" value="08:00" class="settings-input time-input">
@@ -535,7 +536,7 @@
             <div class="settings-row">
                 <span data-i18n="scheduled_notify">定时通知</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="setting-scheduled-notify-enabled"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="setting-scheduled-notify-enabled"><span data-i18n="toggle_on">on</span></label>
                     <input type="time" id="setting-scheduled-notify-time" value="09:00" class="settings-input time-input">
                 </div>
             </div>
@@ -555,7 +556,7 @@
             <div class="settings-row">
                 <span data-i18n="enable_traffic_analysis">流量分析</span>
                 <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="ts-sampling-enabled"><span>on</span></label>
+                    <label class="settings-toggle inline"><input type="checkbox" id="ts-sampling-enabled"><span data-i18n="toggle_on">on</span></label>
                     <select id="ts-global-interval">
                         <option value="10" data-i18n="sec_10">10 秒</option>
                         <option value="30" data-i18n="sec_30">30 秒</option>
