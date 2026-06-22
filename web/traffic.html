@@ -3,9 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0b">
     <title data-i18n="traffic_page_title">NETWATCH // 应用流量分析</title>
     <script>
-        document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+        var savedTheme = localStorage.getItem('theme');
+        if (!savedTheme) {
+            savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', savedTheme);
     </script>
     <script src="/vendor/lazycat-sdk.js" defer></script>
     <script src="/i18n.js" defer></script>

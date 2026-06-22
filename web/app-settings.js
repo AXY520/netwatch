@@ -152,7 +152,8 @@ async function loadSettings() {
             dnd_end: settingsData.dnd_end || '08:00',
             scheduled_notify_enabled: !!settingsData.scheduled_notify_enabled,
             scheduled_notify_time: settingsData.scheduled_notify_time || '09:00',
-            notification_device_ids: settingsData.notification_device_ids || []
+            notification_device_ids: settingsData.notification_device_ids || [],
+            container_control_enabled: !!settingsData.container_control_enabled
         };
         applySettingsToForm();
         if (window.__app.updateTrafficAnalysisLink) window.__app.updateTrafficAnalysisLink();

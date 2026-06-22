@@ -1,11 +1,11 @@
 package: cloud.lazycat.app.netwatch
-version: 0.7.5
+version: 0.8.0
 name: Netwatch
 description: 网络诊断、出口观测、局域网设备发现、流量分析与通知面板
 author: axy
 license: MIT
 homepage: https://github.com/axy/netwatch
-min_os_version: 1.5.2
+min_os_version: 1.5.4
 locales:
   zh-CN:
     name: Netwatch
@@ -16,3 +16,4 @@ locales:
 permissions:
   required:
     - net.internet
+    - appvar.other.read

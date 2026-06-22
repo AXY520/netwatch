@@ -125,6 +125,56 @@ func isNetwatchApp(info dockerlzc.BridgeAppInfo) bool {
 	return strings.Contains(strings.ToLower(info.Project), "netwatch")
 }
 
+// whitelistedApps contains app IDs whose network cannot be blocked.
+var whitelistedAppIDs = map[string]bool{
+	"cloud.lazycat.app.photo":       true,
+	"cloud.lazycat.shell.files":     true,
+	"cloud.lazycat.shell.appstore":  true,
+	"cloud.lazycat.app.ai":          true,
+	"cloud.lazycat.developer.tools": true,
+	"cloud.lazycat.app.forward":     true,
+	"cloud.lazycat.totoro":          true,
+	"cloud.lazycat.lightos.entry":   true,
+}
+
+// excludedTrafficAppIDs are system apps excluded from traffic trend collection.
+var excludedTrafficAppIDs = map[string]bool{
+	"cloud.lazycat.shell.settings": true,
+	"cloud.lazycat.shell.backup":   true,
+	"cloud.lazycat.shell.appstore": true,
+	"cloud.lazycat.app.forward":    true,
+}
+
+// isWhitelistedApp checks if the given app ID or title matches the whitelist.
+func isWhitelistedApp(appID, title string) bool {
+	if whitelistedAppIDs[appID] {
+		return true
+	}
+	titleLower := strings.ToLower(title)
+	whitelistTitles := []string{"懒猫相册", "懒猫网盘", "懒猫商店", "ai pod", "懒猫开发者工具", "局域网端口转发"}
+	for _, t := range whitelistTitles {
+		if strings.Contains(titleLower, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
+}
+
+// isExcludedApp checks if the given app should be excluded from traffic trends.
+func isExcludedApp(appID, title string) bool {
+	if excludedTrafficAppIDs[appID] {
+		return true
+	}
+	titleLower := strings.ToLower(title)
+	excludedTitles := []string{"系统设置", "system settings", "备份和还原", "backup and restore", "app store"}
+	for _, t := range excludedTitles {
+		if strings.Contains(titleLower, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
+}
+
 func CollectAppTraffic() AppTrafficSnapshot {
 	snap := AppTrafficSnapshot{GeneratedAt: localTimestamp()}
 	entries, err := os.ReadDir(sysClassNetDir)
@@ -188,7 +238,7 @@ func CollectAppTraffic() AppTrafficSnapshot {
 			stats.SubnetV6 = addrs.v6
 		}
 		if info, ok := bridgeMap[name]; ok {
-			if isNetwatchApp(info) {
+			if isNetwatchApp(info) || isExcludedApp(info.AppID, info.Title) {
 				continue
 			}
 			stats.AppID = info.AppID

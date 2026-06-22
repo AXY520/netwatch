@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"netwatch/internal/logger"
 	"netwatch/internal/probe"
 )
 
@@ -63,6 +64,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
 	mux.HandleFunc("/api/v1/network/ipv6/renew-nics", h.handleIPv6RenewNICs)
 	mux.HandleFunc("/api/v1/network/ipv6/renew", h.handleIPv6Renew)
+	mux.HandleFunc("/api/v1/containers", h.handleContainers)
+	mux.HandleFunc("/api/v1/containers/block", h.handleContainerBlock)
+	mux.HandleFunc("/api/v1/containers/unblock", h.handleContainerUnblock)
 	mux.HandleFunc("/metrics", h.handleMetrics)
 }
 
@@ -531,4 +535,55 @@ func (h *Handler) handlePersistentTrafficBridges(w http.ResponseWriter, r *http.
 	}
 	settings := h.service.TogglePersistentTrafficBridge(body.Bridge, body.Enabled)
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) handleContainers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	resp := h.service.ListContainers(r.Context())
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Bridge string `json:"bridge"`
+		Mode   string `json:"mode"` // "internet" | "all"
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || body.Bridge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	body.Mode = "internet"
+	if err := h.service.BlockApp(r.Context(), body.Bridge, body.Mode); err != nil {
+		logger.Error("block app %s mode %s: %v", body.Bridge, body.Mode, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) handleContainerUnblock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var body struct {
+		Bridge string `json:"bridge"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || body.Bridge == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if err := h.service.UnblockApp(r.Context(), body.Bridge); err != nil {
+		logger.Error("unblock app %s: %v", body.Bridge, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

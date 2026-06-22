@@ -8,8 +8,7 @@ var i18n = window.__app.i18n;
 function initTheme() {
     if (state.themeInitialized) return;
     state.themeInitialized = true;
-    NetwatchShared.initTheme(state, els.themeToggle);
-}
+    NetwatchShared.initTheme(state, els.themeToggle);}
 
 function openWindow(name) {
     if (state.runningTest && state.runningTest !== name) return;
@@ -277,6 +276,9 @@ function initWithRetry(maxRetries) {
     ]).then(function () {
         window.__app.updateWindowControls();
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
+        if (state.appTrafficInitialized && window.__app.refreshAppTraffic) {
+            window.__app.refreshAppTraffic();
+        }
         if (window.__app.loadSummary) return window.__app.loadSummary(false, true);
     }).then(function () {
         if (!state.summary || !state.summary.ready) {
@@ -285,11 +287,6 @@ function initWithRetry(maxRetries) {
             }
         }
     });
-
-    if (state.appTrafficInitialized) {
-        var btn = document.getElementById('app-traffic-refresh-btn');
-        if (btn) btn.click();
-    }
 
     initSSE();
     if (window.__app.initTrace) window.__app.initTrace();
