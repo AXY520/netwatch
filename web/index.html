@@ -3,10 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0b">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' *;">
     <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
     <script>
-        document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+        var savedTheme = localStorage.getItem('theme');
+        if (!savedTheme) {
+            savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', savedTheme);
     </script>
     <script src="/i18n.js" defer></script>
     <script src="/vendor/lazycat-sdk.js" defer></script>
@@ -158,10 +163,10 @@
                         <button id="app-traffic-refresh-btn" data-i18n="refresh_btn">刷新</button>
                     </div>
                 </div>
-                <table class="data-table app-traffic-table-fixed" id="app-traffic-table">
+                <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
                     <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
                     <tbody></tbody>
-                </table>
+                </table></div>
                 <div id="app-traffic-note" class="traffic-note"></div>
             </section>
 
@@ -571,12 +576,18 @@
                 <span data-i18n="per_app_sampling">单独应用采样</span>
             </div>
             <div id="ts-per-app-list" class="ts-per-app-list"></div>
+            <div class="settings-divider"></div>
+            <div class="settings-row">
+                <span data-i18n="container_control">容器网络控制</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="ts-container-control-enabled"><span data-i18n="toggle_on">on</span></label>
+            </div>
         </div>
     </section>
 
     <script src="/speedtest.js" defer></script>
     <script src="/shared.js" defer></script>
     <script src="/app-core.js" defer></script>
+    <script src="/app-containers.js" defer></script>
     <script src="/app-network.js" defer></script>
     <script src="/app-speedtest.js" defer></script>
     <script src="/app-settings.js" defer></script>

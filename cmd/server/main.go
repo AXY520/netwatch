@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,8 @@ import (
 
 func main() {
 	logger.Init()
+
+	mime.AddExtensionType(".ttf", "font/ttf")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -132,6 +135,8 @@ func noStoreStatic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ext := strings.ToLower(path.Ext(r.URL.Path))
 		switch ext {
+		case ".ttf", ".woff2", ".woff", ".otf", ".eot":
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		case ".html", ".js", ".css", ".ico", ".json", "":
 			w.Header().Set("Cache-Control", "no-store, max-age=0")
 			w.Header().Set("Pragma", "no-cache")

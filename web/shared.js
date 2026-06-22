@@ -131,15 +131,22 @@ window.NetwatchShared = (function () {
     }
 
     function initTheme(state, themeToggleEl) {
-        var theme = localStorage.getItem('theme') || 'dark';
+        var theme = localStorage.getItem('theme');
+        if (!theme) {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
         if (state) state.theme = theme;
         document.documentElement.setAttribute('data-theme', theme);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = theme === 'dark' ? '#0a0a0b' : '#f0f2f5';
         if (themeToggleEl) {
             themeToggleEl.addEventListener('click', function () {
                 var newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', newTheme);
                 localStorage.setItem('theme', newTheme);
                 if (state) state.theme = newTheme;
+                var meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) meta.content = newTheme === 'dark' ? '#0a0a0b' : '#f0f2f5';
             });
         }
     }

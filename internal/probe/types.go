@@ -129,8 +129,37 @@ type MutableSettings struct {
 	// Traffic chart settings
 	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
 
+	// Container network control enabled (show block buttons in traffic view)
+	ContainerControlEnabled bool `json:"container_control_enabled"`
+
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
+
+	// Container network block state (bridge → mode)
+	BlockedBridges map[string]string `json:"blocked_bridges,omitempty"` // bridge name → "internet" | "all"
+}
+
+// ContainerRuntimeInfo is the frontend-facing container info.
+type ContainerRuntimeInfo struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Image string `json:"image,omitempty"`
+	State string `json:"state"`
+}
+
+// AppContainerGroup groups containers by app (bridge).
+type AppContainerGroup struct {
+	Bridge     string                 `json:"bridge"`
+	AppID      string                 `json:"app_id,omitempty"`
+	AppTitle   string                 `json:"app_title,omitempty"`
+	Project    string                 `json:"project,omitempty"`
+	BlockMode  string                 `json:"block_mode"` // "" | "internet" | "all"
+	Containers []ContainerRuntimeInfo `json:"containers"`
+}
+
+// AppContainersResponse is the top-level response for GET /api/v1/containers.
+type AppContainersResponse struct {
+	Applications []AppContainerGroup `json:"applications"`
 }
 
 type RegisteredDevice struct {
@@ -228,12 +257,12 @@ type IPReachabilityProbe struct {
 }
 
 type DomesticIPEntry struct {
-	IP            string              `json:"ip,omitempty"`
-	Location      string              `json:"location,omitempty"`
-	ISP           string              `json:"isp,omitempty"`
-	HasPublicPath bool                `json:"has_public_path"`
-	Source        string              `json:"source,omitempty"`
-	Error         string              `json:"error,omitempty"`
+	IP            string `json:"ip,omitempty"`
+	Location      string `json:"location,omitempty"`
+	ISP           string `json:"isp,omitempty"`
+	HasPublicPath bool   `json:"has_public_path"`
+	Source        string `json:"source,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 type DomesticIPSnapshot struct {
@@ -246,13 +275,13 @@ type DomesticIPSnapshot struct {
 // 帮助区分"有地址"与"真能用"。Summary 取值:
 // fully_usable / outbound_only / address_only / no_global。
 type IPv6Availability struct {
-	HasGlobalAddress  bool                `json:"has_global_address"`
-	GlobalAddress     string              `json:"global_address,omitempty"`
-	OutboundReachable bool                `json:"outbound_reachable"`
-	OutboundLatencyMS int64               `json:"outbound_latency_ms,omitempty"`
-	OutboundTarget    string              `json:"outbound_target,omitempty"`
-	HTTPSReachable    bool                `json:"https_reachable"`
-	DNSResolvable     bool                `json:"dns_resolvable"`
+	HasGlobalAddress  bool   `json:"has_global_address"`
+	GlobalAddress     string `json:"global_address,omitempty"`
+	OutboundReachable bool   `json:"outbound_reachable"`
+	OutboundLatencyMS int64  `json:"outbound_latency_ms,omitempty"`
+	OutboundTarget    string `json:"outbound_target,omitempty"`
+	HTTPSReachable    bool   `json:"https_reachable"`
+	DNSResolvable     bool   `json:"dns_resolvable"`
 	Summary           string `json:"summary"`
 	CheckedAt         string `json:"checked_at,omitempty"`
 }

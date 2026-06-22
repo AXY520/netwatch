@@ -404,6 +404,17 @@
     }
 
     function renderAppList() {
+        const samplingEnabled = state.settings.traffic_sampling_enabled !== false;
+        const sidebar = document.querySelector('.traffic-sidebar');
+        if (sidebar) {
+            sidebar.classList.toggle('sampling-disabled', !samplingEnabled);
+        }
+        // When sampling is disabled, hide the app list section
+        if (!samplingEnabled) {
+            els.appList.innerHTML = `<div class="placeholder">${i18n('traffic_sampling_disabled')}</div>`;
+            els.listStatus.textContent = '';
+            return;
+        }
         const list = filteredApps();
         els.listStatus.textContent = state.snapshot?.generated_at || '';
         if (!state.selectedBridge && list.length > 0) {

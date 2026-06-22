@@ -1,8 +1,3 @@
-@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/Inter-Regular.ttf') format('truetype'); }
-@font-face { font-family: 'Inter'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/Inter-Medium.ttf') format('truetype'); }
-@font-face { font-family: 'Inter'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/Inter-SemiBold.ttf') format('truetype'); }
-@font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/Inter-Bold.ttf') format('truetype'); }
-
 :root {
             /* Dark Theme (Default) */
             --bg-color: #0a0a0b;
@@ -15,11 +10,13 @@
             --accent-green: #00ff9d;
             --accent-red: #ff4d4d;
             --accent-amber: #ffb347;
+            --accent-orange: #ffb347;
+            --danger: #ff4d4d;
             --glass-bg: rgba(255, 255, 255, 0.02);
             --backdrop-bg: rgba(10, 10, 11, 0.72);
             --input-bg: #151518;
             
-            --font-ui: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            --font-ui: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
             --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
             --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
@@ -35,6 +32,8 @@
             --accent-green: #22a06b;
             --accent-red: #d32f2f;
             --accent-amber: #e67e22;
+            --accent-orange: #e67e22;
+            --danger: #d32f2f;
             --glass-bg: rgba(0, 0, 0, 0.02);
             --backdrop-bg: rgba(240, 242, 245, 0.85);
             --input-bg: #f9fafb;
@@ -881,7 +880,7 @@
             text-overflow: ellipsis;
             padding-right: 0.5rem;
         }
-        .app-traffic-table-fixed .col-app    { width: 52%; }
+        .app-traffic-table-fixed .col-app    { width: 46%; }
         .app-traffic-table-fixed .col-rx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-tx     { width: 16%; text-align: right; }
         .app-traffic-table-fixed .col-total  { width: 16%; text-align: right; font-weight: 600; }
@@ -1221,6 +1220,55 @@
             line-height: 1.5;
             font-family: monospace;
             width: 100%;
+        }
+
+        /* Container network control (inline buttons in app traffic table) */
+        .ctr-inline-btn {
+            font-size: 0.65rem;
+            padding: 0.08rem 0.3rem;
+            border-radius: 3px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            cursor: pointer;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .ctr-inline-btn:hover {
+            opacity: 0.85;
+        }
+        .ctr-inline-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .ctr-btn-block-net {
+            color: var(--accent-orange) !important;
+            border-color: var(--accent-orange) !important;
+        }
+        .ctr-btn-block-net:hover {
+            background: var(--accent-orange) !important;
+            color: #000 !important;
+        }
+        .ctr-btn-unblock {
+            color: var(--accent-cyan) !important;
+            border-color: var(--accent-cyan) !important;
+        }
+        .ctr-btn-unblock:hover {
+            background: var(--accent-cyan) !important;
+            color: #000 !important;
+        }
+        /* Blocked state: filled background */
+        tr[data-block="internet"] .ctr-btn-unblock {
+            background: var(--accent-cyan);
+            color: #000 !important;
+        }
+        tr[data-block="all"] .ctr-btn-unblock {
+            background: var(--danger);
+            color: #fff !important;
+        }
+        .ctr-inline-btn + .ctr-inline-btn {
+            margin-left: 3px;
         }
 
         /* Notification device dropdown */
@@ -1726,6 +1774,12 @@
             .app-traffic-table-fixed td::before {
                 content: none !important;
             }
+            .table-scroll {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                margin: 0 -0.25rem;
+                padding: 0 0.25rem;
+            }
             .data-table tr {
                 border: 1px solid var(--border-color);
                 border-radius: 10px;
@@ -1906,6 +1960,11 @@
             scrollbar-width: none;
         }
         .traffic-app-list::-webkit-scrollbar {
+            display: none;
+        }
+        .traffic-sidebar.sampling-disabled .card-title:first-child,
+        .traffic-sidebar.sampling-disabled .traffic-toolbar,
+        .traffic-sidebar.sampling-disabled .traffic-app-list {
             display: none;
         }
         .traffic-side-panel {

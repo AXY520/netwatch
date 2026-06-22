@@ -64,7 +64,7 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		} else {
 			sdkStatus = ns
 			sdkOK = true
-			logger.Info("sdk ok: hasInternet=%v wired=%s wireless=%s connectivity=%s wifi=%s",
+			logger.Debug("sdk ok: hasInternet=%v wired=%s wireless=%s connectivity=%s wifi=%s",
 				ns.HasInternet, ns.WiredStatus, ns.WirelessStatus, ns.Connectivity, ns.Wifi.SSID)
 		}
 	} else {

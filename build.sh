@@ -45,14 +45,84 @@ copy_binary_with_libs() {
       cp -L "${real_interp}" "${root}${interp}"
     fi
   fi
-  readelf -d "${bin}" 2>/dev/null | sed -n 's/.*\[\(.*\)\].*/\1/p' | sort -u | while read -r lib; do
-    [ -n "${lib}" ] || continue
-    found="$(find /usr/lib /usr/lib64 /lib /lib64 -name "${lib}" \( -type f -o -type l \) 2>/dev/null | head -1)"
-    [ -n "${found}" ] || continue
-    mkdir -p "${root}$(dirname "${found}")"
-    cp -L "${found}" "${root}${found}"
+  seen="/"
+  queue="${bin}"
+  while [ -n "${queue}" ]; do
+    next=""
+    for b in ${queue}; do
+      libs="$(readelf -d "${b}" 2>/dev/null | sed -n 's/.*\[\(.*\)\].*/\1/p' | sort -u)"
+      for lib in ${libs}; do
+        [ -n "${lib}" ] || continue
+        case "${seen}" in */"${lib}"/*) continue;; esac
+        found="$(find /usr/lib /usr/lib64 /lib /lib64 -name "${lib}" \( -type f -o -type l \) 2>/dev/null | head -1)"
+        [ -n "${found}" ] || continue
+        mkdir -p "${root}$(dirname "${found}")"
+        cp -L "${found}" "${root}${found}"
+        seen="${seen}${lib}/"
+        next="${next} ${found}"
+      done
+    done
+    queue="${next}"
   done
 }
 
 copy_binary_with_libs "${MTR_BIN}" dist/rootfs
 copy_binary_with_libs "${MTR_PACKET_BIN}" dist/rootfs
+
+NSENTER_BIN="$(command -v nsenter || true)"
+if [ -n "${NSENTER_BIN}" ]; then
+  copy_binary_with_libs "${NSENTER_BIN}" dist/rootfs
+fi
+
+IP_BIN="$(command -v ip || true)"
+if [ -z "${IP_BIN}" ] || [ ! -x "${IP_BIN}" ]; then
+  for p in /usr/sbin/ip /sbin/ip /usr/bin/ip; do
+    if [ -x "$p" ]; then
+      IP_BIN="$p"
+      break
+    fi
+  done
+fi
+if [ -n "${IP_BIN}" ]; then
+  copy_binary_with_libs "${IP_BIN}" dist/rootfs
+fi
+
+IPTABLES_BIN="$(command -v iptables || true)"
+if [ -z "${IPTABLES_BIN}" ] || [ ! -x "${IPTABLES_BIN}" ]; then
+  for p in /usr/sbin/iptables /sbin/iptables /usr/bin/iptables; do
+    if [ -x "$p" ]; then
+      IPTABLES_BIN="$p"
+      break
+    fi
+  done
+fi
+if [ -n "${IPTABLES_BIN}" ]; then
+  copy_binary_with_libs "${IPTABLES_BIN}" dist/rootfs
+fi
+
+IP6TABLES_BIN="$(command -v ip6tables || true)"
+if [ -z "${IP6TABLES_BIN}" ] || [ ! -x "${IP6TABLES_BIN}" ]; then
+  for p in /usr/sbin/ip6tables /sbin/ip6tables /usr/bin/ip6tables; do
+    if [ -x "$p" ]; then
+      IP6TABLES_BIN="$p"
+      break
+    fi
+  done
+fi
+if [ -n "${IP6TABLES_BIN}" ]; then
+  copy_binary_with_libs "${IP6TABLES_BIN}" dist/rootfs
+fi
+
+XTABLES_DIR=""
+for d in /usr/lib/x86_64-linux-gnu/xtables /usr/lib/xtables /usr/lib64/xtables; do
+  if [ -d "$d" ]; then
+    XTABLES_DIR="$d"
+    break
+  fi
+done
+if [ -n "${XTABLES_DIR}" ]; then
+  mkdir -p "dist/rootfs${XTABLES_DIR}"
+  for mod in "${XTABLES_DIR}"/libxt_*.so; do
+    [ -f "$mod" ] && cp -L "$mod" "dist/rootfs${XTABLES_DIR}/" && chmod 0755 "dist/rootfs${XTABLES_DIR}/$(basename "$mod")"
+  done
+fi

@@ -389,6 +389,17 @@ function initAppTraffic() {
     };
     var renderTraffic = function (data) {
         latestTrafficData = data;
+        var ctrlEnabled = !!(state.settings && state.settings.container_control_enabled);
+        var containerData = null;
+        if (ctrlEnabled && window.__app.lastContainerData) {
+            containerData = window.__app.lastContainerData;
+        }
+        var containerMap = {};
+        if (containerData && containerData.applications) {
+            containerData.applications.forEach(function (app) {
+                containerMap[app.bridge] = app.block_mode || '';
+            });
+        }
         var list = Array.isArray(data.bridges) ? data.bridges.filter(function (b) { return !NetwatchShared.isNetwatchBridge(b); }) : [];
         updateSortHeaders();
         if (list.length === 0) {
@@ -399,7 +410,6 @@ function initAppTraffic() {
             list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
             tbody.innerHTML = list.map(function (b) {
                 var total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
-                var title = NetwatchShared.escapeHtml(b.app_title || window.__app.shortAppName(b.app_id) || b.bridge);
                 var iconHtml = b.icon ? '<img class="app-icon" src="' + NetwatchShared.escapeHtml(b.icon) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '';
                 var statusLine = b.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(b.status_text) + '</div>' : '';
                 var nameHtml;
@@ -412,7 +422,21 @@ function initAppTraffic() {
                 } else {
                     nameHtml = '<small style="color:var(--text-muted)">' + NetwatchShared.escapeHtml(b.bridge) + '</small>';
                 }
-                return '<tr><td class="col-app"><div class="app-cell">' + iconHtml + '<div class="app-cell-info">' + nameHtml + '</div></div></td><td class="col-rx">' + NetwatchShared.formatBytes(b.rx_bytes || 0) + '</td><td class="col-tx">' + NetwatchShared.formatBytes(b.tx_bytes || 0) + '</td><td class="col-total">' + NetwatchShared.formatBytes(total) + '</td></tr>';
+                var blockMode = containerMap[b.bridge] || '';
+                var blockBtns = '';
+                if (ctrlEnabled && containerMap.hasOwnProperty(b.bridge)) {
+                    if (blockMode) {
+                        blockBtns = '<button class="ctr-inline-btn ctr-btn-unblock" data-action="unblock" data-bridge="' + b.bridge + '">' + i18n('unblock_btn') + '</button>';
+                    } else {
+                        blockBtns = '<button class="ctr-inline-btn ctr-btn-block-net" data-action="block" data-mode="internet" data-bridge="' + b.bridge + '" title="' + i18n('block_internet_title') + '">' + i18n('block_internet_btn') + '</button>';
+                    }
+                }
+                return '<tr data-bridge="' + b.bridge + '" data-block="' + blockMode + '">' +
+                    '<td class="col-app"><div class="app-cell">' + iconHtml + '<div class="app-cell-info">' + nameHtml + '</div></div>' + blockBtns + '</td>' +
+                    '<td class="col-rx">' + NetwatchShared.formatBytes(b.rx_bytes || 0) + '</td>' +
+                    '<td class="col-tx">' + NetwatchShared.formatBytes(b.tx_bytes || 0) + '</td>' +
+                    '<td class="col-total">' + NetwatchShared.formatBytes(total) + '</td>' +
+                '</tr>';
             }).join('');
         }
         if (statusEl) statusEl.textContent = data.generated_at ? i18n('sampled_at') + ' ' + data.generated_at : '';
@@ -422,6 +446,10 @@ function initAppTraffic() {
         if (btn) btn.disabled = true;
         if (statusEl) statusEl.textContent = i18n('sampling') + '...';
         try {
+            var ctrlEnabled = !!(state.settings && state.settings.container_control_enabled);
+            if (ctrlEnabled && window.__app.fetchContainers) {
+                await window.__app.fetchContainers().catch(function () {});
+            }
             var resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
             renderTraffic(await resp.json());
         } catch (e) {
@@ -430,6 +458,15 @@ function initAppTraffic() {
             if (btn) btn.disabled = false;
         }
     };
+    window.__app.refreshAppTraffic = load;
+
+    // Event delegation for container action buttons
+    document.addEventListener('click', function (e) {
+        if (window.__app.handleContainerAction) {
+            window.__app.handleContainerAction(e);
+        }
+    });
+
     sortButtons.forEach(function (button) {
         button.addEventListener('click', function () {
             var key = button.dataset.sortKey || 'total';
@@ -458,6 +495,7 @@ function initAppTraffic() {
             el('ts-global-interval').value = String(state.settings.traffic_sampling_interval_sec || 60);
             if (window.syncCustomSelect) window.syncCustomSelect(el('ts-global-interval'));
         }
+        if (el('ts-container-control-enabled')) el('ts-container-control-enabled').checked = !!state.settings.container_control_enabled;
         var perAppList = el('ts-per-app-list');
         if (perAppList && latestTrafficData && latestTrafficData.bridges) {
             var perApp = state.settings.per_app_sampling_interval || {};
@@ -509,6 +547,7 @@ function initAppTraffic() {
             traffic_sampling_interval_sec: parseInt(el('ts-global-interval').value || '60', 10) || 60,
             per_app_sampling_interval: perApp,
             persistent_traffic_bridges: state.settings.persistent_traffic_bridges || [],
+            container_control_enabled: !!el('ts-container-control-enabled').checked,
             background_monitor_enabled: state.settings.background_monitor_enabled,
             background_monitor_interval_sec: state.settings.background_monitor_interval_sec,
             notifications_enabled: state.settings.notifications_enabled,
