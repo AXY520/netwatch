@@ -1,6 +1,6 @@
 ---
 name: netwatch-observer
-description: Check network connectivity, egress IP, NAT type, interface status, LAN device discovery, per-app traffic stats, notifications, traceroute, and speed tests.
+description: Check network connectivity, egress IP, NAT type, interface status, host port usage, LAN device discovery, per-app traffic stats, notifications, traceroute, and speed tests.
 ---
 
 ## When to use this skill
@@ -11,6 +11,7 @@ Call Netwatch when the user's request involves any of these scenarios:
 - **Website reachability**: "Can I reach example.com?", "What's the latency to that site?", "Check if domestic/global sites are accessible"
 - **Egress IP / proxy status**: "What's my IP?", "Am I going through a proxy?", "Where is my exit point?", "What's my NAT type?"
 - **Interface & link status**: "Is the wired connection up?", "How's the Wi-Fi signal?", "What's the link speed?"
+- **Host ports**: "Which process/app is using this port?", "What ports are occupied on the host?", "Is port 8080 taken?"
 - **LAN devices**: "What devices are on the network?", "Is device X online?", "When was device Y last seen?"
 - **Per-app traffic**: "Which app uses the most bandwidth?", "How much has app X uploaded/downloaded?", "Traffic ranking"
 - **Traceroute**: "What's the route to this host?", "Why is it slow to reach X?", "Run a traceroute"
@@ -67,6 +68,14 @@ View egress IPv4/IPv6, geolocation, ISP, and NAT type.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/network/realtime` | Per-interface realtime throughput (bytes/sec) |
+
+### Host port usage
+
+Show occupied host ports and who owns them. TCP entries are listening sockets; UDP entries are locally bound sockets.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/network/ports` | Host port usage with protocol, state, listen address, process metadata, and Lazycat app/container ownership when available |
 
 ### Per-app traffic
 
@@ -152,7 +161,7 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 
 | Path | Description |
 |------|-------------|
-| `/` | Main dashboard: connectivity, egress IP, NIC stats, app traffic |
+| `/` | Main dashboard: connectivity, egress IP, NIC stats, app traffic, host port usage |
 | `/lan.html` | LAN device discovery and management |
 | `/traffic.html` | Detailed per-app traffic analysis with charts |
 
@@ -164,6 +173,8 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 - **Connectivity reporting**: distinguish domestic vs. global targets; quote observed values, not inferences.
 - **Egress IP reporting**: use the returned IP and geolocation directly; do not infer from interface names.
 - **App traffic reporting**: highlight the largest consumers by total bytes; note the sort basis (upload/download/total).
+- **Host port reporting**: use `/api/v1/network/ports`; report `port`, `protocol`, `state`, and owner as either host process or Lazycat app display name. Do not expose full app IDs unless the user asks for diagnostic detail.
+- **Host port implementation**: backend collection is in `internal/probe/ports.go` with a short cache; the dashboard UI lives in `web/app-host-ports.js` and intentionally keeps the default list compact.
 - **Container network control**: per-app internet blocking is available via `/api/v1/containers/*`. Blocking is bridge-level — all containers in an app share one bridge. Whitelisted apps (system services like App Store, 相册, 网盘, AI Pod, 开发者工具, 端口转发, 懒猫影视, 轻量系统入口) cannot be blocked. The "容器网络控制" toggle in traffic settings must be enabled for the UI buttons to appear.
 - **LAN device management**: devices are auto-discovered via ARP scan; users can pin, ignore, or add notes to devices.
 - **Traceroute is async**: `GET /diagnostics/trace?host=<host>` starts a background task; use `/diagnostics/trace/task` to poll intermediate progress.

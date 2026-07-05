@@ -80,6 +80,172 @@ window.NetwatchShared = (function () {
         return promise;
     }
 
+    function getLazycatAppCommon() {
+        var sdk = window.LazycatSDK || {};
+        var nativeAppCommon = window.AppCommon ||
+            sdk.AppCommon ||
+            (sdk.extentions && sdk.extentions.AppCommon) ||
+            (sdk.extensions && sdk.extensions.AppCommon) ||
+            null;
+        if (nativeAppCommon) return nativeAppCommon;
+        return createLazycatAppCommonBridge();
+    }
+
+    function isLazycatAndroidShell() {
+        return String(navigator.userAgent || '').indexOf('Lazycat_101') !== -1;
+    }
+
+    function isLazycatIosShell() {
+        return String(navigator.userAgent || '').indexOf('Lazycat_103') !== -1;
+    }
+
+    function ensureIosCallbackQueue() {
+        if (!window.lzcAppSdk_responseCallBackFuncDict) window.lzcAppSdk_responseCallBackFuncDict = {};
+        if (!window.lzcAppSdk_responseCallBackFuncUniqueID) window.lzcAppSdk_responseCallBackFuncUniqueID = 1;
+        if (window.lzcAppSdk_sendCallBackFunc) return;
+        window.lzcAppSdk_sendCallBackFunc = function (funcUniqueID, responseData) {
+            var callback = window.lzcAppSdk_responseCallBackFuncDict && window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID];
+            if (!callback) return;
+            callback(responseData);
+            delete window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID];
+        };
+    }
+
+    function callIosHandler(name, args) {
+        args = args || [];
+        var handler = window.webkit &&
+            window.webkit.messageHandlers &&
+            window.webkit.messageHandlers[name];
+        if (!handler || typeof handler.postMessage !== 'function') return Promise.resolve(undefined);
+        ensureIosCallbackQueue();
+        return new Promise(function (resolve) {
+            var settled = false;
+            var funcUniqueID = 'lzc_' + (window.lzcAppSdk_responseCallBackFuncUniqueID++) + '_' + Date.now();
+            window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID] = function (data) {
+                settled = true;
+                resolve(data);
+            };
+            try {
+                var ret = handler.postMessage({ funcUniqueID: funcUniqueID, params: args });
+                if (ret !== undefined) {
+                    settled = true;
+                    delete window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID];
+                    resolve(ret);
+                    return;
+                }
+            } catch (err) {
+                settled = true;
+                delete window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID];
+                resolve(undefined);
+                return;
+            }
+            setTimeout(function () {
+                if (settled) return;
+                delete window.lzcAppSdk_responseCallBackFuncDict[funcUniqueID];
+                resolve(undefined);
+            }, 1200);
+        });
+    }
+
+    function hasIosHandler(name) {
+        return !!(window.webkit &&
+            window.webkit.messageHandlers &&
+            window.webkit.messageHandlers[name] &&
+            typeof window.webkit.messageHandlers[name].postMessage === 'function');
+    }
+
+    function createLazycatAppCommonBridge() {
+        if (isLazycatAndroidShell() && window.android && typeof window.android.SetFullScreen === 'function') {
+            return {
+                SetFullScreen: function () {
+                    if (typeof window.android.SetFullScreen === 'function') window.android.SetFullScreen();
+                    return Promise.resolve();
+                },
+                CancelFullScreen: function () {
+                    if (typeof window.android.CancelFullScreen === 'function') window.android.CancelFullScreen();
+                    return Promise.resolve();
+                },
+                GetFullScreenStatus: function () {
+                    if (typeof window.android.GetFullScreenStatus !== 'function') return Promise.resolve(false);
+                    return Promise.resolve(window.android.GetFullScreenStatus()).then(Boolean);
+                }
+            };
+        }
+        if (isLazycatIosShell() && hasIosHandler('SetFullScreen')) {
+            return {
+                SetFullScreen: function () { return callIosHandler('SetFullScreen'); },
+                CancelFullScreen: function () { return callIosHandler('CancelFullScreen'); },
+                GetFullScreenStatus: function () {
+                    return callIosHandler('GetFullScreenStatus').then(function (value) {
+                        return value === true || value === 'true' || value === 1 || value === '1';
+                    });
+                }
+            };
+        }
+        return null;
+    }
+
+    function requestLazycatFullscreen(force) {
+        var isMobileShell = isLazycatAndroidShell() || isLazycatIosShell();
+        if (!isMobileShell) return true;
+        var appCommon = getLazycatAppCommon();
+        if (!appCommon || typeof appCommon.SetFullScreen !== 'function') return false;
+        var now = Date.now();
+        if (!force && requestLazycatFullscreen._lastAt && now - requestLazycatFullscreen._lastAt < 800) return true;
+        requestLazycatFullscreen._lastAt = now;
+        Promise.resolve()
+            .then(function () { return appCommon.SetFullScreen(); })
+            .catch(function (err) {
+                console.debug('lazycat fullscreen unavailable', err);
+            });
+        return true;
+    }
+
+    function scheduleLazycatFullscreenRetry(attempt) {
+        clearTimeout(scheduleLazycatFullscreenRetry._timer);
+        if (attempt >= 12) return;
+        scheduleLazycatFullscreenRetry._timer = setTimeout(function () {
+            initLazycatFullscreen(attempt + 1);
+        }, 250);
+    }
+
+    function canRequestLazycatFullscreen() {
+        return isLazycatAndroidShell() || isLazycatIosShell();
+    }
+
+    function bindLazycatFullscreenWatchers() {
+        if (bindLazycatFullscreenWatchers._done) return;
+        bindLazycatFullscreenWatchers._done = true;
+        var requestNow = function () {
+            initLazycatFullscreen(0);
+        };
+        var requestOnInput = function () {
+            if (canRequestLazycatFullscreen()) requestLazycatFullscreen(true);
+        };
+        window.addEventListener('pageshow', requestNow);
+        window.addEventListener('focus', requestNow);
+        window.addEventListener('resize', requestNow);
+        window.addEventListener('orientationchange', requestNow);
+        document.addEventListener('visibilitychange', function () {
+            requestNow();
+        });
+        document.addEventListener('pointerdown', requestOnInput, { passive: true });
+        document.addEventListener('touchstart', requestOnInput, { passive: true });
+        bindLazycatFullscreenWatchers._timer = setInterval(function () {
+            if (canRequestLazycatFullscreen()) requestLazycatFullscreen(false);
+        }, 2000);
+    }
+
+    function initLazycatFullscreen(attempt) {
+        attempt = attempt || 0;
+        if (!isLazycatAndroidShell() && !isLazycatIosShell()) return;
+        bindLazycatFullscreenWatchers();
+        if (!canRequestLazycatFullscreen()) return;
+        if (!requestLazycatFullscreen(attempt === 0)) {
+            scheduleLazycatFullscreenRetry(attempt);
+        }
+    }
+
     async function notifySelectedDevices(event, state) {
         if (state && state.notificationUnsupported) return;
         var selectedIDs = state && state.settings && state.settings.notification_device_ids;
@@ -160,6 +326,8 @@ window.NetwatchShared = (function () {
         isNotificationUnsupportedError: isNotificationUnsupportedError,
         markNotificationSeen: markNotificationSeen,
         getLazycatGateway: getLazycatGateway,
+        getLazycatAppCommon: getLazycatAppCommon,
+        initLazycatFullscreen: initLazycatFullscreen,
         notifySelectedDevices: notifySelectedDevices,
         handleNotificationEvent: handleNotificationEvent,
         isNetwatchBridge: isNetwatchBridge,

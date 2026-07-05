@@ -162,6 +162,42 @@ type AppContainersResponse struct {
 	Applications []AppContainerGroup `json:"applications"`
 }
 
+type HostPortProcess struct {
+	PID     int    `json:"pid,omitempty"`
+	PPID    int    `json:"ppid,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Cmdline string `json:"cmdline,omitempty"`
+	User    string `json:"user,omitempty"`
+}
+
+type HostPortContainer struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Image       string `json:"image,omitempty"`
+	AppID       string `json:"app_id,omitempty"`
+	AppTitle    string `json:"app_title,omitempty"`
+	Project     string `json:"project,omitempty"`
+	NetworkMode string `json:"network_mode,omitempty"`
+	PID         int    `json:"pid,omitempty"`
+}
+
+type HostPortEntry struct {
+	Protocol  string             `json:"protocol"`
+	IPVersion string             `json:"ip_version"`
+	Address   string             `json:"address"`
+	Port      int                `json:"port"`
+	State     string             `json:"state"`
+	Inode     string             `json:"inode,omitempty"`
+	Process   HostPortProcess    `json:"process"`
+	Container *HostPortContainer `json:"container,omitempty"`
+}
+
+type HostPortsSnapshot struct {
+	GeneratedAt string          `json:"generated_at"`
+	Ports       []HostPortEntry `json:"ports"`
+	Note        string          `json:"note,omitempty"`
+}
+
 type RegisteredDevice struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`

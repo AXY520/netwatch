@@ -423,7 +423,7 @@
             if (dev.ipv6?.length) {
                 const shown = dev.ipv6.slice(0, 2);
                 shown.forEach(v6 => netRows.push(`<div class="lan-net-row"><span class="lan-net-label">IPv6</span><span class="lan-net-value mono">${escapeHtml(v6)}</span></div>`));
-                if (dev.ipv6.length > 2) netRows.push(`<div class="lan-net-row"><span class="lan-net-label"></span><span class="lan-net-value">+${dev.ipv6.length - 2} more</span></div>`);
+                if (dev.ipv6.length > 2) netRows.push(`<div class="lan-net-row"><span class="lan-net-label"></span><span class="lan-net-value number">+${dev.ipv6.length - 2} more</span></div>`);
             }
             netRows.push(`<div class="lan-net-row"><span class="lan-net-label">MAC</span><span class="lan-net-value mono">${escapeHtml(dev.mac || '--')}</span></div>`);
             if (dev.interface) netRows.push(`<div class="lan-net-row"><span class="lan-net-label">IF</span><span class="lan-net-value">${escapeHtml(dev.interface)}</span></div>`);
@@ -442,7 +442,7 @@
                             ${netRows.join('')}
                         </div>
                     </td>
-                    <td><span class="mono">${escapeHtml(dev.last_seen || '--')}</span></td>
+                    <td><span class="number">${escapeHtml(dev.last_seen || '--')}</span></td>
                     <td>
                         <div class="lan-action-group">
                             <button class="lan-action danger" data-action="ignore" data-mac="${escapeHtml(dev.mac || '')}" title="从设备列表隐藏">忽略</button>
@@ -498,10 +498,13 @@
     }
 
     async function load(scan = false) {
-        const originalRefreshText = els.refreshBtn?.textContent || '扫描';
+        const originalTitle = els.refreshBtn?.getAttribute('title') || i18n('scan_btn');
+        const originalAria = els.refreshBtn?.getAttribute('aria-label') || i18n('scan_btn');
         if (els.refreshBtn) {
             els.refreshBtn.disabled = true;
-            els.refreshBtn.textContent = scan ? '扫描中' : '加载中';
+            const busyLabel = scan ? i18n('scanning') : i18n('loading');
+            els.refreshBtn.setAttribute('title', busyLabel);
+            els.refreshBtn.setAttribute('aria-label', busyLabel);
         }
         try {
             const resp = await fetch('/api/v1/lan/devices', {
@@ -515,7 +518,8 @@
         } finally {
             if (els.refreshBtn) {
                 els.refreshBtn.disabled = false;
-                els.refreshBtn.textContent = originalRefreshText;
+                els.refreshBtn.setAttribute('title', originalTitle);
+                els.refreshBtn.setAttribute('aria-label', originalAria);
             }
         }
     }
@@ -688,6 +692,7 @@
         NetwatchShared.handleNotificationEvent(event, state);
     }
 
+    NetwatchShared.initLazycatFullscreen?.();
     loadSettingsAndScheduleRefresh();
     // First load: try cached data, if empty then scan
     load(false).then(function () {

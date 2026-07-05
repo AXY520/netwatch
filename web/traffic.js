@@ -11,9 +11,15 @@
         topItems: [],
         range: localStorage.getItem('trafficRange') || '1h',
         liveIntervalSec: Number.parseInt(localStorage.getItem('trafficLiveIntervalSec') || '2', 10) || 2,
+        topLoadedAt: 0,
         liveTimer: null,
         resizeTimer: null
     };
+
+    const validRanges = new Set(['1m', '5m', '15m', '1h', '6h', '24h', 'all']);
+    if (!validRanges.has(state.range)) {
+        state.range = '1h';
+    }
 
     const els = {
         themeToggle: document.getElementById('theme-toggle'),
@@ -99,13 +105,6 @@
         ).getTime();
     }
 
-    function deltaRate(current, previous, key, currentTime, previousTime) {
-        if (!current || !previous) return 0;
-        const dt = Math.max(1, (parseTimestamp(currentTime) - parseTimestamp(previousTime)) / 1000);
-        const diff = Number(current[key] || 0) - Number(previous[key] || 0);
-        return diff > 0 ? diff / dt : 0;
-    }
-
     function rangeMs() {
         return {
             '1m': 60 * 1000,
@@ -149,6 +148,21 @@
         return list.slice(firstInside - 1);
     }
 
+    function activeRangeWindow(points) {
+        if (state.range === 'all' || !Array.isArray(points) || points.length === 0) return null;
+        const end = parseTimestamp(points[points.length - 1].timestamp);
+        const ms = rangeMs();
+        if (!end || !ms) return null;
+        return { start: end - ms, end };
+    }
+
+    function overlapSeconds(rate, windowRange) {
+        if (!windowRange) return rate.seconds;
+        const start = Math.max(rate.start, windowRange.start);
+        const end = Math.min(rate.end, windowRange.end);
+        return Math.max(0, (end - start) / 1000);
+    }
+
     function computeRates(points) {
         const rates = [];
         for (let i = 1; i < points.length; i++) {
@@ -161,6 +175,8 @@
             const txDelta = Math.max(0, (curr.tx_bytes || 0) - (prev.tx_bytes || 0));
             rates.push({
                 timestamp: curr.timestamp || '',
+                start: t1,
+                end: t2,
                 time: t2,
                 seconds,
                 rxDelta,
@@ -175,18 +191,31 @@
 
     function summarize(points, current) {
         const rates = computeRates(points);
-        const totalDelta = rates.reduce((sum, item) => sum + item.rxDelta + item.txDelta, 0);
-        const rxDelta = rates.reduce((sum, item) => sum + item.rxDelta, 0);
-        const txDelta = rates.reduce((sum, item) => sum + item.txDelta, 0);
-        const seconds = rates.reduce((sum, item) => sum + item.seconds, 0);
+        const windowRange = activeRangeWindow(points);
+        const scopedRates = [];
+        let rxDelta = 0;
+        let txDelta = 0;
+        let seconds = 0;
+        rates.forEach((item) => {
+            const overlap = overlapSeconds(item, windowRange);
+            if (overlap <= 0) return;
+            const ratio = overlap / item.seconds;
+            rxDelta += item.rxDelta * ratio;
+            txDelta += item.txDelta * ratio;
+            seconds += overlap;
+            scopedRates.push(item);
+        });
+        const totalDelta = rxDelta + txDelta;
+        const sampleSeconds = rates.reduce((sum, item) => sum + item.seconds, 0);
         const latest = rates[rates.length - 1];
-        const peak = rates.reduce((max, item) => Math.max(max, item.totalRate), 0);
+        const peak = scopedRates.reduce((max, item) => Math.max(max, item.totalRate), 0);
         return {
             rates,
             totalDelta,
             rxDelta,
             txDelta,
             seconds,
+            sampleSeconds,
             latestRate: latest ? latest.totalRate : 0,
             avgRate: seconds > 0 ? totalDelta / seconds : 0,
             peakRate: peak,
@@ -304,7 +333,7 @@
         const first = scoped[0]?.timestamp || '-';
         const last = scoped[scoped.length - 1]?.timestamp || '-';
         const avgInterval = summary.rates.length > 0
-            ? formatSeconds(Math.round(summary.seconds / summary.rates.length))
+            ? formatSeconds(Math.round((summary.sampleSeconds || summary.seconds) / summary.rates.length))
             : '-';
         els.sampleTable.innerHTML = `
             <tbody>
@@ -333,7 +362,7 @@
             if ((curr.rx_bytes || 0) < (prev.rx_bytes || 0) || (curr.tx_bytes || 0) < (prev.tx_bytes || 0)) {
                 anomalies.push({ timestamp: curr.timestamp, type: i18n('counter_reset'), value: '-' });
             }
-            if (summary.rates.length > 1 && seconds > Math.max(180, (summary.seconds / summary.rates.length) * 3)) {
+            if (summary.rates.length > 1 && seconds > Math.max(180, ((summary.sampleSeconds || summary.seconds) / summary.rates.length) * 3)) {
                 anomalies.push({ timestamp: curr.timestamp, type: i18n('sample_gap'), value: formatSeconds(Math.round(seconds)) });
             }
         }
@@ -498,6 +527,12 @@
         const resp = await fetch(`/api/v1/network/app-traffic/top?${params.toString()}`, { cache: 'no-store' });
         if (!resp.ok) throw new Error('top request failed');
         state.topItems = await resp.json();
+        state.topLoadedAt = Date.now();
+    }
+
+    async function maybeLoadTop() {
+        if (Date.now() - state.topLoadedAt < 30000) return;
+        await loadTop();
     }
 
     function mergeLiveBridge(liveBridge) {
@@ -565,7 +600,7 @@
         try {
             await loadSettings();
             await loadSnapshot();
-            const apps = state.snapshot?.bridges || [];
+            const apps = (state.snapshot?.bridges || []).filter(item => !isNetwatchBridge(item));
             if (!state.selectedBridge && apps.length > 0) {
                 state.selectedBridge = apps[0].bridge;
             }
@@ -606,6 +641,24 @@
         if (!state.selectedBridge) return;
         try {
             await loadLiveSample();
+            try {
+                await maybeLoadTop();
+            } catch (_) {}
+            renderAppList();
+            renderSelected();
+        } catch (e) {
+            showToast(i18n('refresh_failed') + ': ' + e.message, 'error');
+        }
+    }
+
+    async function refreshSelectedRange() {
+        if (!state.selectedBridge) return;
+        if (els.sub) els.sub.textContent = i18n('loading');
+        try {
+            const historyTask = els.liveToggle?.checked && !document.hidden
+                ? loadLiveSample()
+                : loadHistory(state.selectedBridge);
+            await Promise.all([historyTask, loadTop()]);
             renderAppList();
             renderSelected();
         } catch (e) {
@@ -665,7 +718,7 @@
             state._cachedSummary = null;
             localStorage.setItem('trafficRange', state.range);
             initRangeButtons();
-            refreshSelectedOnly();
+            refreshSelectedRange();
         });
         els.labelDensity?.addEventListener('change', async () => {
             state.settings.chart_time_label_interval = Number.parseInt(els.labelDensity.value || '0', 10) || 0;
@@ -726,6 +779,7 @@
     }
 
     initTheme();
+    NetwatchShared.initLazycatFullscreen?.();
     initRangeButtons();
     initLiveControls();
     bindEvents();

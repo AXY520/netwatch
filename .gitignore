@@ -1,5 +1,8 @@
 dist/
 *.lpk
+/netwatch
+/server
+.codegraph/
 
 # lzc-cli 临时构建/缓存目录
 .lzc-cli-build*/

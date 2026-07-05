@@ -11,6 +11,7 @@ import (
 )
 
 const maxAppTrafficPoints = 1440
+const appTrafficHistoryWriteMinInterval = 10 * time.Second
 
 // AppTrafficPoint is a single sample of cumulative rx/tx bytes for one bridge.
 type AppTrafficPoint struct {
@@ -32,6 +33,7 @@ type appTrafficHistoryStore struct {
 	history   map[string][]AppTrafficPoint // bridge name → points
 	maxPoints int
 	path      string
+	lastWrite time.Time
 }
 
 func newAppTrafficHistoryStore(dataDir string) *appTrafficHistoryStore {
@@ -71,14 +73,12 @@ func (s *appTrafficHistoryStore) sample(extraBridges []string) {
 		}
 		s.sampleBridge(name, now)
 	}
-	// Also snapshot for persistence
-	fullSnap := make(map[string][]AppTrafficPoint, len(s.history))
-	for k, v := range s.history {
-		fullSnap[k] = append([]AppTrafficPoint(nil), v...)
-	}
+	fullSnap := s.persistSnapshotLocked(now, true)
 	s.mu.Unlock()
 
-	_ = writeJSONFile(s.path, fullSnap, false)
+	if fullSnap != nil {
+		_ = writeJSONFile(s.path, fullSnap, false)
+	}
 }
 
 // sampleWithTiming samples bridges whose interval has elapsed since lastSampled.
@@ -120,13 +120,12 @@ func (s *appTrafficHistoryStore) sampleWithTiming(extraBridges []string, lastSam
 		s.sampleBridge(name, now)
 		lastSampled[name] = now
 	}
-	fullSnap := make(map[string][]AppTrafficPoint, len(s.history))
-	for k, v := range s.history {
-		fullSnap[k] = append([]AppTrafficPoint(nil), v...)
-	}
+	fullSnap := s.persistSnapshotLocked(now, true)
 	s.mu.Unlock()
 
-	_ = writeJSONFile(s.path, fullSnap, false)
+	if fullSnap != nil {
+		_ = writeJSONFile(s.path, fullSnap, false)
+	}
 }
 
 func (s *appTrafficHistoryStore) sampleOne(name string, now time.Time) bool {
@@ -139,14 +138,25 @@ func (s *appTrafficHistoryStore) sampleOne(name string, now time.Time) bool {
 
 	s.mu.Lock()
 	s.sampleBridge(name, now)
+	fullSnap := s.persistSnapshotLocked(now, false)
+	s.mu.Unlock()
+
+	if fullSnap != nil {
+		_ = writeJSONFile(s.path, fullSnap, false)
+	}
+	return true
+}
+
+func (s *appTrafficHistoryStore) persistSnapshotLocked(now time.Time, force bool) map[string][]AppTrafficPoint {
+	if !force && !s.lastWrite.IsZero() && now.Sub(s.lastWrite) < appTrafficHistoryWriteMinInterval {
+		return nil
+	}
 	fullSnap := make(map[string][]AppTrafficPoint, len(s.history))
 	for k, v := range s.history {
 		fullSnap[k] = append([]AppTrafficPoint(nil), v...)
 	}
-	s.mu.Unlock()
-
-	_ = writeJSONFile(s.path, fullSnap, false)
-	return true
+	s.lastWrite = now
+	return fullSnap
 }
 
 // sampleBridge reads counters for a single bridge and appends a point.

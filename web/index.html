@@ -28,12 +28,11 @@
             <div class="logo">NET<span>WATCH</span></div>
             <div class="controls">
                 <button id="theme-toggle" title="切换深浅模式" data-i18n-title="toggle_theme_title">🌓</button>
-                <button id="lang-toggle">🌐</button>
                 <button id="open-settings-window" data-i18n="settings_btn">设置</button>
                 <button id="open-broadband-window" data-i18n="broadband_btn">宽带测速</button>
                 <button id="open-transfer-window" data-i18n="transfer_btn">传输测速</button>
                 <a class="button-link" href="/lan.html" data-i18n="lan_devices_btn">局域网设备</a>
-                <button id="refresh-btn" data-i18n="refresh_btn">刷新</button>
+                <button id="refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
             </div>
         </header>
 
@@ -43,7 +42,7 @@
                     <span data-i18n="website_latency_chk">网站延迟检测</span>
                     <div class="title-tools">
                         <span id="website-status" class="placeholder"></span>
-                        <button id="website-refresh-btn" data-i18n="manual_check_btn">手动检测</button>
+                        <button id="website-refresh-btn" class="icon-button" title="手动检测" aria-label="手动检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn">↻</button>
                     </div>
                 </div>
                 <div class="connectivity-split">
@@ -69,7 +68,7 @@
                     <span data-i18n="identity_egress_title">网络身份与出口 IP</span>
                     <div class="title-tools">
                         <span id="egress-status" class="placeholder" data-i18n="waiting">等待查询</span>
-                        <button id="egress-refresh-btn" data-i18n="refresh_btn">刷新</button>
+                        <button id="egress-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                     </div>
                 </div>
 
@@ -136,7 +135,7 @@
                     <span data-i18n="nic_realtime_title">网卡实时速率</span>
                     <div class="title-tools">
                         <span class="placeholder" id="nic-realtime-status" data-i18n="waiting_for_sample">等待采样</span>
-                        <button type="button" id="nic-realtime-refresh-btn" class="compact-btn" data-i18n="refresh_btn">刷新</button>
+                        <button type="button" id="nic-realtime-refresh-btn" class="compact-btn icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                     </div>
                 </div>
                 <div id="nic-realtime-list" class="nic-realtime-list"></div>
@@ -160,7 +159,7 @@
                         <span id="app-traffic-status" class="placeholder" data-i18n="waiting_for_sample">等待采样</span>
                         <a class="button-link" id="traffic-analysis-link" href="/traffic.html" hidden data-i18n="traffic_analysis_btn">流量分析</a>
                         <button id="traffic-settings-btn" data-i18n="settings_btn">设置</button>
-                        <button id="app-traffic-refresh-btn" data-i18n="refresh_btn">刷新</button>
+                        <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                     </div>
                 </div>
                 <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
@@ -170,8 +169,34 @@
                 <div id="app-traffic-note" class="traffic-note"></div>
             </section>
 
+            <section class="card interfaces-card">
+                <div class="card-title">
+                    <span id="host-ports-title" class="host-ports-title" data-i18n="host_ports_title">端口占用</span>
+                    <div class="title-tools">
+                        <button type="button" class="sort-header host-port-sort active" data-host-port-sort-key="port" aria-sort="ascending"><span data-i18n="port_col">端口</span><span class="sort-indicator" aria-hidden="true"></span></button>
+                        <button type="button" class="sort-header host-port-sort" data-host-port-sort-key="owner" aria-sort="none"><span data-i18n="owner_col">占用方</span><span class="sort-indicator" aria-hidden="true"></span></button>
+                        <span id="host-ports-status" class="placeholder" data-i18n="waiting">等待查询</span>
+                        <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                    </div>
+                </div>
+                <div class="host-ports-grid" id="host-ports-list"></div>
+            </section>
+
         </main>
     </div>
+
+    <section class="floating-window" id="host-port-detail-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="host_port_detail_title">端口详情</div>
+                <div class="note" id="host-port-detail-note"></div>
+            </div>
+            <div class="window-actions">
+                <button id="close-host-port-detail-window" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div id="host-port-detail-body" class="host-port-detail-body"></div>
+    </section>
 
     <section class="floating-window" id="broadband-window">
         <div class="window-head">
@@ -363,7 +388,7 @@
                 <div class="note" data-i18n="ipv6_renew_note">当 IPv6 租约过期、地址未自动更新时，可让系统重新获取。选择网卡后执行，过程平滑不中断现有连接。</div>
             </div>
             <div class="window-actions">
-                <button id="ipv6-renew-refresh-btn" data-i18n="ipv6_renew_refresh">刷新网卡</button>
+                <button id="ipv6-renew-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh">↻</button>
                 <button id="close-ipv6-renew-window" data-i18n="close_btn">关闭</button>
             </div>
         </div>
@@ -589,6 +614,7 @@
     <script src="/app-core.js" defer></script>
     <script src="/app-containers.js" defer></script>
     <script src="/app-network.js" defer></script>
+    <script src="/app-host-ports.js" defer></script>
     <script src="/app-speedtest.js" defer></script>
     <script src="/app-settings.js" defer></script>
     <script src="/app.js" defer></script>

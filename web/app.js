@@ -302,6 +302,7 @@ function initWithRetry(maxRetries) {
     initSSE();
     if (window.__app.initTrace) window.__app.initTrace();
     if (window.__app.initEgressLookups) window.__app.initEgressLookups();
+    if (window.__app.initHostPorts) window.__app.initHostPorts();
     if (window.__app.initAppTraffic) window.__app.initAppTraffic();
 }
 
@@ -309,6 +310,7 @@ function boot() {
     if (state.initialized) return;
     state.initialized = true;
     initTheme();
+    if (NetwatchShared.initLazycatFullscreen) NetwatchShared.initLazycatFullscreen();
     initWithRetry();
 
     document.addEventListener('visibilitychange', function () {

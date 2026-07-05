@@ -69,7 +69,12 @@ var state = {
     appTrafficSort: {
         key: 'total',
         direction: 'desc'
-    }
+    },
+    hostPortsSort: {
+        key: 'port',
+        direction: 'asc'
+    },
+    hostPortsAdvanced: false
 };
 window.__app.state = state;
 
@@ -414,7 +419,8 @@ function updateConnectivityTable(tbody, items) {
         return;
     }
     tbody.innerHTML = items.map(function (item) {
-        return '<tr><td><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td><td data-label="' + i18n('status_col') + '"><span class="nat-badge ' + getStatusClass(item.status) + '">' + (statusMap[item.status] || i18n('unknown')) + '</span></td><td data-label="' + i18n('latency_col') + '" class="latency ' + (item.latency_ms > 200 ? 'high' : (item.latency_ms === 0 ? 'down' : '')) + '">' + (item.latency_ms > 0 ? item.latency_ms + ' ms' : i18n('connection_failed')) + '</td></tr>';
+        var errorTitle = item.error ? ' title="' + NetwatchShared.escapeHtml(item.error) + '"' : '';
+        return '<tr><td><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td><td data-label="' + i18n('status_col') + '"><span class="nat-badge ' + getStatusClass(item.status) + '">' + (statusMap[item.status] || i18n('unknown')) + '</span></td><td data-label="' + i18n('latency_col') + '" class="latency ' + (item.latency_ms > 200 ? 'high' : (item.latency_ms === 0 ? 'down' : '')) + '"' + errorTitle + '>' + (item.latency_ms > 0 ? item.latency_ms + ' ms' : i18n('connection_failed')) + '</td></tr>';
     }).join('');
 }
 window.__app.updateConnectivityTable = updateConnectivityTable;
@@ -493,7 +499,7 @@ function renderNetworkInfo(networkInfo) {
         var statusCell = formatDeviceStatus(iface.device_status);
         var ipv4List = (iface.ipv4 || []).filter(function (s) { return s; });
         var ipv6List = (iface.ipv6 || []).filter(function (s) { return !/^fe80:/i.test(s); });
-        return '<tr><td class="col-iface">' + mainLabel + subtitle + '</td><td class="col-status">' + statusCell + '</td><td class="col-ipv4">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
+        return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + mainLabel + subtitle + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
     }).join('') || '<tr><td colspan="5" class="placeholder">' + i18n('no_target_nic') + '</td></tr>';
 }
 window.__app.renderNetworkInfo = renderNetworkInfo;

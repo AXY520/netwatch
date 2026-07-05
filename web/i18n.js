@@ -31,6 +31,7 @@
             "standby": "等待测速开始",
             "waiting": "等待中",
             "loading": "加载中",
+            "scanning": "扫描中",
             "no_data": "无数据",
             "no_results": "暂无检测结果",
             "preparing": "准备中",
@@ -67,6 +68,18 @@
             "iface_col": "接口",
             "ipv4_col": "IPv4 地址",
             "ipv6_col": "IPv6 地址",
+            "host_ports_title": "端口占用",
+            "port_col": "端口",
+            "owner_col": "占用方",
+            "listen_addr_col": "监听地址",
+            "process_col": "进程",
+            "container_col": "容器 / 应用",
+            "host_process": "宿主进程",
+            "host_owner": "宿主",
+            "app_owner": "应用",
+            "unknown_process": "未知进程",
+            "host_port_detail_title": "端口详情",
+            "no_host_ports": "暂无监听端口",
             "min_rtt": "最小",
             "avg_rtt": "平均",
             "max_rtt": "最大",
@@ -75,7 +88,7 @@
             "total": "合计",
             "download_data": "下载数据",
             "upload_data": "上传数据",
-            "current_rate": "当前速率",
+            "current_rate": "最近速率",
             "interval_avg": "区间平均",
             "interval_peak": "区间峰值",
             "interval_total": "区间总量",
@@ -372,6 +385,7 @@
             "standby": "Standby",
             "waiting": "Waiting",
             "loading": "Loading...",
+            "scanning": "Scanning...",
             "no_data": "No data",
             "no_results": "No results",
             "preparing": "Preparing",
@@ -408,6 +422,18 @@
             "iface_col": "Interface",
             "ipv4_col": "IPv4 Address",
             "ipv6_col": "IPv6 Address",
+            "host_ports_title": "Port Usage",
+            "port_col": "Port",
+            "owner_col": "Owner",
+            "listen_addr_col": "Listen Address",
+            "process_col": "Process",
+            "container_col": "Container / App",
+            "host_process": "Host Process",
+            "host_owner": "Host",
+            "app_owner": "App",
+            "unknown_process": "Unknown Process",
+            "host_port_detail_title": "Port Details",
+            "no_host_ports": "No listening ports",
             "min_rtt": "Min",
             "avg_rtt": "Avg",
             "max_rtt": "Max",
@@ -416,7 +442,7 @@
             "total": "Total",
             "download_data": "Download",
             "upload_data": "Upload",
-            "current_rate": "Current Rate",
+            "current_rate": "Latest Rate",
             "interval_avg": "Avg Rate",
             "interval_peak": "Peak Rate",
             "interval_total": "Total Volume",
@@ -695,11 +721,16 @@
     };
 
     function getLang() {
-        return localStorage.getItem('netwatch_lang') || 'zh-CN';
+        var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'zh-CN'];
+        for (var i = 0; i < langs.length; i++) {
+            var lang = String(langs[i] || '').toLowerCase();
+            if (lang.indexOf('zh') === 0) return 'zh-CN';
+            if (lang.indexOf('en') === 0) return 'en';
+        }
+        return 'en';
     }
 
     function setLang(lang) {
-        localStorage.setItem('netwatch_lang', lang);
         document.documentElement.setAttribute('lang', lang);
         applyI18n();
     }
@@ -868,6 +899,12 @@
                 el.title = window.__(key);
             }
         });
+        root.querySelectorAll('[data-i18n-aria-label]').forEach(function (el) {
+            var key = el.getAttribute('data-i18n-aria-label');
+            if (key) {
+                el.setAttribute('aria-label', window.__(key));
+            }
+        });
         root.querySelectorAll('select').forEach(function (select) {
             var wrapper = select.__customSelect;
             if (!wrapper) return;
@@ -885,13 +922,6 @@
         var lang = getLang();
         setLang(lang);
         enhanceSelects();
-        var toggle = document.getElementById('lang-toggle');
-        if (toggle) {
-            toggle.addEventListener('click', function () {
-                var next = getLang() === 'zh-CN' ? 'en' : 'zh-CN';
-                setLang(next);
-            });
-        }
     };
 
     window.applyI18n = applyI18n;

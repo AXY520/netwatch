@@ -199,6 +199,13 @@ func (s *Service) backgroundCtx() context.Context {
 	return s.closeCtx
 }
 
+// LifecycleContext is cancelled only when the service is closed. Use it for
+// user-triggered probes whose results should not be invalidated by a browser
+// aborting the HTTP request.
+func (s *Service) LifecycleContext() context.Context {
+	return s.backgroundCtx()
+}
+
 // traceCtx returns a cancellable context derived from the service lifecycle.
 func (s *Service) traceCtx() context.Context {
 	return s.closeCtx

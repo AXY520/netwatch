@@ -50,6 +50,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/diagnostics/trace/task", h.handleTraceTask)
 	mux.HandleFunc("/api/v1/events", h.handleSSE)
 	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
+	mux.HandleFunc("/api/v1/network/ports", h.handleHostPorts)
 
 	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
 	mux.HandleFunc("/api/v1/notifications/events", h.handleNotificationEvents)
@@ -124,7 +125,7 @@ func (h *Handler) handleWebsiteRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.RefreshWebsiteConnectivity(r.Context()))
+	writeJSON(w, http.StatusOK, h.service.RefreshWebsiteConnectivity(h.service.LifecycleContext()))
 }
 
 func (h *Handler) handleNetworkInfo(w http.ResponseWriter, _ *http.Request) {
@@ -136,7 +137,7 @@ func (h *Handler) handleNATRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.RefreshNAT(r.Context()))
+	writeJSON(w, http.StatusOK, h.service.RefreshNAT(h.service.LifecycleContext()))
 }
 
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +145,7 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.Refresh(r.Context()))
+	writeJSON(w, http.StatusOK, h.service.Refresh(h.service.LifecycleContext()))
 }
 
 func (h *Handler) handleSpeedConfig(w http.ResponseWriter, _ *http.Request) {
@@ -369,6 +370,14 @@ func (h *Handler) handleTraceTask(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetRealtimeNetStats())
+}
+
+func (h *Handler) handleHostPorts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, probe.CollectHostPorts(r.Context()))
 }
 
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
