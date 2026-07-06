@@ -30,7 +30,7 @@ type FileConfig struct {
 	BroadbandStreams      int    `json:"broadband_streams"`
 	LocalTransferTestSec  int    `json:"local_transfer_test_sec"`
 
-	LocalTransferPayloadMB int    `json:"local_transfer_payload_mb"`
+	LocalTransferPayloadMB int `json:"local_transfer_payload_mb"`
 }
 
 func LoadConfig(path string) (FileConfig, error) {

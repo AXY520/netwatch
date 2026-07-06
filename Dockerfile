@@ -9,7 +9,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/netwatch ./cmd/server
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata mtr libcap iproute2 util-linux \
-    && setcap cap_net_raw+ep /usr/bin/mtr-packet \
+    && setcap cap_net_raw+ep /usr/sbin/mtr-packet \
     && adduser -D -H -u 10001 netwatch
 WORKDIR /app
 COPY --from=build /out/netwatch /app/netwatch

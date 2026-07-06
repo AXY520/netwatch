@@ -287,6 +287,13 @@ func nmcliCall(ctx context.Context, args []string, timeout time.Duration) (strin
 	return reply.GetOut(), nil
 }
 
+// NmcliCall exposes a constrained nmcli call for higher-level network config
+// workflows. Arguments are passed directly to the system API, never through a
+// shell.
+func NmcliCall(ctx context.Context, args []string, timeout time.Duration) (string, error) {
+	return nmcliCall(ctx, args, timeout)
+}
+
 // ListReapplicableNICs 返回当前可对其执行 IPv6 续约的网卡:
 // 即由 NetworkManager 管理、已连接(connected)且类型为 ethernet/wifi 的物理网卡。
 // 过滤掉 bridge/veth/tun/loopback/unmanaged 等虚拟或不可操作设备。

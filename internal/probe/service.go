@@ -120,6 +120,8 @@ type Service struct {
 	monitorBaselineReady        bool
 	monitorLastSummary          Summary
 	monitorTrafficHigh          bool
+	networkConfigMu             sync.Mutex
+	networkConfigRollbacks      map[string]*networkConfigRollback
 	closeCtx                    context.Context
 	closeCancel                 context.CancelFunc
 }
@@ -165,6 +167,7 @@ func NewService(cfg Config) *Service {
 		barkServerURL:               "https://api.day.app",
 		barkGroup:                   "Netwatch",
 		blockedBridges:              map[string]string{},
+		networkConfigRollbacks:      map[string]*networkConfigRollback{},
 	}
 	s.egressCond = sync.NewCond(&s.egressMu)
 	s.nicStats.onSampled = s.broadcastNICRealtime

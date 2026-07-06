@@ -89,6 +89,11 @@ var els = {
     interfacesTable: document.querySelector('#interfaces-table tbody'),
     valGw4: document.getElementById('val-gw4'),
     valPlatformConnectivity: document.getElementById('val-platform-connectivity'),
+    natRefreshBtn: document.getElementById('nat-refresh-btn'),
+    natStatus: document.getElementById('nat-status'),
+    natType: document.getElementById('nat-type'),
+    natMeta: document.getElementById('nat-meta'),
+    natNote: document.getElementById('nat-note'),
     nicRealtimeRefreshBtn: document.getElementById('nic-realtime-refresh-btn'),
     nicRealtimeStatus: document.getElementById('nic-realtime-status'),
     backdrop: document.getElementById('window-backdrop'),
@@ -96,13 +101,16 @@ var els = {
     openSettingsWindow: document.getElementById('open-settings-window'),
     openBroadbandWindow: document.getElementById('open-broadband-window'),
     openTransferWindow: document.getElementById('open-transfer-window'),
+    openNetworkConfigWindow: document.getElementById('open-network-config-window'),
     closeSettingsWindow: document.getElementById('close-settings-window'),
     closeBroadbandWindow: document.getElementById('close-broadband-window'),
     closeTransferWindow: document.getElementById('close-transfer-window'),
+    closeNetworkConfigWindow: document.getElementById('close-network-config-window'),
     closeTraceWindow: document.getElementById('close-trace-window'),
     settingsWindow: document.getElementById('settings-window'),
     broadbandWindow: document.getElementById('broadband-window'),
     transferWindow: document.getElementById('transfer-window'),
+    networkConfigWindow: document.getElementById('network-config-window'),
     traceWindow: document.getElementById('trace-window'),
     ipv6DetailWindow: document.getElementById('ipv6-detail-window'),
     ipv6DetailBackdrop: document.getElementById('ipv6-detail-window-backdrop'),
@@ -504,12 +512,40 @@ function renderNetworkInfo(networkInfo) {
 }
 window.__app.renderNetworkInfo = renderNetworkInfo;
 
+function natLabel(type) {
+    switch (type) {
+        case 'NAT1': return 'NAT1 - Full Cone';
+        case 'NAT2': return 'NAT2 - Restricted Cone';
+        case 'NAT3': return 'NAT3 - Port Restricted';
+        case 'NAT4': return 'NAT4 - Symmetric';
+        default: return i18n('unknown');
+    }
+}
+
+var natExplain = {
+    NAT1: ['完全锥形', '极佳', '外部任何主机都可以通过映射的公网地址直接访问内网设备。客户端与微服直连场景最为友好。'],
+    NAT2: ['受限锥形', '良好', '外部主机必须先收到内网设备的请求后才能回复。安全性更高，客户端与微服直连仍可正常使用。'],
+    NAT3: ['端口受限锥形', '一般', '不仅限制源 IP，还限制源端口。客户端与微服直连可能受到影响。'],
+    NAT4: ['对称型', '较差', '每个不同的目标地址和端口组合都会分配不同的映射。P2P 打洞极其困难，严重影响客户端与微服直连体验。']
+};
+
+function renderNATInfo(nat) {
+    nat = nat || {};
+    if (els.natType) els.natType.textContent = natLabel(nat.type);
+    var explain = natExplain[nat.type];
+    if (els.natMeta) els.natMeta.textContent = explain ? (explain[0] + ' / ' + explain[1]) : '';
+    if (els.natNote) els.natNote.textContent = explain ? explain[2] : '';
+    if (els.natStatus) els.natStatus.textContent = nat.type ? i18n('complete') : i18n('waiting');
+}
+window.__app.renderNATInfo = renderNATInfo;
+
 // Used across modules for updating window controls
 function updateWindowControls() {
     var busy = Boolean(state.runningTest);
     els.openSettingsWindow.disabled = busy;
     els.openBroadbandWindow.disabled = busy && state.runningTest !== 'broadband';
     els.openTransferWindow.disabled = busy && state.runningTest !== 'transfer';
+    if (els.openNetworkConfigWindow) els.openNetworkConfigWindow.disabled = busy;
     els.runBroadbandTest.disabled = busy;
     els.runTransferTest.disabled = busy;
 }

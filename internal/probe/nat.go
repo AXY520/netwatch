@@ -18,31 +18,45 @@ const (
 	stunXORMappedAdress = 0x0020
 	stunMagicCookie     = 0x2112A442
 
-	NATFullCone          = "full_cone"
-	NATRestrictedCone    = "restricted_cone"
-	NATPortRestrictedCone = "port_restricted_cone"
-	NATSymmetric         = "symmetric"
-	NATUnknown           = "unknown"
+	NAT1       = "NAT1"
+	NAT2       = "NAT2"
+	NAT3       = "NAT3"
+	NAT4       = "NAT4"
+	NATUnknown = "unknown"
 )
 
 func (s *Service) ProbeNAT(ctx context.Context) NATInfo {
 	results := NATInfo{
 		GeneratedAt: localTimestamp(),
 		Type:        NATUnknown,
-		Note:        "NAT 类型基于 STUN 多点观测推断，目前只输出全锥形、受限锥形、端口受限锥形、对称型。",
+		Note:        "基于服务器后端 UDP STUN 多点观测推断，结果反映当前部署环境的出口 NAT，不代表浏览器客户端本地网络。",
 	}
 
 	observations := parallelSTUNObservations(ctx, s.cfg.STUNServers, s.cfg.NATTimeout)
+	results.Observations = successfulNATObservations(observations)
 	results.Reachable = false
 	for _, observation := range observations {
 		if observation.ExternalAddr != "" {
 			results.Reachable = true
+			if results.ExternalAddr == "" {
+				results.ExternalAddr = observation.ExternalAddr
+			}
 			break
 		}
 	}
 
-	results.Type = classifyNAT(observations, results.Reachable)
+	results.Type, results.Confidence = classifyNAT(observations, results.Reachable)
 	return results
+}
+
+func successfulNATObservations(observations []NATObservation) []NATObservation {
+	out := make([]NATObservation, 0, len(observations))
+	for _, observation := range observations {
+		if observation.ExternalAddr != "" {
+			out = append(out, observation)
+		}
+	}
+	return out
 }
 
 func parallelSTUNObservations(ctx context.Context, servers []string, timeout time.Duration) []NATObservation {
@@ -61,39 +75,67 @@ func parallelSTUNObservations(ctx context.Context, servers []string, timeout tim
 	return observations
 }
 
-func classifyNAT(observations []NATObservation, reachable bool) string {
+func classifyNAT(observations []NATObservation, reachable bool) (string, string) {
 	if !reachable {
-		return NATUnknown
+		return NAT4, "high"
 	}
 
 	externalHosts := map[string]struct{}{}
 	externalPorts := map[string]struct{}{}
+	localHosts := map[string]struct{}{}
+	localPorts := map[string]struct{}{}
+	successful := 0
 	for _, observation := range observations {
 		if observation.ExternalAddr == "" {
 			continue
 		}
+		successful++
 		host, port, err := net.SplitHostPort(observation.ExternalAddr)
 		if err != nil {
 			continue
 		}
 		externalHosts[host] = struct{}{}
 		externalPorts[port] = struct{}{}
+		localHost, localPort, err := net.SplitHostPort(observation.LocalAddr)
+		if err == nil {
+			localHosts[localHost] = struct{}{}
+			localPorts[localPort] = struct{}{}
+		}
 	}
 
 	if len(externalHosts) == 0 {
-		return NATUnknown
+		return NAT4, "medium"
 	}
 
+	if len(externalHosts) == 1 && len(localHosts) == 1 && sameOnlyValue(externalHosts, localHosts) {
+		return NAT1, confidenceForSTUN(successful)
+	}
 	if len(externalHosts) > 1 || len(externalPorts) > 1 {
-		return NATSymmetric
+		return NAT4, confidenceForSTUN(successful)
 	}
+	if len(localPorts) == 1 && sameOnlyValue(externalPorts, localPorts) {
+		return NAT2, confidenceForSTUN(successful)
+	}
+	return NAT3, confidenceForSTUN(successful)
+}
 
-	// RFC 3489 style exact cone subtyping needs CHANGE-REQUEST support and filtering tests.
-	// Without reliable filtering tests from all servers, default to restricted vs port-restricted heuristics.
-	if len(observations) >= 3 {
-		return NATRestrictedCone
+func sameOnlyValue(a, b map[string]struct{}) bool {
+	if len(a) != 1 || len(b) != 1 {
+		return false
 	}
-	return NATPortRestrictedCone
+	var av string
+	for value := range a {
+		av = value
+	}
+	_, ok := b[av]
+	return ok
+}
+
+func confidenceForSTUN(successful int) string {
+	if successful >= 2 {
+		return "high"
+	}
+	return "medium"
 }
 
 func stunBindingObservation(ctx context.Context, server string, timeout time.Duration) NATObservation {

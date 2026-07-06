@@ -87,6 +87,16 @@ if [ -n "${IP_BIN}" ]; then
   copy_binary_with_libs "${IP_BIN}" dist/rootfs
 fi
 
+ARPING_BIN="$(command -v arping || true)"
+if [ -n "${ARPING_BIN}" ]; then
+  copy_binary_with_libs "${ARPING_BIN}" dist/rootfs
+fi
+
+PING_BIN="$(command -v ping || true)"
+if [ -n "${PING_BIN}" ]; then
+  copy_binary_with_libs "${PING_BIN}" dist/rootfs
+fi
+
 IPTABLES_BIN="$(command -v iptables || true)"
 if [ -z "${IPTABLES_BIN}" ] || [ ! -x "${IPTABLES_BIN}" ]; then
   for p in /usr/sbin/iptables /sbin/iptables /usr/bin/iptables; do

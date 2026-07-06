@@ -23,6 +23,7 @@ function openWindow(name) {
     els.settingsWindow.classList.remove('active');
     els.broadbandWindow.classList.remove('active');
     els.transferWindow.classList.remove('active');
+    if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
     var tsWin = document.getElementById('traffic-settings-window');
     if (tsWin) tsWin.classList.remove('active');
@@ -33,6 +34,10 @@ function openWindow(name) {
         els.broadbandWindow.classList.add('active');
     } else if (name === 'transfer') {
         els.transferWindow.classList.add('active');
+    } else if (name === 'network-config') {
+        if (els.networkConfigWindow) els.networkConfigWindow.classList.add('active');
+        if (window.__app.loadNetworkConfigDevices) window.__app.loadNetworkConfigDevices();
+        if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(false);
     } else if (name === 'notification-settings') {
         if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.add('active');
         if (window.__app.loadLazycatDevices) window.__app.loadLazycatDevices();
@@ -46,6 +51,8 @@ function openWindow(name) {
         if (window.__app.loadSpeedHistory) window.__app.loadSpeedHistory();
     }
 }
+
+window.__app.openWindow = openWindow;
 
 function closeCurrentWindow() {
     if ((state.runningTest === 'broadband' && els.broadbandWindow.classList.contains('active')) ||
@@ -62,6 +69,7 @@ function closeCurrentWindow() {
     els.settingsWindow.classList.remove('active');
     els.broadbandWindow.classList.remove('active');
     els.transferWindow.classList.remove('active');
+    if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
     var tsWin = document.getElementById('traffic-settings-window');
     if (tsWin) tsWin.classList.remove('active');
@@ -98,12 +106,15 @@ function bindControls() {
 
     els.refreshBtn.addEventListener('click', function () { A.debounce('refresh', function () { if (A.runFastRefresh) A.runFastRefresh(true); }); });
     els.websiteRefreshBtn.addEventListener('click', function () { A.debounce('website', function () { if (A.runWebsiteRefresh) A.runWebsiteRefresh(); }); });
+    if (els.natRefreshBtn) els.natRefreshBtn.addEventListener('click', function () { A.debounce('nat', function () { if (A.runNATRefresh) A.runNATRefresh(); }); });
     els.openSettingsWindow.addEventListener('click', function () { openWindow('settings'); });
     els.openBroadbandWindow.addEventListener('click', function () { openWindow('broadband'); });
     els.openTransferWindow.addEventListener('click', function () { openWindow('transfer'); });
+    if (els.openNetworkConfigWindow) els.openNetworkConfigWindow.addEventListener('click', function () { openWindow('network-config'); });
     els.closeSettingsWindow.addEventListener('click', closeCurrentWindow);
     els.closeBroadbandWindow.addEventListener('click', closeCurrentWindow);
     els.closeTransferWindow.addEventListener('click', closeCurrentWindow);
+    if (els.closeNetworkConfigWindow) els.closeNetworkConfigWindow.addEventListener('click', closeCurrentWindow);
     if (els.closeNotificationSettings) els.closeNotificationSettings.addEventListener('click', closeCurrentWindow);
     if (els.openNotificationSettings) els.openNotificationSettings.addEventListener('click', function () { openWindow('notification-settings'); });
     if (els.saveNotificationSettings) els.saveNotificationSettings.addEventListener('click', function () { if (A.saveSettings) A.saveSettings(); });
@@ -154,6 +165,19 @@ function bindControls() {
 
     var ipv6RenewExecBtn = document.getElementById('ipv6-renew-exec-btn');
     if (ipv6RenewExecBtn) ipv6RenewExecBtn.addEventListener('click', function () { if (A.runIPv6Renew) A.runIPv6Renew(); });
+
+    var networkConfigRefreshBtn = document.getElementById('network-config-refresh-btn');
+    if (networkConfigRefreshBtn) networkConfigRefreshBtn.addEventListener('click', function () { if (A.loadNetworkConfigDevices) A.loadNetworkConfigDevices(); });
+    var networkConfigMethod = document.getElementById('network-config-method');
+    if (networkConfigMethod) networkConfigMethod.addEventListener('change', function () { if (A.updateNetworkConfigMethodState) A.updateNetworkConfigMethodState(); });
+    var networkConfigCheckIPBtn = document.getElementById('network-config-check-ip-btn');
+    if (networkConfigCheckIPBtn) networkConfigCheckIPBtn.addEventListener('click', function () { if (A.checkNetworkConfigIP) A.checkNetworkConfigIP(); });
+    var networkConfigApplyBtn = document.getElementById('network-config-apply-btn');
+    if (networkConfigApplyBtn) networkConfigApplyBtn.addEventListener('click', function () { if (A.applyNetworkConfig) A.applyNetworkConfig(); });
+    var networkConfigConfirmBtn = document.getElementById('network-config-confirm-btn');
+    if (networkConfigConfirmBtn) networkConfigConfirmBtn.addEventListener('click', function () { if (A.confirmNetworkConfig) A.confirmNetworkConfig(); });
+    var networkConfigRollbackBtn = document.getElementById('network-config-rollback-btn');
+    if (networkConfigRollbackBtn) networkConfigRollbackBtn.addEventListener('click', function () { if (A.rollbackNetworkConfig) A.rollbackNetworkConfig(); });
 
     if (A.bindIPv6TitleEasterEgg) A.bindIPv6TitleEasterEgg();
 
@@ -312,6 +336,9 @@ function boot() {
     initTheme();
     if (NetwatchShared.initLazycatFullscreen) NetwatchShared.initLazycatFullscreen();
     initWithRetry();
+    setTimeout(function () {
+        if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(true);
+    }, 800);
 
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) {

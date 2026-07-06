@@ -128,6 +128,19 @@
                     <span class="placeholder" data-i18n="trace_initial_hint">输入目标后开始路径诊断</span>
                 </div>
                 <button id="trace-details-btn" class="trace-details-btn" disabled data-i18n="trace_details_btn">查看详细跳点</button>
+
+                <div class="trace-nat-panel">
+                    <div class="trace-nat-head">
+                        <span data-i18n="nat_title">NAT 类型</span>
+                        <div class="title-tools">
+                            <span id="nat-status" class="placeholder" data-i18n="waiting">等待检测</span>
+                            <button id="nat-refresh-btn" class="icon-button" title="检测" aria-label="检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn">↻</button>
+                        </div>
+                    </div>
+                    <div class="nat-type" id="nat-type">---</div>
+                    <div class="nat-meta" id="nat-meta"></div>
+                    <div class="nat-note" id="nat-note"></div>
+                </div>
             </section>
 
             <section class="card interfaces-card">
@@ -144,7 +157,9 @@
             <section class="card interfaces-card">
                 <div class="card-title">
                     <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
-                    <span class="placeholder"></span>
+                    <div class="title-tools">
+                        <button id="open-network-config-window" data-i18n="network_config_btn">修改配置</button>
+                    </div>
                 </div>
                 <table class="data-table interfaces-table-fixed" id="interfaces-table">
                     <thead><tr><th class="col-iface" data-i18n="iface_col">接口</th><th class="col-status" data-i18n="status_col">状态</th><th class="col-ipv4" data-i18n="ipv4_col">IPv4 地址</th><th class="col-ipv6" data-i18n="ipv6_col">IPv6 地址</th><th class="col-mac">MAC</th></tr></thead>
@@ -402,6 +417,36 @@
             </div>
             <div class="ipv6-renew-status" id="ipv6-renew-status"></div>
             <pre class="ipv6-renew-output" id="ipv6-renew-output" hidden></pre>
+        </div>
+    </section>
+
+    <section class="floating-window" id="network-config-window">
+        <div class="window-head">
+            <div>
+                <div class="window-title" data-i18n="network_config_title">网卡配置</div>
+                <div class="note" data-i18n="network_config_note">修改 IPv4、网关与 DNS。应用后 60 秒内必须确认，否则自动回滚。</div>
+            </div>
+            <div class="window-actions">
+                <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh">↻</button>
+                <button id="close-network-config-window" data-i18n="close_btn">关闭</button>
+            </div>
+        </div>
+        <div class="network-config-body">
+            <div class="network-config-grid">
+                <label><span data-i18n="network_config_device">网卡</span><select id="network-config-device"></select></label>
+                <label><span data-i18n="network_config_method">配置方式</span><select id="network-config-method"><option value="auto" data-i18n="network_config_method_auto">自动获取</option><option value="manual" data-i18n="network_config_method_manual">手动配置</option></select></label>
+                <label><span data-i18n="network_config_address">IPv4/CIDR</span><input id="network-config-address" placeholder="192.168.1.10/24"></label>
+                <label><span data-i18n="network_config_gateway">网关</span><input id="network-config-gateway" placeholder="192.168.1.1"></label>
+                <label><span data-i18n="network_config_dns">DNS</span><input id="network-config-dns" placeholder="223.5.5.5,119.29.29.29"></label>
+            </div>
+            <div class="network-config-actions">
+                <button id="network-config-check-ip-btn" data-i18n="network_config_check_ip">检测 IP 占用</button>
+                <button id="network-config-apply-btn" data-i18n="network_config_apply">应用配置</button>
+                <button id="network-config-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
+                <button id="network-config-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>
+            </div>
+            <div class="ipv6-renew-status" id="network-config-status"></div>
+            <pre class="ipv6-renew-output" id="network-config-output" hidden></pre>
         </div>
     </section>
 

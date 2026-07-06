@@ -162,6 +162,77 @@ type AppContainersResponse struct {
 	Applications []AppContainerGroup `json:"applications"`
 }
 
+type NetworkConfigDevice struct {
+	Device     string `json:"device"`
+	Type       string `json:"type"`
+	State      string `json:"state"`
+	Connection string `json:"connection,omitempty"`
+	IPv4Method string `json:"ipv4_method,omitempty"`
+	IPv4       string `json:"ipv4,omitempty"`
+	Gateway    string `json:"gateway,omitempty"`
+	DNS        string `json:"dns,omitempty"`
+}
+
+type NetworkConfigDevicesResponse struct {
+	Enabled bool                  `json:"enabled"`
+	Devices []NetworkConfigDevice `json:"devices,omitempty"`
+	Error   string                `json:"error,omitempty"`
+}
+
+type NetworkConfigApplyRequest struct {
+	Device  string `json:"device"`
+	Method  string `json:"method"`
+	Address string `json:"address"`
+	Gateway string `json:"gateway"`
+	DNS     string `json:"dns"`
+}
+
+type NetworkConfigIPCheckRequest struct {
+	Device  string `json:"device"`
+	Address string `json:"address"`
+}
+
+type NetworkConfigIPCheckResult struct {
+	OK        bool   `json:"ok"`
+	Available bool   `json:"available"`
+	IP        string `json:"ip,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type NetworkConfigApplyResult struct {
+	OK            bool   `json:"ok"`
+	Device        string `json:"device,omitempty"`
+	Connection    string `json:"connection,omitempty"`
+	RollbackID    string `json:"rollback_id,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	Output        string `json:"output,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+type NetworkConfigConfirmResult struct {
+	OK     bool   `json:"ok"`
+	ID     string `json:"id,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Output string `json:"output,omitempty"`
+}
+
+type NetworkConfigPendingResult struct {
+	Pending       bool   `json:"pending"`
+	ID            string `json:"id,omitempty"`
+	Device        string `json:"device,omitempty"`
+	Connection    string `json:"connection,omitempty"`
+	Method        string `json:"method,omitempty"`
+	Address       string `json:"address,omitempty"`
+	Gateway       string `json:"gateway,omitempty"`
+	DNS           string `json:"dns,omitempty"`
+	PrevMethod    string `json:"prev_method,omitempty"`
+	PrevAddress   string `json:"prev_address,omitempty"`
+	PrevGateway   string `json:"prev_gateway,omitempty"`
+	PrevDNS       string `json:"prev_dns,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	RemainingSec  int    `json:"remaining_sec,omitempty"`
+}
+
 type HostPortProcess struct {
 	PID     int    `json:"pid,omitempty"`
 	PPID    int    `json:"ppid,omitempty"`
@@ -369,10 +440,13 @@ type NATObservation struct {
 }
 
 type NATInfo struct {
-	GeneratedAt string `json:"generated_at"`
-	Type        string `json:"type"`
-	Reachable   bool   `json:"reachable"`
-	Note        string `json:"note"`
+	GeneratedAt  string           `json:"generated_at"`
+	Type         string           `json:"type"`
+	Reachable    bool             `json:"reachable"`
+	Confidence   string           `json:"confidence,omitempty"`
+	ExternalAddr string           `json:"external_addr,omitempty"`
+	Note         string           `json:"note"`
+	Observations []NATObservation `json:"observations,omitempty"`
 }
 
 type NetworkInfo struct {

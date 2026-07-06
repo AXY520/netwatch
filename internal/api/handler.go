@@ -65,10 +65,113 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
 	mux.HandleFunc("/api/v1/network/ipv6/renew-nics", h.handleIPv6RenewNICs)
 	mux.HandleFunc("/api/v1/network/ipv6/renew", h.handleIPv6Renew)
+	mux.HandleFunc("/api/v1/network/config/devices", h.handleNetworkConfigDevices)
+	mux.HandleFunc("/api/v1/network/config/pending", h.handleNetworkConfigPending)
+	mux.HandleFunc("/api/v1/network/config/check-ip", h.handleNetworkConfigCheckIP)
+	mux.HandleFunc("/api/v1/network/config/apply", h.handleNetworkConfigApply)
+	mux.HandleFunc("/api/v1/network/config/confirm", h.handleNetworkConfigConfirm)
+	mux.HandleFunc("/api/v1/network/config/rollback", h.handleNetworkConfigRollback)
 	mux.HandleFunc("/api/v1/containers", h.handleContainers)
 	mux.HandleFunc("/api/v1/containers/block", h.handleContainerBlock)
 	mux.HandleFunc("/api/v1/containers/unblock", h.handleContainerUnblock)
 	mux.HandleFunc("/metrics", h.handleMetrics)
+}
+
+func (h *Handler) handleNetworkConfigDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	resp := h.service.ListNetworkConfigDevices(r.Context())
+	status := http.StatusOK
+	if resp.Enabled && resp.Error != "" {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, resp)
+}
+
+func (h *Handler) handleNetworkConfigPending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.GetNetworkConfigPending())
+}
+
+func (h *Handler) handleNetworkConfigCheckIP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.NetworkConfigIPCheckRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.CheckNetworkConfigIP(r.Context(), req)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleNetworkConfigApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.NetworkConfigApplyRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.ApplyNetworkConfig(r.Context(), req)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleNetworkConfigConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.ConfirmNetworkConfig(req.ID)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleNetworkConfigRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.RollbackNetworkConfig(r.Context(), req.ID)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
 }
 
 func (h *Handler) handleIPv6RenewNICs(w http.ResponseWriter, r *http.Request) {
