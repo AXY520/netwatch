@@ -75,10 +75,7 @@ func (s *Service) startBackgroundMonitor() {
 	go func() {
 		defer close(s.backgroundMonitorDone)
 		for {
-			s.mu.RLock()
-			enabled := s.backgroundMonitorEnabled
-			intervalSec := s.backgroundMonitorInterval
-			s.mu.RUnlock()
+			enabled, intervalSec := s.settings.backgroundConfig()
 
 			wait := time.Second
 			if enabled {
@@ -103,9 +100,8 @@ func (s *Service) startBackgroundMonitor() {
 const connectivityProbeInterval = 300 * time.Second // 出口IP/互联检测固定5分钟
 
 func (s *Service) runBackgroundMonitorTick() {
-	s.mu.RLock()
-	interval := time.Duration(s.backgroundMonitorInterval) * time.Second
-	s.mu.RUnlock()
+	_, intervalSec := s.settings.backgroundConfig()
+	interval := time.Duration(intervalSec) * time.Second
 	if interval < 10*time.Second {
 		interval = 60 * time.Second
 	}

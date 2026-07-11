@@ -38,13 +38,13 @@ func lanDevicesPath(dataDir string) string {
 }
 
 func (s *Service) GetLANDevices() LANDeviceSnapshot {
-	s.lanMu.Lock()
-	defer s.lanMu.Unlock()
-	if s.lanSnapshot.GeneratedAt != "" {
-		return s.lanSnapshot
+	s.lan.mu.Lock()
+	defer s.lan.mu.Unlock()
+	if s.lan.snapshot.GeneratedAt != "" {
+		return s.lan.snapshot
 	}
 	snap := s.loadLANDeviceSnapshotCached()
-	s.lanSnapshot = snap
+	s.lan.snapshot = snap
 	return snap
 }
 
@@ -58,16 +58,15 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	}
 	now := time.Now()
 	nowText := localTimestamp()
-	s.mu.RLock()
-	offlineAfter := time.Duration(s.lanDeviceOfflineAfter) * time.Second
-	onlineAfter := time.Duration(s.lanDeviceOnlineAfter) * time.Second
-	offlineNotifyDelay := time.Duration(s.lanDeviceOfflineNotifyDelay) * time.Second
-	onlineNotifyDelay := time.Duration(s.lanDeviceOnlineNotifyDelay) * time.Second
-	maxMiss := s.lanMaxCheckAttempts
-	cooldownSec := s.lanNotifyCooldownSec
-	flapThreshold := s.lanFlappingThreshold
-	flapWindow := s.lanFlappingWindow
-	s.mu.RUnlock()
+	policy := s.lan.policySnapshot()
+	offlineAfter := time.Duration(policy.OfflineAfterSec) * time.Second
+	onlineAfter := time.Duration(policy.OnlineAfterSec) * time.Second
+	offlineNotifyDelay := time.Duration(policy.OfflineNotifyDelaySec) * time.Second
+	onlineNotifyDelay := time.Duration(policy.OnlineNotifyDelaySec) * time.Second
+	maxMiss := policy.MaxCheckAttempts
+	cooldownSec := policy.NotifyCooldownSec
+	flapThreshold := policy.FlappingThreshold
+	flapWindow := policy.FlappingWindow
 	if offlineAfter < 10*time.Second {
 		offlineAfter = 3 * time.Minute
 	}
@@ -286,9 +285,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	}
 
 	removeInternalLANDevices(stored)
-	s.mu.RLock()
-	autoRemoveDays := s.lanDeviceAutoRemoveDays
-	s.mu.RUnlock()
+	autoRemoveDays := s.lan.policySnapshot().AutoRemoveDays
 	if autoRemoveDays > 0 {
 		if n := removeStaleLANDevices(stored, autoRemoveDays); n > 0 {
 			logger.Info("LAN auto-cleanup: removed %d stale devices (offline > %d days)", n, autoRemoveDays)
@@ -298,9 +295,9 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	snap := buildLANDeviceSnapshotFromMap(stored, networks, "综合 ARP/NDP/ICMP/DHCP 多源检测，仅扫描真实有线/Wi-Fi 网卡；Docker/Lazycat 内部网桥设备已过滤。")
 
 	_ = s.putLANDevices(stored)
-	s.lanMu.Lock()
-	s.lanSnapshot = snap
-	s.lanMu.Unlock()
+	s.lan.mu.Lock()
+	s.lan.snapshot = snap
+	s.lan.mu.Unlock()
 	s.broadcastLANDevices(snap)
 	s.mu.RLock()
 	notifyLAN := allowNotify && s.notify.snapshotConfig().NotifyLANDeviceChange
@@ -319,10 +316,10 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 
 // isLANFlapping checks if a device has been changing state too frequently.
 func (s *Service) isLANFlapping(mac string, now time.Time, threshold int, window time.Duration) bool {
-	s.lanMu.Lock()
-	defer s.lanMu.Unlock()
+	s.lan.mu.Lock()
+	defer s.lan.mu.Unlock()
 
-	history := s.lanFlappingHistory[mac]
+	history := s.lan.flappingHistory[mac]
 	// Prune old entries outside the window
 	cutoff := now.Add(-window)
 	pruned := make([]time.Time, 0, len(history))
@@ -333,25 +330,25 @@ func (s *Service) isLANFlapping(mac string, now time.Time, threshold int, window
 	}
 	// Add current state change
 	pruned = append(pruned, now)
-	s.lanFlappingHistory[mac] = pruned
+	s.lan.flappingHistory[mac] = pruned
 
 	return len(pruned) > threshold
 }
 
 // canNotifyLANDevice checks if enough time has passed since the last notification for this device.
 func (s *Service) canNotifyLANDevice(mac string, now time.Time, cooldownSec int) bool {
-	s.lanMu.Lock()
-	defer s.lanMu.Unlock()
+	s.lan.mu.Lock()
+	defer s.lan.mu.Unlock()
 
-	last, ok := s.lanNotifyCooldown[mac]
+	last, ok := s.lan.notifyCooldown[mac]
 	if !ok {
-		s.lanNotifyCooldown[mac] = now
+		s.lan.notifyCooldown[mac] = now
 		return true
 	}
 	if now.Sub(last) < time.Duration(cooldownSec)*time.Second {
 		return false
 	}
-	s.lanNotifyCooldown[mac] = now
+	s.lan.notifyCooldown[mac] = now
 	return true
 }
 
@@ -447,9 +444,9 @@ func (s *Service) refreshLANInterfaceStatusSnapshot() []NotificationEvent {
 	}
 	snap := buildLANDeviceSnapshotFromMap(stored, networks, "网卡状态已更新。")
 	_ = s.putLANDevices(stored)
-	s.lanMu.Lock()
-	s.lanSnapshot = snap
-	s.lanMu.Unlock()
+	s.lan.mu.Lock()
+	s.lan.snapshot = snap
+	s.lan.mu.Unlock()
 	return events
 }
 
@@ -483,19 +480,19 @@ func addStoredLANInterfaces(interfaceUp map[string]bool, stored map[string]LANDe
 }
 
 func (s *Service) updateLANInterfaceState(current map[string]bool) []NotificationEvent {
-	s.lanMu.Lock()
-	defer s.lanMu.Unlock()
-	if s.lanInterfaceState == nil {
-		s.lanInterfaceState = make(map[string]bool, len(current))
+	s.lan.mu.Lock()
+	defer s.lan.mu.Unlock()
+	if s.lan.interfaceState == nil {
+		s.lan.interfaceState = make(map[string]bool, len(current))
 		for name, up := range current {
-			s.lanInterfaceState[name] = up
+			s.lan.interfaceState[name] = up
 		}
 		return nil
 	}
 	var events []NotificationEvent
 	for name, up := range current {
-		prev, exists := s.lanInterfaceState[name]
-		s.lanInterfaceState[name] = up
+		prev, exists := s.lan.interfaceState[name]
+		s.lan.interfaceState[name] = up
 		if !exists || prev == up {
 			continue
 		}
@@ -541,15 +538,15 @@ func (s *Service) UpdateLANDeviceMeta(in LANDeviceMetaUpdate) LANDeviceSnapshot 
 		return s.GetLANDevices()
 	}
 	stored := s.getLANDevicesCopy()
-	s.lanMu.Lock()
-	if s.lanSnapshot.GeneratedAt != "" {
-		for _, dev := range s.lanSnapshot.Devices {
+	s.lan.mu.Lock()
+	if s.lan.snapshot.GeneratedAt != "" {
+		for _, dev := range s.lan.snapshot.Devices {
 			key := normalizeMAC(dev.MAC)
 			if key != "" {
 				stored[key] = dev
 			}
 		}
-		for _, dev := range s.lanSnapshot.IgnoredDevices {
+		for _, dev := range s.lan.snapshot.IgnoredDevices {
 			key := normalizeMAC(dev.MAC)
 			if key != "" {
 				stored[key] = dev
@@ -573,24 +570,24 @@ func (s *Service) UpdateLANDeviceMeta(in LANDeviceMetaUpdate) LANDeviceSnapshot 
 	removeInternalLANDevices(stored)
 	_ = s.putLANDevicesLocked(stored)
 
-	networks := s.lanSnapshot.Networks
-	s.lanSnapshot = buildLANDeviceSnapshotFromMap(stored, networks, "已更新设备标记。")
-	if noteChanged && s.lanSnapshot.GeneratedAt != "" {
-		for i := range s.lanSnapshot.Devices {
-			if normalizeMAC(s.lanSnapshot.Devices[i].MAC) == mac {
-				s.lanSnapshot.Devices[i].Note = dev.Note
-				s.lanSnapshot.Devices[i].Known = lanDeviceKnown(s.lanSnapshot.Devices[i])
+	networks := s.lan.snapshot.Networks
+	s.lan.snapshot = buildLANDeviceSnapshotFromMap(stored, networks, "已更新设备标记。")
+	if noteChanged && s.lan.snapshot.GeneratedAt != "" {
+		for i := range s.lan.snapshot.Devices {
+			if normalizeMAC(s.lan.snapshot.Devices[i].MAC) == mac {
+				s.lan.snapshot.Devices[i].Note = dev.Note
+				s.lan.snapshot.Devices[i].Known = lanDeviceKnown(s.lan.snapshot.Devices[i])
 			}
 		}
-		for i := range s.lanSnapshot.IgnoredDevices {
-			if normalizeMAC(s.lanSnapshot.IgnoredDevices[i].MAC) == mac {
-				s.lanSnapshot.IgnoredDevices[i].Note = dev.Note
-				s.lanSnapshot.IgnoredDevices[i].Known = lanDeviceKnown(s.lanSnapshot.IgnoredDevices[i])
+		for i := range s.lan.snapshot.IgnoredDevices {
+			if normalizeMAC(s.lan.snapshot.IgnoredDevices[i].MAC) == mac {
+				s.lan.snapshot.IgnoredDevices[i].Note = dev.Note
+				s.lan.snapshot.IgnoredDevices[i].Known = lanDeviceKnown(s.lan.snapshot.IgnoredDevices[i])
 			}
 		}
 	}
-	snap := s.lanSnapshot
-	s.lanMu.Unlock()
+	snap := s.lan.snapshot
+	s.lan.mu.Unlock()
 	s.broadcastLANDevices(snap)
 	return snap
 }
