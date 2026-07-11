@@ -203,9 +203,14 @@ function initHostPorts() {
         if (btn) btn.disabled = true;
         if (statusEl) statusEl.textContent = i18n('sampling') + '...';
         try {
-            var resp = await fetch('/api/v1/network/ports', { cache: 'no-store' });
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            render(await resp.json());
+            var data = window.NetwatchAPI
+                ? await window.NetwatchAPI.get('/api/v1/network/ports')
+                : await (async function () {
+                    var resp = await fetch('/api/v1/network/ports', { cache: 'no-store' });
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.json();
+                })();
+            render(data);
         } catch (e) {
             if (statusEl) statusEl.textContent = i18n('sampling_failed') + ': ' + e.message;
         } finally {

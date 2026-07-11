@@ -7,9 +7,13 @@ var i18n = window.__app.i18n;
 
 async function loadSpeedConfig() {
     try {
-        var response = await fetch('/api/v1/speed/config', { cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        var data = await response.json();
+        var data = window.NetwatchAPI
+            ? await window.NetwatchAPI.get('/api/v1/speed/config')
+            : await (async function () {
+                var response = await fetch('/api/v1/speed/config', { cache: 'no-store' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })();
         state.speedConfig = {
             broadband_duration_sec: data.broadband_duration_sec || 10,
             local_transfer_duration_sec: data.local_transfer_duration_sec || 10,
@@ -25,8 +29,8 @@ async function loadSpeedConfig() {
 async function loadSpeedHistory() {
     try {
         var results = await Promise.all([
-            fetch('/api/v1/speed/broadband/history', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
-            fetch('/api/v1/speed/local/history', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            window.NetwatchAPI ? window.NetwatchAPI.get('/api/v1/speed/broadband/history') : fetch('/api/v1/speed/broadband/history', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+            window.NetwatchAPI ? window.NetwatchAPI.get('/api/v1/speed/local/history') : fetch('/api/v1/speed/local/history', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         ]);
         renderBroadbandHistory(Array.isArray(results[0]) ? results[0] : []);
         renderTransferHistory(Array.isArray(results[1]) ? results[1] : []);
@@ -195,8 +199,9 @@ function stopBroadbandPolling() {
 
 async function pollBroadbandTask() {
     try {
-        var response = await fetch('/api/v1/speed/broadband/task', { cache: 'no-store' });
-        var task = await response.json();
+        var task = window.NetwatchAPI
+            ? await window.NetwatchAPI.get('/api/v1/speed/broadband/task')
+            : await (await fetch('/api/v1/speed/broadband/task', { cache: 'no-store' })).json();
         renderBroadbandTask(task);
         if (!task.running) {
             stopBroadbandPolling();
@@ -225,8 +230,9 @@ async function startBroadbandTest() {
     resetBroadbandMetrics();
     els.broadbandNote.textContent = i18n('started_broadband');
     try {
-        var response = await fetch('/api/v1/speed/broadband/start', { method: 'POST' });
-        var task = await response.json();
+        var task = window.NetwatchAPI
+            ? await window.NetwatchAPI.post('/api/v1/speed/broadband/start')
+            : await (await fetch('/api/v1/speed/broadband/start', { method: 'POST' })).json();
         renderBroadbandTask(task);
         startBroadbandPolling();
     } catch (error) {
@@ -241,7 +247,8 @@ async function cancelBroadbandTest(showStopped) {
     if (showStopped === undefined) showStopped = true;
     stopBroadbandPolling();
     try {
-        await fetch('/api/v1/speed/broadband/cancel', { method: 'POST' });
+        if (window.NetwatchAPI) await window.NetwatchAPI.post('/api/v1/speed/broadband/cancel');
+        else await fetch('/api/v1/speed/broadband/cancel', { method: 'POST' });
     } catch (error) {
         console.error(error);
     } finally {
@@ -372,23 +379,28 @@ async function runTransferTest() {
         window.__app.setSpeedPanelMode('transfer', 'Result');
 
         try {
-            await fetch('/api/v1/speed/local/result', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    download_mbps: downloadMbps,
-                    upload_mbps: uploadMbps,
-                    payload_mb: transferStats.payload_mb,
-                    download_mb: transferStats.download_mb,
-                    upload_mb: transferStats.upload_mb,
-                    duration_ms: Math.round(transferStats.duration_ms),
-                    round_trip_latency_ms: Math.round(pingMs),
-                    rtt_min_ms: transferStats.rtt_min_ms,
-                    rtt_avg_ms: transferStats.rtt_avg_ms,
-                    rtt_max_ms: transferStats.rtt_max_ms,
-                    jitter_ms: transferStats.jitter_ms
-                })
-            });
+            var localResultPayload = {
+                download_mbps: downloadMbps,
+                upload_mbps: uploadMbps,
+                payload_mb: transferStats.payload_mb,
+                download_mb: transferStats.download_mb,
+                upload_mb: transferStats.upload_mb,
+                duration_ms: Math.round(transferStats.duration_ms),
+                round_trip_latency_ms: Math.round(pingMs),
+                rtt_min_ms: transferStats.rtt_min_ms,
+                rtt_avg_ms: transferStats.rtt_avg_ms,
+                rtt_max_ms: transferStats.rtt_max_ms,
+                jitter_ms: transferStats.jitter_ms
+            };
+            if (window.NetwatchAPI) {
+                await window.NetwatchAPI.post('/api/v1/speed/local/result', localResultPayload);
+            } else {
+                await fetch('/api/v1/speed/local/result', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(localResultPayload)
+                });
+            }
             await loadSpeedHistory();
         } catch (e) {
             console.error('Failed to save transfer result:', e);

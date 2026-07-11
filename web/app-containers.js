@@ -8,10 +8,13 @@ function escapeHtml(v) {
 }
 
 function fetchContainers() {
-    return fetch('/api/v1/containers', { cache: 'no-store' }).then(function (r) {
-        if (!r.ok) throw new Error('fetch failed');
-        return r.json();
-    }).then(function (data) {
+    var req = window.NetwatchAPI
+        ? window.NetwatchAPI.get('/api/v1/containers')
+        : fetch('/api/v1/containers', { cache: 'no-store' }).then(function (r) {
+            if (!r.ok) throw new Error('fetch failed');
+            return r.json();
+        });
+    return req.then(function (data) {
         window.__app.lastContainerData = data;
         return data;
     });
@@ -26,12 +29,16 @@ function handleContainerAction(e) {
 
     if (action === 'unblock') {
         btn.disabled = true;
-        fetch('/api/v1/containers/unblock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bridge: bridge })
-        }).then(function (r) {
-            if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'unblock failed'); });
+        var unblockReq = window.NetwatchAPI
+            ? window.NetwatchAPI.post('/api/v1/containers/unblock', { bridge: bridge })
+            : fetch('/api/v1/containers/unblock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bridge: bridge })
+            }).then(function (r) {
+                if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'unblock failed'); });
+            });
+        unblockReq.then(function () {
             NetwatchShared.showToast(i18n('container_unblocked'), 'success');
             refreshAll();
         }).catch(function (err) {
@@ -40,12 +47,16 @@ function handleContainerAction(e) {
     } else if (action === 'block') {
         var mode = btn.dataset.mode || 'internet';
         btn.disabled = true;
-        fetch('/api/v1/containers/block', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bridge: bridge, mode: mode })
-        }).then(function (r) {
-            if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'block failed'); });
+        var blockReq = window.NetwatchAPI
+            ? window.NetwatchAPI.post('/api/v1/containers/block', { bridge: bridge, mode: mode })
+            : fetch('/api/v1/containers/block', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bridge: bridge, mode: mode })
+            }).then(function (r) {
+                if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || 'block failed'); });
+            });
+        blockReq.then(function () {
             NetwatchShared.showToast(i18n('container_blocked'), 'success');
             refreshAll();
         }).catch(function (err) {

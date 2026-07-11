@@ -1,5 +1,26 @@
 (function () {
-    const state = {
+    
+    function trafficGet(path) {
+        if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
+        return fetch(path, { cache: 'no-store' }).then(async (r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+        });
+    }
+    function trafficPost(path, body) {
+        if (window.NetwatchAPI) return window.NetwatchAPI.post(path, body);
+        return fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+            return data;
+        });
+    }
+
+const state = {
         theme: localStorage.getItem('theme') || 'dark',
         settings: {
             traffic_sampling_enabled: true,
@@ -471,9 +492,7 @@
 
     async function loadSettings() {
         try {
-            const resp = await fetch('/api/v1/settings', { cache: 'no-store' });
-            if (!resp.ok) return;
-            const data = await resp.json();
+            const data = await trafficGet('/api/v1/settings');
             state.settings = { ...data, traffic_sampling_enabled: data.traffic_sampling_enabled !== false };
             if (els.labelDensity) {
                 els.labelDensity.value = String(state.settings.chart_time_label_interval || 0);
@@ -487,19 +506,12 @@
             ...state.settings,
             chart_time_label_interval: Number.parseInt(els.labelDensity?.value || '0', 10) || 0
         };
-        const resp = await fetch('/api/v1/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!resp.ok) throw new Error('settings save failed');
-        state.settings = { ...state.settings, ...(await resp.json()) };
+        const saved = await trafficPost('/api/v1/settings', payload);
+        state.settings = { ...state.settings, ...saved };
     }
 
     async function loadSnapshot() {
-        const resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
-        if (!resp.ok) throw new Error('app traffic request failed');
-        state.snapshot = await resp.json();
+        state.snapshot = await trafficGet('/api/v1/network/app-traffic');
         if (state.snapshot?.note) {
             els.note.textContent = state.snapshot.note;
         } else if (!state.settings.traffic_sampling_enabled) {
@@ -514,9 +526,7 @@
             state.selectedHistory = [];
             return;
         }
-        const resp = await fetch(historyURL(bridge), { cache: 'no-store' });
-        if (!resp.ok) throw new Error('history request failed');
-        state.selectedHistory = await resp.json();
+        state.selectedHistory = await trafficGet(historyURL(bridge));
     }
 
     async function loadTop() {
@@ -524,9 +534,7 @@
         if (state.range !== 'all') {
             params.set('range', state.range);
         }
-        const resp = await fetch(`/api/v1/network/app-traffic/top?${params.toString()}`, { cache: 'no-store' });
-        if (!resp.ok) throw new Error('top request failed');
-        state.topItems = await resp.json();
+        state.topItems = await trafficGet(`/api/v1/network/app-traffic/top?${params.toString()}`);
         state.topLoadedAt = Date.now();
     }
 
@@ -547,12 +555,7 @@
 
     async function loadLiveSample() {
         if (!state.selectedBridge) return;
-        const resp = await fetch(liveURL(state.selectedBridge), {
-            method: 'POST',
-            cache: 'no-store'
-        });
-        if (!resp.ok) throw new Error('live sample failed');
-        const data = await resp.json();
+        const data = await trafficPost(liveURL(state.selectedBridge));
         mergeLiveBridge(data.bridge);
         state.selectedHistory = Array.isArray(data.history) ? data.history : [];
     }

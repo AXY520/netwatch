@@ -1,6 +1,29 @@
 (function () {
     const i18n = window.__;
-    const state = {
+    
+    function lanGet(path) {
+        if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
+        return fetch(path, { cache: 'no-store' }).then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+            return data;
+        });
+    }
+    function lanPost(path, body) {
+        if (window.NetwatchAPI) return window.NetwatchAPI.post(path, body);
+        return fetch(path, {
+            method: 'POST',
+            headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            cache: 'no-store'
+        }).then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+            return data;
+        });
+    }
+
+const state = {
         theme: localStorage.getItem('theme') || 'dark',
         logoClicks: 0,
         logoClickTimer: null,
@@ -373,23 +396,12 @@
 
     async function saveLANSettings({ silent = false } = {}) {
         if (!state.settings) {
-            const settingsResp = await fetch('/api/v1/settings', { cache: 'no-store' });
-            if (!settingsResp.ok) throw new Error(`HTTP ${settingsResp.status}`);
-            state.settings = normalizeSettings(await settingsResp.json());
+            state.settings = normalizeSettings(await lanGet('/api/v1/settings'));
         }
         const payload = collectSettingsPayload();
         if (els.saveSettings) els.saveSettings.disabled = true;
         try {
-            const resp = await fetch('/api/v1/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!resp.ok) {
-                const data = await resp.json().catch(() => ({}));
-                throw new Error(data.error || `HTTP ${resp.status}`);
-            }
-            state.settings = normalizeSettings(await resp.json());
+            state.settings = normalizeSettings(await lanPost('/api/v1/settings', payload));
             applySettingsToForm();
             startSSE();
             if (!silent) showToast(i18n('settings_saved'), 'success');
@@ -507,12 +519,10 @@
             els.refreshBtn.setAttribute('aria-label', busyLabel);
         }
         try {
-            const resp = await fetch('/api/v1/lan/devices', {
-                method: scan ? 'POST' : 'GET',
-                cache: 'no-store'
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            render(await resp.json());
+            const devices = scan
+                ? await lanPost('/api/v1/lan/devices')
+                : await lanGet('/api/v1/lan/devices');
+            render(devices);
         } catch (err) {
             showToast(`${i18n('lan_load_failed')}: ${err.message}`, 'error');
         } finally {
@@ -526,9 +536,7 @@
 
     async function loadSettingsAndScheduleRefresh() {
         try {
-            const resp = await fetch('/api/v1/settings', { cache: 'no-store' });
-            if (!resp.ok) return;
-            state.settings = normalizeSettings(await resp.json());
+            state.settings = normalizeSettings(await lanGet('/api/v1/settings'));
             applySettingsToForm();
             startSSE();
             loadLazycatDevices();
@@ -539,13 +547,7 @@
 
     async function updateDeviceMeta(payload) {
         try {
-            const resp = await fetch('/api/v1/lan/devices/meta', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            render(await resp.json());
+            render(await lanPost('/api/v1/lan/devices/meta', payload));
             showToast(i18n('device_mark_updated'), 'success');
         } catch (err) {
             showToast(`${i18n('device_mark_failed')}: ${err.message}`, 'error');

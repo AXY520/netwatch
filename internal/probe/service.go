@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +129,7 @@ type Service struct {
 }
 
 func NewService(cfg Config) *Service {
+	def := DefaultMutableSettings()
 	s := &Service{
 		cfg:                         cfg,
 		timeseries:                  newTimeseriesStore(cfg.DataDir),
@@ -144,29 +146,39 @@ func NewService(cfg Config) *Service {
 		lanInterfaceDone:            make(chan struct{}),
 		lanNotifyCooldown:           make(map[string]time.Time),
 		lanFlappingHistory:          make(map[string][]time.Time),
-		lanMaxCheckAttempts:         3,
-		lanNotifyCooldownSec:        600, // 10 minutes
-		lanFlappingThreshold:        5,   // 5 state changes
-		lanFlappingWindow:           10 * time.Minute,
+		lanMaxCheckAttempts:         def.LANMaxCheckAttempts,
+		lanNotifyCooldownSec:        def.LANNotifyCooldownSec,
+		lanFlappingThreshold:        def.LANFlappingThreshold,
+		lanFlappingWindow:           time.Duration(def.LANFlappingWindowSec) * time.Second,
 		registeredDevices:           loadRegisteredDevices(cfg.DataDir),
-		chartTimeLabelInterval:      0,
-		trafficSamplingEnabled:      true,
-		trafficSamplingInterval:     60,
+		chartTimeLabelInterval:      def.ChartTimeLabelInterval,
+		containerControlEnabled:     def.ContainerControlEnabled,
+		trafficSamplingEnabled:      def.TrafficSamplingEnabled,
+		trafficSamplingInterval:     def.TrafficSamplingIntervalSec,
 		perAppSamplingInterval:      make(map[string]int),
-		backgroundMonitorInterval:   60,
-		notificationsEnabled:        false,
-		clientNotificationEnabled:   true,
-		notifyAbnormalTraffic:       true,
-		notifyEgressChange:          true,
-		notifyConnectivityChange:    true,
-		notifyLANDeviceChange:       true,
-		lanDeviceOfflineAfter:       180,
-		lanDeviceOnlineAfter:        0,
-		lanDeviceOfflineNotifyDelay: 120,
-		lanDeviceOnlineNotifyDelay:  120,
-		abnormalTrafficThreshold:    100,
-		barkServerURL:               "https://api.day.app",
-		barkGroup:                   "Netwatch",
+		backgroundMonitorEnabled:    def.BackgroundMonitorEnabled,
+		backgroundMonitorInterval:   def.BackgroundMonitorIntervalSec,
+		notificationsEnabled:        def.NotificationsEnabled,
+		clientNotificationEnabled:   def.ClientNotificationEnabled,
+		notifyAbnormalTraffic:       def.NotifyAbnormalTraffic,
+		notifyEgressChange:          def.NotifyEgressChange,
+		notifyConnectivityChange:    def.NotifyConnectivityChange,
+		notifyLANDeviceChange:       def.NotifyLANDeviceChange,
+		lanDeviceOfflineAfter:       def.LANDeviceOfflineAfterSec,
+		lanDeviceOnlineAfter:        def.LANDeviceOnlineAfterSec,
+		lanDeviceOfflineNotifyDelay: def.LANDeviceOfflineNotifyDelaySec,
+		lanDeviceOnlineNotifyDelay:  def.LANDeviceOnlineNotifyDelaySec,
+		abnormalTrafficThreshold:    def.AbnormalTrafficThresholdMbps,
+		barkEnabled:                 def.BarkEnabled,
+		barkServerURL:               def.BarkServerURL,
+		barkGroup:                   def.BarkGroup,
+		pushPlusEnabled:             def.PushPlusEnabled,
+		dndEnabled:                  def.DNDEnabled,
+		dndStart:                    def.DNDStart,
+		dndEnd:                      def.DNDEnd,
+		scheduledNotifyEnabled:      def.ScheduledNotifyEnabled,
+		scheduledNotifyTime:         def.ScheduledNotifyTime,
+		lanDeviceAutoRemoveDays:     def.LANDeviceAutoRemoveDays,
 		blockedBridges:              map[string]string{},
 		networkConfigRollbacks:      map[string]*networkConfigRollback{},
 	}
@@ -213,6 +225,72 @@ func (s *Service) LifecycleContext() context.Context {
 // traceCtx returns a cancellable context derived from the service lifecycle.
 func (s *Service) traceCtx() context.Context {
 	return s.closeCtx
+}
+
+// CapabilityReport describes runtime features available in the current environment.
+type CapabilityReport struct {
+	GeneratedAt          string   `json:"generated_at"`
+	HostNetworkLikely    bool     `json:"host_network_likely"`
+	MTR                  bool     `json:"mtr"`
+	Nmcli                bool     `json:"nmcli"`
+	Iptables             bool     `json:"iptables"`
+	Nsenter              bool     `json:"nsenter"`
+	DockerSocket         bool     `json:"docker_socket"`
+	LazycatBridgeTraffic bool     `json:"lazycat_bridge_traffic"`
+	ContainerControl     bool     `json:"container_control"`
+	NetworkConfig        bool     `json:"network_config"`
+	Trace                bool     `json:"trace"`
+	AppTraffic           bool     `json:"app_traffic"`
+	LANDiscovery         bool     `json:"lan_discovery"`
+	Notes                []string `json:"notes,omitempty"`
+}
+
+func binaryAvailable(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func (s *Service) Capabilities() CapabilityReport {
+	findBinPaths()
+	mtrOK := binaryAvailable("mtr")
+	nmcliOK := binaryAvailable("nmcli")
+	iptOK := iptablesAvailable()
+	nsenterOK := nsenterAvailable()
+	dockerOK := dockerlzc.Available()
+	// App bridge traffic is readable whenever /sys/class/net is visible; mapping to
+	// app titles benefits from docker socket but is not strictly required.
+	appTrafficOK := true
+	if _, err := os.Stat("/sys/class/net"); err != nil {
+		appTrafficOK = false
+	}
+	report := CapabilityReport{
+		GeneratedAt:          localTimestamp(),
+		HostNetworkLikely:    true, // best-effort; host network is the supported deploy mode
+		MTR:                  mtrOK,
+		Nmcli:                nmcliOK,
+		Iptables:             iptOK,
+		Nsenter:              nsenterOK,
+		DockerSocket:         dockerOK,
+		LazycatBridgeTraffic: appTrafficOK && dockerOK,
+		ContainerControl:     dockerOK && (iptOK || nsenterOK),
+		NetworkConfig:        nmcliOK,
+		Trace:                mtrOK,
+		AppTraffic:           appTrafficOK,
+		LANDiscovery:         true,
+	}
+	if !mtrOK {
+		report.Notes = append(report.Notes, "mtr unavailable: route tracing disabled")
+	}
+	if !nmcliOK {
+		report.Notes = append(report.Notes, "nmcli unavailable: host network config UI will degrade")
+	}
+	if !dockerOK {
+		report.Notes = append(report.Notes, "docker socket unavailable: app titles and container control limited")
+	}
+	if !iptOK && !nsenterOK {
+		report.Notes = append(report.Notes, "iptables/nsenter unavailable: container network block disabled")
+	}
+	return report
 }
 
 func (s *Service) Close() {

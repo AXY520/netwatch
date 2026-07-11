@@ -5,6 +5,41 @@ var state = window.__app.state;
 var els = window.__app.els;
 var i18n = window.__app.i18n;
 
+function netwatchGet(path) {
+    if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
+    return fetch(path, { cache: 'no-store' }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+            if (!r.ok) {
+                var err = new Error((data && data.error) || ('HTTP ' + r.status));
+                err.status = r.status;
+                err.payload = data;
+                throw err;
+            }
+            return data;
+        });
+    });
+}
+function netwatchPost(path, body) {
+    if (window.NetwatchAPI) return window.NetwatchAPI.post(path, body);
+    var init = { method: 'POST', cache: 'no-store' };
+    if (body !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify(body);
+    }
+    return fetch(path, init).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+            if (!r.ok) {
+                var err = new Error((data && data.error) || ('HTTP ' + r.status));
+                err.status = r.status;
+                err.payload = data;
+                throw err;
+            }
+            return data;
+        });
+    });
+}
+
+
 function detectProxyState() {
     var ci = (state.summary && state.summary.website_connectivity) || {};
     var globalSites = (ci.global || []).filter(function (s) { return s && s.status; });
@@ -61,11 +96,18 @@ async function loadSummary(showOverlay, refresh) {
     if (refresh === undefined) refresh = false;
     if (showOverlay) els.overlay.style.display = 'flex';
     try {
-        var url = refresh ? '/api/v1/probe/run' : '/api/v1/summary';
-        var method = refresh ? 'POST' : 'GET';
-        var response = await fetch(url, { method: method, cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        var data = await response.json();
+        var data;
+        if (window.NetwatchAPI) {
+            data = refresh
+                ? await window.NetwatchAPI.post('/api/v1/probe/run')
+                : await window.NetwatchAPI.get('/api/v1/summary');
+        } else {
+            var url = refresh ? '/api/v1/probe/run' : '/api/v1/summary';
+            var method = refresh ? 'POST' : 'GET';
+            var response = await fetch(url, { method: method, cache: 'no-store' });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            data = await response.json();
+        }
         renderSummary(data);
     } catch (error) {
         console.error(error);
@@ -82,8 +124,9 @@ async function runFastRefresh(showOverlay) {
     els.refreshBtn.disabled = true;
     if (showOverlay) els.overlay.style.display = 'flex';
     try {
-        var response = await fetch('/api/v1/probe/run', { method: 'POST' });
-        var data = await response.json();
+        var data = window.NetwatchAPI
+            ? await window.NetwatchAPI.post('/api/v1/probe/run')
+            : await (await fetch('/api/v1/probe/run', { method: 'POST' })).json();
         renderSummary(data);
     } catch (error) {
         console.error(error);
@@ -99,9 +142,13 @@ async function runWebsiteRefresh() {
     els.websiteRefreshBtn.disabled = true;
     els.websiteStatus.textContent = i18n('checking') + '...';
     try {
-        var response = await fetch('/api/v1/connectivity/websites/run', { method: 'POST' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        var websiteData = await response.json();
+        var websiteData = window.NetwatchAPI
+            ? await window.NetwatchAPI.post('/api/v1/connectivity/websites/run')
+            : await (async function () {
+                var response = await fetch('/api/v1/connectivity/websites/run', { method: 'POST' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })();
         window.__app.updateConnectivityTable(els.domesticTable, websiteData.domestic || []);
         window.__app.updateConnectivityTable(els.globalTable, websiteData.global || []);
         els.websiteStatus.textContent = '';
@@ -122,9 +169,13 @@ async function runNATRefresh() {
     els.natRefreshBtn.disabled = true;
     if (els.natStatus) els.natStatus.textContent = i18n('checking') + '...';
     try {
-        var response = await fetch('/api/v1/network/nat/run', { method: 'POST', cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        var nat = await response.json();
+        var nat = window.NetwatchAPI
+            ? await window.NetwatchAPI.post('/api/v1/network/nat/run')
+            : await (async function () {
+                var response = await fetch('/api/v1/network/nat/run', { method: 'POST', cache: 'no-store' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })();
         if (state.summary && state.summary.network_info) {
             state.summary.network_info.nat = nat;
         }
@@ -258,15 +309,15 @@ async function loadIPv6RenewNICs() {
     if (window.syncCustomSelect) window.syncCustomSelect(selectEl);
     if (execBtn) execBtn.disabled = true;
     try {
-        var resp = await fetch('/api/v1/network/ipv6/renew-nics', { cache: 'no-store' });
-        if (!resp.ok) {
-            var err = await resp.json().catch(function () { return {}; });
+        var data;
+        try {
+            data = await netwatchGet('/api/v1/network/ipv6/renew-nics');
+        } catch (err) {
             selectEl.disabled = true;
             if (window.syncCustomSelect) window.syncCustomSelect(selectEl);
-            if (statusEl) statusEl.textContent = err.error || i18n('ipv6_renew_unavailable');
+            if (statusEl) statusEl.textContent = (err && err.message) || i18n('ipv6_renew_unavailable');
             return;
         }
-        var data = await resp.json();
         var nics = data.nics || [];
         if (nics.length === 0) {
             selectEl.disabled = true;
@@ -303,12 +354,7 @@ async function runIPv6Renew() {
     if (outputEl) outputEl.hidden = true;
     if (statusEl) statusEl.textContent = i18n('ipv6_renew_running') + ' ' + device + '...';
     try {
-        var resp = await fetch('/api/v1/network/ipv6/renew', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ device: device })
-        });
-        var result = await resp.json();
+        var result = await netwatchPost('/api/v1/network/ipv6/renew', { device: device });
         if (result.ok) {
             if (statusEl) statusEl.textContent = i18n('ipv6_renew_ok') + ': ' + device;
             if (outputEl && result.output) {
@@ -316,8 +362,8 @@ async function runIPv6Renew() {
                 outputEl.hidden = false;
             }
             setTimeout(function () {
-                fetch('/api/v1/network/egress-lookups', { method: 'POST', cache: 'no-store' })
-                    .then(function (r) { return r.json(); }).then(renderEgressLookups).catch(function () {});
+                netwatchPost('/api/v1/network/egress-lookups')
+                    .then(renderEgressLookups).catch(function () {});
             }, 1500);
         } else {
             if (statusEl) statusEl.textContent = i18n('ipv6_renew_failed') + ': ' + (result.error || '');
@@ -446,9 +492,8 @@ function renderNetworkConfigPending(pending, openWindow) {
 
 async function loadNetworkConfigPending(openWindow) {
     try {
-        var resp = await fetch('/api/v1/network/config/pending', { cache: 'no-store' });
-        if (!resp.ok) return;
-        renderNetworkConfigPending(await resp.json(), openWindow);
+        var pending = await netwatchGet('/api/v1/network/config/pending');
+        renderNetworkConfigPending(pending, openWindow);
     } catch (_) {}
 }
 
@@ -485,7 +530,23 @@ async function loadNetworkConfigDevices() {
     if (e.status) e.status.textContent = i18n('loading') + '...';
     if (e.output) e.output.hidden = true;
     try {
-        var resp = await fetch('/api/v1/network/config/devices', { cache: 'no-store' });
+        var respData;
+        var respStatus = 200;
+        try {
+            respData = await netwatchGet('/api/v1/network/config/devices');
+        } catch (err) {
+            respStatus = err.status || 500;
+            if (respStatus === 404) {
+                respData = null;
+            } else {
+                throw err;
+            }
+        }
+        var resp = {
+            status: respStatus,
+            ok: respStatus >= 200 && respStatus < 300,
+            json: async function () { return respData; }
+        };
         if (resp.status === 404) {
             if (e.status) e.status.textContent = i18n('network_config_backend_old');
             return;
@@ -541,13 +602,8 @@ async function applyNetworkConfig() {
     if (e.status) e.status.textContent = i18n('network_config_applying');
     if (e.output) e.output.hidden = true;
     try {
-        var resp = await fetch('/api/v1/network/config/apply', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        var result = await resp.json();
-        if (!resp.ok || !result.ok) throw new Error(result.error || ('HTTP ' + resp.status));
+        var result = await netwatchPost('/api/v1/network/config/apply', payload);
+        if (!result.ok) throw new Error(result.error || 'apply failed');
         state.networkConfigRollbackID = result.rollback_id;
         await loadNetworkConfigPending(false);
         if (e.output) {
@@ -581,12 +637,7 @@ async function checkNetworkConfigIP() {
     if (e.checkIP) e.checkIP.disabled = true;
     if (e.status) e.status.textContent = i18n('network_config_checking_ip') + ': ' + ipOnly;
     try {
-        var resp = await fetch('/api/v1/network/config/check-ip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        var result = await resp.json();
+        var result = await netwatchPost('/api/v1/network/config/check-ip', payload);
         if (!resp.ok || !result.ok) throw new Error(result.error || ('HTTP ' + resp.status));
         if (e.status) e.status.textContent = result.available ? i18n('network_config_ip_available') : (i18n('network_config_ip_occupied') + ': ' + (result.error || result.ip || ''));
     } catch (err) {
@@ -605,13 +656,8 @@ async function finishNetworkConfig(kind) {
     }
     var url = kind === 'confirm' ? '/api/v1/network/config/confirm' : '/api/v1/network/config/rollback';
     try {
-        var resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: id })
-        });
-        var result = await resp.json();
-        if (!resp.ok || !result.ok) throw new Error(result.error || ('HTTP ' + resp.status));
+        var result = await netwatchPost(url, { id: id });
+        if (!result.ok) throw new Error(result.error || (kind + ' failed'));
         state.networkConfigRollbackID = '';
         state.networkConfigPendingData = null;
         stopNetworkConfigCountdown();
@@ -656,11 +702,10 @@ async function initEgressLookups() {
         if (statusEl) statusEl.textContent = force ? i18n('querying') + '...' : i18n('loading') + '...';
         btn.disabled = true;
         try {
-            var resp = await fetch('/api/v1/network/egress-lookups', {
-                method: force ? 'POST' : 'GET',
-                cache: 'no-store'
-            });
-            renderEgressLookups(await resp.json());
+            var egressData = force
+                ? await netwatchPost('/api/v1/network/egress-lookups')
+                : await netwatchGet('/api/v1/network/egress-lookups');
+            renderEgressLookups(egressData);
         } catch (e) {
             if (statusEl) statusEl.textContent = i18n('load_failed') + ': ' + e.message;
         } finally {
@@ -772,8 +817,8 @@ function initAppTraffic() {
             if (ctrlEnabled && window.__app.fetchContainers) {
                 await window.__app.fetchContainers().catch(function () {});
             }
-            var resp = await fetch('/api/v1/network/app-traffic', { cache: 'no-store' });
-            renderTraffic(await resp.json());
+            var trafficData = await netwatchGet('/api/v1/network/app-traffic');
+            renderTraffic(trafficData);
         } catch (e) {
             if (statusEl) statusEl.textContent = i18n('sampling_failed') + ': ' + e.message;
         } finally {
@@ -889,13 +934,7 @@ function initAppTraffic() {
             bark_group: state.settings.bark_group
         };
         try {
-            var resp = await fetch('/api/v1/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!resp.ok) throw new Error('save failed');
-            var saved = await resp.json();
+            var saved = await netwatchPost('/api/v1/settings', payload);
             state.settings = Object.assign({}, state.settings, saved);
             trafficSettingsWindow.classList.remove('active');
             document.getElementById('window-backdrop').classList.remove('active');
@@ -940,9 +979,8 @@ function initNICRealtime() {
         if (manual === undefined) manual = false;
         try {
             if (manual && els.nicRealtimeRefreshBtn) els.nicRealtimeRefreshBtn.disabled = true;
-            var resp = await fetch('/api/v1/network/realtime', { cache: 'no-store' });
-            if (!resp.ok) return;
-            window.renderNICRealtime(await resp.json());
+            var realtimeData = await netwatchGet('/api/v1/network/realtime');
+            window.renderNICRealtime(realtimeData);
         } catch (_) {
             if (statusEl) statusEl.textContent = i18n('sampling_failed');
         } finally {
@@ -999,10 +1037,13 @@ function initTrace() {
         ]);
         out.innerHTML = '<div class="trace-empty">' + i18n('collecting_trace') + '</div>';
         try {
-            await fetch('/api/v1/diagnostics/trace?host=' + encodeURIComponent(host), { method: 'POST', cache: 'no-store' });
+            if (window.NetwatchAPI) {
+                await window.NetwatchAPI.post('/api/v1/diagnostics/trace?host=' + encodeURIComponent(host));
+            } else {
+                await fetch('/api/v1/diagnostics/trace?host=' + encodeURIComponent(host), { method: 'POST', cache: 'no-store' });
+            }
             var poll = async function () {
-                var resp = await fetch('/api/v1/diagnostics/trace/task', { cache: 'no-store' });
-                var data = await resp.json();
+                var data = await netwatchGet('/api/v1/diagnostics/trace/task');
                 if (data.error) {
                     renderTraceSummary([
                         { label: i18n('target'), value: data.target || host },

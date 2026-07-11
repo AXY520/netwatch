@@ -114,9 +114,13 @@ function applySettingsToForm() {
 
 async function loadSettings() {
     try {
-        var settingsResp = await fetch('/api/v1/settings', { cache: 'no-store' });
-        if (!settingsResp.ok) throw new Error('HTTP ' + settingsResp.status);
-        var settingsData = await settingsResp.json();
+        var settingsData = window.NetwatchAPI
+            ? await window.NetwatchAPI.get('/api/v1/settings')
+            : await (async function () {
+                var settingsResp = await fetch('/api/v1/settings', { cache: 'no-store' });
+                if (!settingsResp.ok) throw new Error('HTTP ' + settingsResp.status);
+                return settingsResp.json();
+            })();
         state.settings = {
             refresh_interval_sec: settingsData.refresh_interval_sec || state.refreshInterval || 10,
             broadband_domestic_only: !!settingsData.broadband_domestic_only,
@@ -204,12 +208,16 @@ async function saveSettings() {
     };
 
     try {
-        var settingsResp = await fetch('/api/v1/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!settingsResp.ok) throw new Error('settings save failed');
+        if (window.NetwatchAPI) {
+            await window.NetwatchAPI.post('/api/v1/settings', payload);
+        } else {
+            var settingsResp = await fetch('/api/v1/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!settingsResp.ok) throw new Error('settings save failed');
+        }
         state.settings = Object.assign({}, state.settings, payload);
         state.refreshInterval = payload.refresh_interval_sec;
         applySettingsToForm();
@@ -225,10 +233,14 @@ async function saveSettings() {
 async function testBarkNotification() {
     try {
         await saveSettings();
-        var resp = await fetch('/api/v1/notifications/bark/test', { method: 'POST' });
-        if (!resp.ok) {
-            var data = await resp.json().catch(function () { return {}; });
-            throw new Error(data.error || 'HTTP ' + resp.status);
+        if (window.NetwatchAPI) {
+            await window.NetwatchAPI.post('/api/v1/notifications/bark/test');
+        } else {
+            var resp = await fetch('/api/v1/notifications/bark/test', { method: 'POST' });
+            if (!resp.ok) {
+                var data = await resp.json().catch(function () { return {}; });
+                throw new Error(data.error || 'HTTP ' + resp.status);
+            }
         }
         NetwatchShared.showToast('Bark \u6D4B\u8BD5\u63A8\u9001\u5DF2\u53D1\u9001', 'success');
     } catch (err) {
@@ -239,10 +251,14 @@ async function testBarkNotification() {
 async function testPushPlusNotification() {
     try {
         await saveSettings();
-        var resp = await fetch('/api/v1/notifications/pushplus/test', { method: 'POST' });
-        if (!resp.ok) {
-            var data = await resp.json().catch(function () { return {}; });
-            throw new Error(data.error || 'HTTP ' + resp.status);
+        if (window.NetwatchAPI) {
+            await window.NetwatchAPI.post('/api/v1/notifications/pushplus/test');
+        } else {
+            var resp = await fetch('/api/v1/notifications/pushplus/test', { method: 'POST' });
+            if (!resp.ok) {
+                var data = await resp.json().catch(function () { return {}; });
+                throw new Error(data.error || 'HTTP ' + resp.status);
+            }
         }
         NetwatchShared.showToast(i18n('test_pushplus') + ' \u2713', 'success');
     } catch (err) {

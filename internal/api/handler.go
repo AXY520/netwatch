@@ -28,6 +28,7 @@ func NewHandler(service *probe.Service) *Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", h.handleHealth)
+	mux.HandleFunc("/api/v1/capabilities", h.handleCapabilities)
 	mux.HandleFunc("/api/v1/summary", h.handleSummary)
 	mux.HandleFunc("/api/v1/connectivity/websites", h.handleWebsiteConnectivity)
 	mux.HandleFunc("/api/v1/connectivity/websites/run", h.handleWebsiteRefresh)
@@ -76,6 +77,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/containers/block", h.handleContainerBlock)
 	mux.HandleFunc("/api/v1/containers/unblock", h.handleContainerUnblock)
 	mux.HandleFunc("/metrics", h.handleMetrics)
+}
+
+func (h *Handler) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.Capabilities())
 }
 
 func (h *Handler) handleNetworkConfigDevices(w http.ResponseWriter, r *http.Request) {

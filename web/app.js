@@ -284,6 +284,33 @@ function setSSEStatus(status) {
     el.title = '实时连接: ' + label;
 }
 
+
+function applyCapabilities(caps) {
+    var el = document.getElementById('capability-strip');
+    if (!el || !caps) return;
+    var items = [];
+    items.push(caps.trace ? 'TRACE' : 'NO-TRACE');
+    items.push(caps.network_config ? 'NETCFG' : 'NO-NETCFG');
+    items.push(caps.docker_socket ? 'DOCKER' : 'NO-DOCKER');
+    items.push(caps.app_traffic ? 'TRAFFIC' : 'NO-TRAFFIC');
+    items.push(caps.container_control ? 'CTL' : 'NO-CTL');
+    el.textContent = items.join(' · ');
+    el.title = (caps.notes || []).join('\n');
+    el.classList.toggle('is-degraded', !caps.trace || !caps.network_config);
+}
+
+async function loadCapabilities() {
+    try {
+        var caps = window.NetwatchAPI
+            ? await window.NetwatchAPI.get('/api/v1/capabilities')
+            : await (await fetch('/api/v1/capabilities', { cache: 'no-store' })).json();
+        state.capabilities = caps;
+        applyCapabilities(caps);
+    } catch (err) {
+        console.debug('capabilities unavailable', err);
+    }
+}
+
 function initSSE() {
     if (state.sse) return;
     setSSEStatus('connecting');
@@ -377,6 +404,7 @@ function initWithRetry(maxRetries) {
     });
 
     initSSE();
+    loadCapabilities();
     if (window.__app.initTrace) window.__app.initTrace();
     if (window.__app.initEgressLookups) window.__app.initEgressLookups();
     if (window.__app.initHostPorts) window.__app.initHostPorts();
