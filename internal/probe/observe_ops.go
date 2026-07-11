@@ -148,6 +148,11 @@ func (s *Service) GetRealtimeNetStats() RealtimeNetStats {
 	return s.nicStats.sampleAndSnapshot()
 }
 
+// ForceGetRealtimeNetStats always double-samples so manual refresh gets fresh bps.
+func (s *Service) ForceGetRealtimeNetStats() RealtimeNetStats {
+	return s.nicStats.forceSampleAndSnapshot()
+}
+
 // GetEgressLookups 返回缓存的多源查询结果，若没缓存则同步触发一次（冷启动场景）。
 func (s *Service) GetEgressLookups(ctx context.Context) EgressLookupResult {
 	s.egressMu.Lock()

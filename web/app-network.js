@@ -955,6 +955,7 @@ function initAppTraffic() {
     });
     var tsSaveBtn = document.getElementById('ts-save-btn');
     if (tsSaveBtn) tsSaveBtn.addEventListener('click', saveTrafficSettings);
+    updateTrafficAnalysisLink();
 }
 
 function initNICRealtime() {
@@ -979,7 +980,10 @@ function initNICRealtime() {
         if (manual === undefined) manual = false;
         try {
             if (manual && els.nicRealtimeRefreshBtn) els.nicRealtimeRefreshBtn.disabled = true;
-            var realtimeData = await netwatchGet('/api/v1/network/realtime');
+            if (statusEl && manual) statusEl.textContent = i18n('waiting_for_sample');
+            // force=1: backend double-samples so first paint already has bps
+            var path = manual ? '/api/v1/network/realtime?force=1' : '/api/v1/network/realtime';
+            var realtimeData = await netwatchGet(path);
             window.renderNICRealtime(realtimeData);
         } catch (_) {
             if (statusEl) statusEl.textContent = i18n('sampling_failed');
@@ -988,8 +992,11 @@ function initNICRealtime() {
         }
     };
     updateNICRealtimeRefreshButton();
-    if (els.nicRealtimeRefreshBtn) els.nicRealtimeRefreshBtn.addEventListener('click', function () { tick(true); });
-    tick();
+    if (els.nicRealtimeRefreshBtn) {
+        els.nicRealtimeRefreshBtn.addEventListener('click', function () { tick(true); });
+    }
+    // Startup: always force one double-sample so the card is not empty/zero-rate
+    tick(true);
     if (window.__app.applySettingsToForm) window.__app.applySettingsToForm();
 }
 
@@ -1098,13 +1105,23 @@ function initTrace() {
 
 function updateNICRealtimeRefreshButton() {
     if (!els.nicRealtimeRefreshBtn) return;
-    els.nicRealtimeRefreshBtn.style.display = state.settings.nic_realtime_enabled ? 'none' : '';
+    // Always show manual refresh; SSE/auto sampling does not replace an immediate re-sample.
+    els.nicRealtimeRefreshBtn.style.display = '';
+    els.nicRealtimeRefreshBtn.title = i18n('refresh_btn');
+    els.nicRealtimeRefreshBtn.setAttribute('aria-label', i18n('refresh_btn'));
 }
 
 function updateTrafficAnalysisLink() {
     var link = document.getElementById('traffic-analysis-link');
     if (!link) return;
-    link.hidden = !state.settings.traffic_sampling_enabled;
+    var enabled = !!(state.settings && state.settings.traffic_sampling_enabled);
+    // Keep the entry visible so users can always reach the trend page.
+    // When sampling is off, dim the link and still allow navigation (page degrades itself).
+    link.hidden = false;
+    link.removeAttribute('hidden');
+    link.classList.toggle('is-disabled', !enabled);
+    link.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    link.title = enabled ? i18n('traffic_analysis_btn') : (i18n('traffic_analysis_btn') + ' (' + i18n('sampling_off_hint') + ')');
 }
 
 window.__app.loadSummary = loadSummary;

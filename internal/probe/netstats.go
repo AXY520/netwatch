@@ -48,12 +48,13 @@ type nicCounters struct {
 }
 
 type nicStatsTracker struct {
-	mu        sync.RWMutex
-	last      map[string]nicCounters
-	current   map[string]NICThroughput
-	active    bool
-	interval  time.Duration
-	onSampled func(RealtimeNetStats)
+	mu          sync.RWMutex
+	last        map[string]nicCounters
+	current     map[string]NICThroughput
+	active      bool
+	interval    time.Duration
+	sampleCount int
+	onSampled   func(RealtimeNetStats)
 }
 
 func newNICStatsTracker() *nicStatsTracker {
@@ -160,6 +161,7 @@ func (t *nicStatsTracker) sample() {
 		next[name] = out
 	}
 	t.current = next
+	t.sampleCount++
 	out := RealtimeNetStats{Timestamp: localTimestamp()}
 	for _, name := range sortedNICNames(next) {
 		out.NICs = append(out.NICs, next[name])
@@ -183,7 +185,32 @@ func (t *nicStatsTracker) snapshot() RealtimeNetStats {
 	return out
 }
 
+func (t *nicStatsTracker) primed() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	// Two samples are required before rx_bps/tx_bps are meaningful.
+	return t.sampleCount >= 2
+}
+
+// sampleAndSnapshot returns the latest NIC throughput snapshot.
+// Throughput needs two samples; if the tracker is still cold we take a short
+// second sample so the first API response already has usable bps values.
 func (t *nicStatsTracker) sampleAndSnapshot() RealtimeNetStats {
+	if !t.primed() {
+		t.sample()
+		time.Sleep(300 * time.Millisecond)
+		t.sample()
+		return t.snapshot()
+	}
+	t.sample()
+	return t.snapshot()
+}
+
+// forceSampleAndSnapshot always takes two samples spaced briefly apart so a
+// manual refresh yields a fresh rate instead of only cumulative counters.
+func (t *nicStatsTracker) forceSampleAndSnapshot() RealtimeNetStats {
+	t.sample()
+	time.Sleep(300 * time.Millisecond)
 	t.sample()
 	return t.snapshot()
 }

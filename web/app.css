@@ -230,6 +230,16 @@
             color: var(--bg-color);
         }
 
+        .button-link.is-disabled {
+            opacity: 0.55;
+        }
+        .button-link.is-disabled:hover {
+            opacity: 0.75;
+        }
+        .lan-scan-btn {
+            min-width: 4.5rem;
+        }
+
         button:disabled,
         select:disabled {
             border-color: var(--text-muted);

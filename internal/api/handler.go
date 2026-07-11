@@ -481,7 +481,13 @@ func (h *Handler) handleTraceTask(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetTraceTask())
 }
 
-func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, r *http.Request) {
+	// Manual refresh: POST or ?force=1 always double-samples for usable bps.
+	force := r.Method == http.MethodPost || r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+	if force {
+		writeJSON(w, http.StatusOK, h.service.ForceGetRealtimeNetStats())
+		return
+	}
 	writeJSON(w, http.StatusOK, h.service.GetRealtimeNetStats())
 }
 

@@ -696,11 +696,6 @@ const state = {
 
     NetwatchShared.initLazycatFullscreen?.();
     loadSettingsAndScheduleRefresh();
-    // First load: try cached data, if empty then scan
-    load(false).then(function () {
-        var data = state.lastLANData;
-        if (!data || !data.devices || data.devices.length === 0) {
-            return load(true);
-        }
-    });
+    // Always scan once on page open so list is fresh (POST path does not notify).
+    load(true);
 })();

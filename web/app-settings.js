@@ -223,6 +223,7 @@ async function saveSettings() {
         applySettingsToForm();
         state.nicRealtimeInitialized = false;
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
+        if (window.__app.updateTrafficAnalysisLink) window.__app.updateTrafficAnalysisLink();
         NetwatchShared.showToast(i18n('save_settings_success'), 'success');
     } catch (error) {
         console.error(error);
