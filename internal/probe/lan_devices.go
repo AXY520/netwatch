@@ -303,7 +303,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	s.lanMu.Unlock()
 	s.broadcastLANDevices(snap)
 	s.mu.RLock()
-	notifyLAN := allowNotify && s.notifyLANDeviceChange
+	notifyLAN := allowNotify && s.notify.snapshotConfig().NotifyLANDeviceChange
 	s.mu.RUnlock()
 
 	if notifyLAN {
@@ -387,7 +387,7 @@ func (s *Service) startLANInterfaceMonitor() {
 				return
 			case <-ticker.C:
 				s.mu.RLock()
-				notifyLAN := s.notifyLANDeviceChange
+				notifyLAN := s.notify.snapshotConfig().NotifyLANDeviceChange
 				s.mu.RUnlock()
 				events := s.refreshLANInterfaceStatusSnapshot()
 				if notifyLAN {

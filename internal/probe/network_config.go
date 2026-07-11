@@ -114,13 +114,13 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 		}
 	})
 
-	s.networkConfigMu.Lock()
-	if old := s.networkConfigRollbacks[req.Device]; old != nil && old.Timer != nil {
+	s.control.netcfgMu.Lock()
+	if old := s.control.rollbacks[req.Device]; old != nil && old.Timer != nil {
 		old.Timer.Stop()
 	}
-	s.networkConfigRollbacks[req.Device] = rb
-	s.networkConfigRollbacks[id] = rb
-	s.networkConfigMu.Unlock()
+	s.control.rollbacks[req.Device] = rb
+	s.control.rollbacks[id] = rb
+	s.control.netcfgMu.Unlock()
 
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: "apply", ID: id, Device: req.Device, Connection: dev.Connection, Request: &req, Snapshot: &snapshot, OK: true})
 	return NetworkConfigApplyResult{OK: true, Device: req.Device, Connection: dev.Connection, RollbackID: id, RollbackUntil: until.Format(time.DateTime), Output: strings.TrimSpace(out1)}
@@ -154,28 +154,28 @@ func (s *Service) ConfirmNetworkConfig(id string) NetworkConfigConfirmResult {
 	if id == "" {
 		return NetworkConfigConfirmResult{Error: "rollback id required"}
 	}
-	s.networkConfigMu.Lock()
-	rb := s.networkConfigRollbacks[id]
+	s.control.netcfgMu.Lock()
+	rb := s.control.rollbacks[id]
 	if rb == nil {
-		s.networkConfigMu.Unlock()
+		s.control.netcfgMu.Unlock()
 		return NetworkConfigConfirmResult{ID: id, Error: "rollback task not found"}
 	}
 	if rb.Timer != nil {
 		rb.Timer.Stop()
 	}
-	delete(s.networkConfigRollbacks, id)
-	delete(s.networkConfigRollbacks, rb.Device)
-	s.networkConfigMu.Unlock()
+	delete(s.control.rollbacks, id)
+	delete(s.control.rollbacks, rb.Device)
+	s.control.netcfgMu.Unlock()
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: "confirm", ID: id, Device: rb.Device, Connection: rb.Snapshot.Connection, OK: true})
 	return NetworkConfigConfirmResult{OK: true, ID: id}
 }
 
 func (s *Service) GetNetworkConfigPending() NetworkConfigPendingResult {
-	s.networkConfigMu.Lock()
-	defer s.networkConfigMu.Unlock()
+	s.control.netcfgMu.Lock()
+	defer s.control.netcfgMu.Unlock()
 	now := time.Now()
 	seen := map[*networkConfigRollback]struct{}{}
-	for _, rb := range s.networkConfigRollbacks {
+	for _, rb := range s.control.rollbacks {
 		if rb == nil {
 			continue
 		}
@@ -217,18 +217,18 @@ func (s *Service) RollbackNetworkConfig(ctx context.Context, id string) NetworkC
 
 func (s *Service) rollbackNetworkConfig(ctx context.Context, id, action string) (string, error) {
 	id = strings.TrimSpace(id)
-	s.networkConfigMu.Lock()
-	rb := s.networkConfigRollbacks[id]
+	s.control.netcfgMu.Lock()
+	rb := s.control.rollbacks[id]
 	if rb == nil {
-		s.networkConfigMu.Unlock()
+		s.control.netcfgMu.Unlock()
 		return "", errors.New("rollback task not found")
 	}
 	if rb.Timer != nil {
 		rb.Timer.Stop()
 	}
-	delete(s.networkConfigRollbacks, id)
-	delete(s.networkConfigRollbacks, rb.Device)
-	s.networkConfigMu.Unlock()
+	delete(s.control.rollbacks, id)
+	delete(s.control.rollbacks, rb.Device)
+	s.control.netcfgMu.Unlock()
 
 	out, err := restoreNetworkConfigSnapshot(ctx, rb.Device, rb.Snapshot)
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: action, ID: id, Device: rb.Device, Connection: rb.Snapshot.Connection, Snapshot: &rb.Snapshot, OK: err == nil, Error: errString(err)})

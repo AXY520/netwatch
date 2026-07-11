@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -29,103 +28,81 @@ type publicIPCacheData struct {
 }
 
 type Service struct {
-	cfg                         Config
-	mu                          sync.RWMutex
-	closeOnce                   sync.Once
-	summary                     Summary
-	lastError                   string
-	broadbandHistory            []BroadbandSpeedResult
-	localTransferHistory        []LocalTransferResult
-	broadbandTask               BroadbandTaskStatus
-	broadbandTaskCancel         context.CancelFunc
-	timeseries                  *timeseriesStore
-	alert                       *alertState
-	subs                        []chan Summary
-	subsMu                      sync.Mutex
-	alertWebhookURL             string
-	nicStats                    *nicStatsTracker
-	nicStop                     chan struct{}
-	egressCache                 EgressLookupResult
-	egressMu                    sync.Mutex
-	egressCond                  *sync.Cond
-	egressInflight              bool
-	publicIPCache               publicIPCacheData
-	publicIPMu                  sync.Mutex
-	traceMu                     sync.Mutex
-	traceTask                   TraceResult
-	traceCancel                 context.CancelFunc
-	appTrafficHistory           *appTrafficHistoryStore
-	appTrafficStop              chan struct{}
-	appTrafficDone              chan struct{}
-	nicDone                     chan struct{}
-	backgroundMonitorStop       chan struct{}
-	backgroundMonitorDone       chan struct{}
-	lanInterfaceStop            chan struct{}
-	lanInterfaceDone            chan struct{}
+	cfg       Config
+	mu        sync.RWMutex
+	closeOnce sync.Once
+	summary   Summary
+	lastError string
+
+	// observation / history
+	broadbandHistory     []BroadbandSpeedResult
+	localTransferHistory []LocalTransferResult
+	timeseries           *timeseriesStore
+	alert                *alertState
+	alertWebhookURL      string
+	nicStats             *nicStatsTracker
+	egressCache          EgressLookupResult
+	egressMu             sync.Mutex
+	egressCond           *sync.Cond
+	egressInflight       bool
+	publicIPCache        publicIPCacheData
+	publicIPMu           sync.Mutex
+	appTrafficHistory    *appTrafficHistoryStore
+
+	// lifecycle workers
+	nicStop               chan struct{}
+	nicDone               chan struct{}
+	appTrafficStop        chan struct{}
+	appTrafficDone        chan struct{}
+	backgroundMonitorStop chan struct{}
+	backgroundMonitorDone chan struct{}
+	lanInterfaceStop      chan struct{}
+	lanInterfaceDone      chan struct{}
+
+	// pubsub
+	subs            []chan Summary
+	subsMu          sync.Mutex
+	nicSubs         []chan RealtimeNetStats
+	nicSubsMu       sync.Mutex
+	lanDeviceSubs   []chan LANDeviceSnapshot
+	lanDeviceSubsMu sync.Mutex
+
+	// settings not owned by notify/control hubs
 	chartTimeLabelInterval      int
 	containerControlEnabled     bool
 	trafficSamplingEnabled      bool
-	trafficSamplingInterval     int // seconds
+	trafficSamplingInterval     int
 	perAppSamplingInterval      map[string]int
 	persistentTrafficBridges    []string
 	backgroundMonitorEnabled    bool
 	backgroundMonitorInterval   int
 	lastConnectivityProbe       time.Time
 	lastEgressProbe             time.Time
-	notificationsEnabled        bool
-	clientNotificationEnabled   bool
-	notifyAbnormalTraffic       bool
-	notifyEgressChange          bool
-	notifyConnectivityChange    bool
-	notifyLANDeviceChange       bool
 	lanDeviceOfflineAfter       int
 	lanDeviceOnlineAfter        int
 	lanDeviceOfflineNotifyDelay int
 	lanDeviceOnlineNotifyDelay  int
-	abnormalTrafficThreshold    int
-	barkEnabled                 bool
-	barkServerURL               string
-	barkDeviceKey               string
-	barkGroup                   string
-	pushPlusEnabled             bool
-	pushPlusToken               string
-	pushPlusTopic               string
-	dndEnabled                  bool
-	dndStart                    string
-	dndEnd                      string
-	scheduledNotifyEnabled      bool
-	scheduledNotifyTime         string
-	lanMu                       sync.Mutex
-	lanDeviceMap                map[string]LANDevice
-	lanSnapshot                 LANDeviceSnapshot
-	lanInterfaceState           map[string]bool
-	lanNotifyCooldown           map[string]time.Time   // MAC -> last notification time
-	lanFlappingHistory          map[string][]time.Time // MAC -> state change timestamps (sliding window)
-	lanMaxCheckAttempts         int                    // consecutive misses before offline
-	lanNotifyCooldownSec        int                    // min seconds between notifications per device
-	lanFlappingThreshold        int                    // max state changes in window before suppression
-	lanFlappingWindow           time.Duration          // sliding window duration
-	lanDeviceAutoRemoveDays     int                    // auto-remove offline devices after N days (0=disabled)
-	notificationDeviceIDs       []string               // device IDs to receive client notifications; empty = all
-	blockedBridges              map[string]string      // bridge name → "internet" | "all"
-	registeredDevices           map[string]RegisteredDevice
-	registeredDevicesMu         sync.Mutex
-	notificationMu              sync.Mutex
-	notificationEvents          []NotificationEvent
-	notificationNextID          int64
-	notificationSubs            []chan NotificationEvent
-	notificationSubsMu          sync.Mutex
-	nicSubs                     []chan RealtimeNetStats
-	nicSubsMu                   sync.Mutex
-	lanDeviceSubs               []chan LANDeviceSnapshot
-	lanDeviceSubsMu             sync.Mutex
-	monitorBaselineReady        bool
-	monitorLastSummary          Summary
-	monitorTrafficHigh          bool
-	networkConfigMu             sync.Mutex
-	networkConfigRollbacks      map[string]*networkConfigRollback
-	closeCtx                    context.Context
-	closeCancel                 context.CancelFunc
+	lanMaxCheckAttempts         int
+	lanNotifyCooldownSec        int
+	lanFlappingThreshold        int
+	lanFlappingWindow           time.Duration
+	lanDeviceAutoRemoveDays     int
+
+	// LAN observation state
+	lanMu              sync.Mutex
+	lanDeviceMap       map[string]LANDevice
+	lanSnapshot        LANDeviceSnapshot
+	lanInterfaceState  map[string]bool
+	lanNotifyCooldown  map[string]time.Time
+	lanFlappingHistory map[string][]time.Time
+
+	// domain subsystems
+	notify  *notifyHub
+	control *controlState
+	tasks   *taskRuntime
+
+	closeCtx    context.Context
+	closeCancel context.CancelFunc
 }
 
 func NewService(cfg Config) *Service {
@@ -150,7 +127,6 @@ func NewService(cfg Config) *Service {
 		lanNotifyCooldownSec:        def.LANNotifyCooldownSec,
 		lanFlappingThreshold:        def.LANFlappingThreshold,
 		lanFlappingWindow:           time.Duration(def.LANFlappingWindowSec) * time.Second,
-		registeredDevices:           loadRegisteredDevices(cfg.DataDir),
 		chartTimeLabelInterval:      def.ChartTimeLabelInterval,
 		containerControlEnabled:     def.ContainerControlEnabled,
 		trafficSamplingEnabled:      def.TrafficSamplingEnabled,
@@ -158,29 +134,14 @@ func NewService(cfg Config) *Service {
 		perAppSamplingInterval:      make(map[string]int),
 		backgroundMonitorEnabled:    def.BackgroundMonitorEnabled,
 		backgroundMonitorInterval:   def.BackgroundMonitorIntervalSec,
-		notificationsEnabled:        def.NotificationsEnabled,
-		clientNotificationEnabled:   def.ClientNotificationEnabled,
-		notifyAbnormalTraffic:       def.NotifyAbnormalTraffic,
-		notifyEgressChange:          def.NotifyEgressChange,
-		notifyConnectivityChange:    def.NotifyConnectivityChange,
-		notifyLANDeviceChange:       def.NotifyLANDeviceChange,
 		lanDeviceOfflineAfter:       def.LANDeviceOfflineAfterSec,
 		lanDeviceOnlineAfter:        def.LANDeviceOnlineAfterSec,
 		lanDeviceOfflineNotifyDelay: def.LANDeviceOfflineNotifyDelaySec,
 		lanDeviceOnlineNotifyDelay:  def.LANDeviceOnlineNotifyDelaySec,
-		abnormalTrafficThreshold:    def.AbnormalTrafficThresholdMbps,
-		barkEnabled:                 def.BarkEnabled,
-		barkServerURL:               def.BarkServerURL,
-		barkGroup:                   def.BarkGroup,
-		pushPlusEnabled:             def.PushPlusEnabled,
-		dndEnabled:                  def.DNDEnabled,
-		dndStart:                    def.DNDStart,
-		dndEnd:                      def.DNDEnd,
-		scheduledNotifyEnabled:      def.ScheduledNotifyEnabled,
-		scheduledNotifyTime:         def.ScheduledNotifyTime,
 		lanDeviceAutoRemoveDays:     def.LANDeviceAutoRemoveDays,
-		blockedBridges:              map[string]string{},
-		networkConfigRollbacks:      map[string]*networkConfigRollback{},
+		notify:                      newNotifyHub(cfg.DataDir, def),
+		control:                     newControlState(),
+		tasks:                       newTaskRuntime(),
 	}
 	s.egressCond = sync.NewCond(&s.egressMu)
 	s.nicStats.onSampled = s.broadcastNICRealtime
@@ -295,20 +256,9 @@ func (s *Service) Capabilities() CapabilityReport {
 
 func (s *Service) Close() {
 	s.closeOnce.Do(func() {
-		s.mu.Lock()
-		broadbandCancel := s.broadbandTaskCancel
-		s.mu.Unlock()
-		if broadbandCancel != nil {
-			broadbandCancel()
+		if s.tasks != nil {
+			s.tasks.cancelAll()
 		}
-
-		s.traceMu.Lock()
-		traceCancel := s.traceCancel
-		s.traceMu.Unlock()
-		if traceCancel != nil {
-			traceCancel()
-		}
-
 		s.closeCancel()
 		close(s.nicStop)
 		close(s.appTrafficStop)
@@ -390,188 +340,6 @@ func (s *Service) RefreshWebsiteConnectivity(ctx context.Context) WebsiteConnect
 	s.mu.Unlock()
 
 	return website
-}
-
-func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResult {
-	s.mu.RLock()
-	duration := s.cfg.BroadbandDuration
-	s.mu.RUnlock()
-
-	result, completed := executeBroadbandSpeedTest(ctx, s, duration, nil, nil)
-	if completed {
-		s.pushBroadbandHistory(result)
-	}
-	return result
-}
-
-func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
-	s.mu.Lock()
-	if s.broadbandTask.Running {
-		task := s.broadbandTask
-		s.mu.Unlock()
-		return task
-	}
-
-	duration := s.cfg.BroadbandDuration
-	ctx, cancel := context.WithTimeout(s.backgroundCtx(), broadbandTaskTimeout(duration))
-	task := BroadbandTaskStatus{
-		ID:              fmt.Sprintf("broadband-%d", time.Now().UnixNano()),
-		Stage:           "starting",
-		ProgressPercent: 0,
-		Running:         true,
-		Message:         "准备开始宽带测速",
-		UpdatedAt:       localTimestamp(),
-		Result: BroadbandSpeedResult{
-			Timestamp:    localTimestamp(),
-			Provider:     "Speedtest China",
-			ServerRegion: "中国测速节点",
-		},
-	}
-	s.broadbandTask = task
-	s.broadbandTaskCancel = cancel
-	s.mu.Unlock()
-
-	go s.runBroadbandTask(ctx, duration)
-	return task
-}
-
-func (s *Service) GetBroadbandTask() BroadbandTaskStatus {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.broadbandTask
-}
-
-func (s *Service) CancelBroadbandTask() BroadbandTaskStatus {
-	s.mu.Lock()
-	cancel := s.broadbandTaskCancel
-	if s.broadbandTask.Running {
-		s.broadbandTask.Message = "正在取消测速"
-		s.broadbandTask.UpdatedAt = localTimestamp()
-	}
-	task := s.broadbandTask
-	s.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	return task
-}
-
-// appendBroadbandStep 追加一条测速过程步骤(供前端实时展示),并限制最多保留 maxBroadbandSteps 条。
-func (s *Service) appendBroadbandStep(stage, status, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	seq := 1
-	if n := len(s.broadbandTask.Steps); n > 0 {
-		seq = s.broadbandTask.Steps[n-1].Seq + 1
-	}
-	s.broadbandTask.Steps = append(s.broadbandTask.Steps, BroadbandTaskStep{
-		Seq:     seq,
-		Time:    localTimestamp(),
-		Stage:   stage,
-		Status:  status,
-		Message: message,
-	})
-	if len(s.broadbandTask.Steps) > maxBroadbandSteps {
-		s.broadbandTask.Steps = s.broadbandTask.Steps[len(s.broadbandTask.Steps)-maxBroadbandSteps:]
-	}
-	s.broadbandTask.UpdatedAt = localTimestamp()
-}
-
-func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) {
-	result, completed := executeBroadbandSpeedTest(ctx, s, duration, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
-		s.mu.Lock()
-		s.broadbandTask.Stage = stage
-		s.broadbandTask.ProgressPercent = progress
-		s.broadbandTask.Message = message
-		s.broadbandTask.Result = partial
-		s.broadbandTask.UpdatedAt = localTimestamp()
-		s.mu.Unlock()
-	}, func(stage, status, message string) {
-		s.appendBroadbandStep(stage, status, message)
-	})
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.broadbandTask.Result = result
-	s.broadbandTask.UpdatedAt = localTimestamp()
-	s.broadbandTask.Running = false
-	s.broadbandTaskCancel = nil
-
-	switch {
-	case errors.Is(ctx.Err(), context.Canceled):
-		s.broadbandTask.Stage = "canceled"
-		s.broadbandTask.Canceled = true
-		s.broadbandTask.Finished = false
-		s.broadbandTask.Message = "宽带测速已取消"
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		s.broadbandTask.Stage = "error"
-		s.broadbandTask.Finished = false
-		s.broadbandTask.Canceled = false
-		if result.Error == "" {
-			result.Error = "宽带测速超时"
-		}
-		result.FailureStage = "timeout"
-		result.FailureReason = result.Error
-		s.broadbandTask.Result = result
-		s.broadbandTask.Message = result.Error
-	case !completed:
-		s.broadbandTask.Stage = "error"
-		s.broadbandTask.Finished = false
-		if result.Error == "" {
-			result.Error = "测速未完成"
-		}
-		if result.FailureReason == "" {
-			result.FailureReason = result.Error
-		}
-		s.broadbandTask.Result = result
-		s.broadbandTask.Message = result.Error
-	default:
-		s.broadbandTask.Stage = "complete"
-		s.broadbandTask.ProgressPercent = 100
-		s.broadbandTask.Finished = true
-		s.broadbandTask.Canceled = false
-		s.broadbandTask.Message = "宽带测速完成"
-		go s.pushBroadbandHistory(result)
-	}
-}
-
-func (s *Service) RecordLocalTransferResult(result LocalTransferResult) LocalTransferResult {
-	result.DownloadMbps = sanitizeSpeedMetric(result.DownloadMbps, 0, 100000)
-	result.UploadMbps = sanitizeSpeedMetric(result.UploadMbps, 0, 100000)
-	result.PayloadMB = sanitizeSpeedMetric(result.PayloadMB, 0, 1024)
-	result.DownloadMB = sanitizeSpeedMetric(result.DownloadMB, 0, 1024*1024)
-	result.UploadMB = sanitizeSpeedMetric(result.UploadMB, 0, 1024*1024)
-	if result.PayloadMB == 0 {
-		result.PayloadMB = result.DownloadMB + result.UploadMB
-	}
-	if result.DurationMS < 0 || result.DurationMS > int64((10*time.Minute)/time.Millisecond) {
-		result.DurationMS = 0
-	}
-	if result.RoundTripLatencyMS < 0 || result.RoundTripLatencyMS > 600000 {
-		result.RoundTripLatencyMS = 0
-	}
-	if result.RTTMinMS < 0 || result.RTTMinMS > 600000 {
-		result.RTTMinMS = 0
-	}
-	if result.RTTAvgMS < 0 || result.RTTAvgMS > 600000 {
-		result.RTTAvgMS = 0
-	}
-	if result.RTTMaxMS < 0 || result.RTTMaxMS > 600000 {
-		result.RTTMaxMS = 0
-	}
-	if result.RTTAvgMS == 0 {
-		result.RTTAvgMS = result.RoundTripLatencyMS
-	}
-	if result.JitterMS < 0 || result.JitterMS > 600000 {
-		result.JitterMS = 0
-	}
-	if result.Timestamp == "" {
-		result.Timestamp = localTimestamp()
-	}
-	s.pushLocalTransferHistory(result)
-	return result
 }
 
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
@@ -700,12 +468,11 @@ func (s *Service) GetTimeseries(limit int) []TimeseriesPoint {
 
 func (s *Service) GetMutableSettings() MutableSettings {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	perApp := make(map[string]int, len(s.perAppSamplingInterval))
 	for k, v := range s.perAppSamplingInterval {
 		perApp[k] = v
 	}
-	return MutableSettings{
+	out := MutableSettings{
 		RefreshIntervalSec:             int(s.cfg.RefreshInterval / time.Second),
 		NICRealtimeEnabled:             s.nicStats.enabled(),
 		NICRealtimeIntervalSec:         s.nicStats.intervalSeconds(),
@@ -721,37 +488,20 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		AlertWebhookURL:                s.alertWebhookURL,
 		BackgroundMonitorEnabled:       s.backgroundMonitorEnabled,
 		BackgroundMonitorIntervalSec:   s.backgroundMonitorInterval,
-		NotificationsEnabled:           s.notificationsEnabled,
-		ClientNotificationEnabled:      s.clientNotificationEnabled,
-		NotifyAbnormalTraffic:          s.notifyAbnormalTraffic,
-		NotifyEgressChange:             s.notifyEgressChange,
-		NotifyConnectivityChange:       s.notifyConnectivityChange,
-		NotifyLANDeviceChange:          s.notifyLANDeviceChange,
 		LANDeviceOfflineAfterSec:       s.lanDeviceOfflineAfter,
 		LANDeviceOnlineAfterSec:        s.lanDeviceOnlineAfter,
 		LANDeviceOfflineNotifyDelaySec: s.lanDeviceOfflineNotifyDelay,
 		LANDeviceOnlineNotifyDelaySec:  s.lanDeviceOnlineNotifyDelay,
-		AbnormalTrafficThresholdMbps:   s.abnormalTrafficThreshold,
-		BarkEnabled:                    s.barkEnabled,
-		BarkServerURL:                  s.barkServerURL,
-		BarkDeviceKey:                  s.barkDeviceKey,
-		BarkGroup:                      s.barkGroup,
-		PushPlusEnabled:                s.pushPlusEnabled,
-		PushPlusToken:                  s.pushPlusToken,
-		PushPlusTopic:                  s.pushPlusTopic,
-		DNDEnabled:                     s.dndEnabled,
-		DNDStart:                       s.dndStart,
-		DNDEnd:                         s.dndEnd,
-		ScheduledNotifyEnabled:         s.scheduledNotifyEnabled,
-		ScheduledNotifyTime:            s.scheduledNotifyTime,
 		LANMaxCheckAttempts:            s.lanMaxCheckAttempts,
 		LANNotifyCooldownSec:           s.lanNotifyCooldownSec,
 		LANFlappingThreshold:           s.lanFlappingThreshold,
 		LANFlappingWindowSec:           int(s.lanFlappingWindow.Seconds()),
 		LANDeviceAutoRemoveDays:        s.lanDeviceAutoRemoveDays,
-		NotificationDeviceIDs:          s.notificationDeviceIDs,
-		BlockedBridges:                 s.blockedBridges,
+		BlockedBridges:                 s.control.snapshotBlocked(),
 	}
+	s.mu.RUnlock()
+	s.notify.writeToSettings(&out)
+	return out
 }
 
 func (s *Service) UpdateMutableSettings(in MutableSettings) MutableSettings {
@@ -776,12 +526,6 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	if in.BackgroundMonitorIntervalSec >= 10 {
 		s.backgroundMonitorInterval = in.BackgroundMonitorIntervalSec
 	}
-	s.notificationsEnabled = in.NotificationsEnabled
-	s.clientNotificationEnabled = in.ClientNotificationEnabled
-	s.notifyAbnormalTraffic = in.NotifyAbnormalTraffic
-	s.notifyEgressChange = in.NotifyEgressChange
-	s.notifyConnectivityChange = in.NotifyConnectivityChange
-	s.notifyLANDeviceChange = in.NotifyLANDeviceChange
 	if in.LANDeviceOfflineAfterSec >= 10 {
 		s.lanDeviceOfflineAfter = in.LANDeviceOfflineAfterSec
 	}
@@ -794,21 +538,6 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	if in.LANDeviceOnlineNotifyDelaySec >= 0 {
 		s.lanDeviceOnlineNotifyDelay = in.LANDeviceOnlineNotifyDelaySec
 	}
-	if in.AbnormalTrafficThresholdMbps > 0 {
-		s.abnormalTrafficThreshold = in.AbnormalTrafficThresholdMbps
-	}
-	s.barkEnabled = in.BarkEnabled
-	s.barkServerURL = strings.TrimSpace(in.BarkServerURL)
-	s.barkDeviceKey = strings.TrimSpace(in.BarkDeviceKey)
-	s.barkGroup = strings.TrimSpace(in.BarkGroup)
-	s.pushPlusEnabled = in.PushPlusEnabled
-	s.pushPlusToken = strings.TrimSpace(in.PushPlusToken)
-	s.pushPlusTopic = strings.TrimSpace(in.PushPlusTopic)
-	s.dndEnabled = in.DNDEnabled
-	s.dndStart = normalizeHHMM(in.DNDStart, "22:00")
-	s.dndEnd = normalizeHHMM(in.DNDEnd, "08:00")
-	s.scheduledNotifyEnabled = in.ScheduledNotifyEnabled
-	s.scheduledNotifyTime = normalizeHHMM(in.ScheduledNotifyTime, "09:00")
 	if in.LANMaxCheckAttempts >= 1 {
 		s.lanMaxCheckAttempts = in.LANMaxCheckAttempts
 	}
@@ -822,15 +551,8 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 		s.lanFlappingWindow = time.Duration(in.LANFlappingWindowSec) * time.Second
 	}
 	s.lanDeviceAutoRemoveDays = in.LANDeviceAutoRemoveDays
-	s.notificationDeviceIDs = in.NotificationDeviceIDs
 	if in.BlockedBridges != nil {
-		s.blockedBridges = make(map[string]string, len(in.BlockedBridges))
-		for k, v := range in.BlockedBridges {
-			s.blockedBridges[k] = v
-		}
-	}
-	if s.notificationsEnabled && !s.barkEnabled && !s.clientNotificationEnabled {
-		s.clientNotificationEnabled = true
+		s.control.replaceBlocked(in.BlockedBridges)
 	}
 	s.chartTimeLabelInterval = in.ChartTimeLabelInterval
 	s.containerControlEnabled = in.ContainerControlEnabled
@@ -848,6 +570,7 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()
 
+	s.notify.applyFromSettings(in)
 	s.nicStats.configure(in.NICRealtimeEnabled, in.NICRealtimeIntervalSec)
 	s.alert.setWebhook(in.AlertWebhookURL)
 	if persist {
@@ -939,45 +662,6 @@ func (s *Service) waitForEgressLookup(ctx context.Context) EgressLookupResult {
 	cache := s.egressCache
 	s.egressMu.Unlock()
 	return cache
-}
-
-func (s *Service) StartTraceTask(host string, maxHops int) TraceResult {
-	s.traceMu.Lock()
-	if s.traceCancel != nil {
-		s.traceCancel()
-	}
-	ctx, cancel := context.WithCancel(s.traceCtx())
-	task := TraceResult{
-		Target:    host,
-		Timestamp: localTimestamp(),
-		Tool:      "mtr",
-		Running:   true,
-	}
-	s.traceTask = task
-	s.traceCancel = cancel
-	s.traceMu.Unlock()
-
-	go func() {
-		result := RunTrace(ctx, host, maxHops, func(update TraceResult) {
-			s.traceMu.Lock()
-			s.traceTask = update
-			s.traceMu.Unlock()
-		})
-		s.traceMu.Lock()
-		result.Running = false
-		result.Finished = true
-		s.traceTask = result
-		s.traceCancel = nil
-		s.traceMu.Unlock()
-	}()
-
-	return task
-}
-
-func (s *Service) GetTraceTask() TraceResult {
-	s.traceMu.Lock()
-	defer s.traceMu.Unlock()
-	return s.traceTask
 }
 
 func (s *Service) refreshFast(ctx context.Context) {
@@ -1396,233 +1080,3 @@ func (s *Service) RenewIPv6(ctx context.Context, iface string) IPv6RenewResult {
 }
 
 // ListContainers returns containers grouped by app (bridge).
-func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
-	var empty AppContainersResponse
-	if !dockerlzc.Available() {
-		return empty
-	}
-	infos, err := dockerlzc.ListContainerRuntime(ctx)
-	if err != nil {
-		logger.Warn("ListContainers: list runtime: %v", err)
-		return empty
-	}
-	bridgeMap, err := dockerlzc.BuildBridgeMap(ctx)
-	if err != nil {
-		logger.Warn("ListContainers: build bridge map: %v", err)
-	}
-
-	// Group containers by project
-	type projGroup struct {
-		Project string
-		AppID   string
-		Bridge  string
-		Title   string
-		Conts   []ContainerRuntimeInfo
-	}
-	projGroups := map[string]*projGroup{}
-	projBridge := map[string]string{} // project → first bridge found
-	for bridge, info := range bridgeMap {
-		projBridge[info.Project] = bridge
-	}
-	for _, c := range infos {
-		proj := c.Project
-		if proj == "" {
-			proj = "_ungrouped"
-		}
-		g, ok := projGroups[proj]
-		if !ok {
-			g = &projGroup{Project: c.Project, AppID: c.AppID, Bridge: projBridge[proj]}
-			if bi, has := bridgeMap[g.Bridge]; has {
-				g.AppID = bi.AppID
-				g.Title = bi.Title
-			}
-			projGroups[proj] = g
-		}
-		g.Conts = append(g.Conts, ContainerRuntimeInfo{
-			ID: c.ID, Name: c.Name, Image: c.Image, State: c.State,
-		})
-	}
-
-	s.mu.RLock()
-	blocked := s.blockedBridges
-	s.mu.RUnlock()
-
-	apps := make([]AppContainerGroup, 0, len(projGroups))
-	for _, g := range projGroups {
-		if g.Bridge == "" && len(g.Conts) == 0 {
-			continue
-		}
-		blockMode := blocked[g.Bridge]
-		// Skip whitelisted apps (cannot be blocked)
-		if isWhitelistedApp(g.AppID, g.Title) {
-			continue
-		}
-		appTitle := g.Title
-		if appTitle == "" {
-			appTitle = g.AppID
-		}
-		apps = append(apps, AppContainerGroup{
-			Bridge:     g.Bridge,
-			AppID:      g.AppID,
-			AppTitle:   appTitle,
-			Project:    g.Project,
-			BlockMode:  blockMode,
-			Containers: g.Conts,
-		})
-	}
-	return AppContainersResponse{Applications: apps}
-}
-
-// BlockApp blocks all containers in an app's bridge.
-func (s *Service) BlockApp(ctx context.Context, bridge, mode string) error {
-	findBinPaths()
-	logger.Info("BlockApp bridge=%s mode=%s", bridge, mode)
-
-	if bridge == "" {
-		return fmt.Errorf("bridge name is required")
-	}
-
-	// Check whitelist
-	if dockerlzc.Available() {
-		bridgeMap, err := dockerlzc.BuildBridgeMap(ctx)
-		if err == nil {
-			if info, ok := bridgeMap[bridge]; ok {
-				if isWhitelistedApp(info.AppID, info.Title) {
-					return fmt.Errorf("app %s is whitelisted and cannot be blocked", info.Title)
-				}
-			}
-		}
-	}
-
-	// Check bridge exists
-	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", bridge)); os.IsNotExist(err) {
-		return fmt.Errorf("bridge %s not found on host", bridge)
-	}
-
-	err := bridgeBlockInternet(bridge)
-	if err != nil {
-		logger.Warn("bridge block internet via iptables failed: %v; trying nsenter fallback", err)
-		if nsenterErr := s.blockAppInternetViaContainers(ctx, bridge); nsenterErr != nil {
-			return fmt.Errorf("bridge block internet: iptables: %w; nsenter: %v", err, nsenterErr)
-		}
-	}
-
-	s.mu.Lock()
-	s.blockedBridges[bridge] = "internet"
-	s.mu.Unlock()
-	s.saveBlockedBridges()
-	return nil
-}
-
-// blockAppInternetViaContainers falls back to nsenter into each container.
-func (s *Service) blockAppInternetViaContainers(ctx context.Context, bridge string) error {
-	logger.Info("blockAppInternetViaContainers bridge=%s", bridge)
-	if !nsenterAvailable() || !ipAvailable() {
-		return fmt.Errorf("nsenter/ip not available for internet block fallback")
-	}
-	infos, err := dockerlzc.ListContainerRuntime(ctx)
-	if err != nil {
-		return fmt.Errorf("list containers: %w", err)
-	}
-	// Find containers belonging to this bridge's project
-	// We need the project name for this bridge
-	bridgeMap, err := dockerlzc.BuildBridgeMap(ctx)
-	if err != nil {
-		return fmt.Errorf("build bridge map: %w", err)
-	}
-	appInfo, ok := bridgeMap[bridge]
-	if !ok {
-		return fmt.Errorf("bridge %s not found in bridge map", bridge)
-	}
-	var lastErr error
-	for _, c := range infos {
-		if c.Project != appInfo.Project || c.PID <= 0 {
-			continue
-		}
-		if _, _, err := containerBlockInternet(c.PID); err != nil {
-			logger.Warn("block internet for container %s (pid %d): %v", c.Name, c.PID, err)
-			lastErr = err
-		} else {
-			logger.Info("blocked internet for container %s (pid %d)", c.Name, c.PID)
-		}
-	}
-	return lastErr
-}
-
-// UnblockApp restores network for all containers in an app's bridge.
-func (s *Service) UnblockApp(ctx context.Context, bridge string) error {
-	findBinPaths()
-	logger.Info("UnblockApp bridge=%s", bridge)
-
-	if bridge == "" {
-		return fmt.Errorf("bridge name is required")
-	}
-
-	s.mu.RLock()
-	mode := s.blockedBridges[bridge]
-	s.mu.RUnlock()
-
-	if mode == "all" {
-		// Backward compat: unblock bridges that were blocked with "all" mode
-		_ = bridgeUnblockAll(bridge)
-	}
-	if iptablesAvailable() {
-		if err := bridgeUnblockInternet(bridge); err != nil {
-			logger.Warn("bridge unblock internet via iptables: %v", err)
-		}
-	}
-	if err := s.unblockAppInternetViaContainers(ctx, bridge); err != nil {
-		logger.Warn("bridge unblock internet fallback: %v", err)
-	}
-
-	s.mu.Lock()
-	delete(s.blockedBridges, bridge)
-	s.mu.Unlock()
-	s.saveBlockedBridges()
-	return nil
-}
-
-func (s *Service) unblockAppInternetViaContainers(ctx context.Context, bridge string) error {
-	if !nsenterAvailable() || !ipAvailable() {
-		return nil
-	}
-	infos, err := dockerlzc.ListContainerRuntime(ctx)
-	if err != nil {
-		return err
-	}
-	bridgeMap, err := dockerlzc.BuildBridgeMap(ctx)
-	if err != nil {
-		return err
-	}
-	appInfo, ok := bridgeMap[bridge]
-	if !ok {
-		return nil
-	}
-	for _, c := range infos {
-		if c.Project != appInfo.Project || c.PID <= 0 {
-			continue
-		}
-		routes := containerDefaultRoutes(c.PID)
-		for iface, gw := range routes {
-			if err := containerUnblockInternet(c.PID, gw, iface); err != nil {
-				logger.Warn("unblock internet for %s: %v", c.Name, err)
-			}
-		}
-	}
-	return nil
-}
-
-func (s *Service) saveBlockedBridges() {
-	s.mu.RLock()
-	bridges := make(map[string]string, len(s.blockedBridges))
-	for k, v := range s.blockedBridges {
-		bridges[k] = v
-	}
-	dataDir := s.cfg.DataDir
-	s.mu.RUnlock()
-	settings := s.GetMutableSettings()
-	settings.BlockedBridges = bridges
-	if err := saveMutableSettings(dataDir, settings); err != nil {
-		logger.Warn("save blocked bridges: %v", err)
-	}
-}
