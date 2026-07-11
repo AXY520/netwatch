@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"netwatch/internal/logger"
 )
@@ -147,4 +148,72 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// mutate path prefixes that change host/network state and must not be left open on host network.
+var mutatePathPrefixes = []string{
+	"/api/v1/network/config/apply",
+	"/api/v1/network/config/confirm",
+	"/api/v1/network/config/rollback",
+	"/api/v1/network/config/check-ip",
+	"/api/v1/containers/block",
+	"/api/v1/containers/unblock",
+	"/api/v1/network/ipv6/renew",
+	"/api/v1/settings",
+	"/api/v1/settings/persistent-traffic-bridges",
+}
+
+func isMutatePath(path string) bool {
+	for _, prefix := range mutatePathPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// MutateAuth optionally enforces credentials for high-risk write endpoints.
+// Enable with MUTATE_AUTH_USER + MUTATE_AUTH_PASSWORD, or set MUTATE_AUTH_REQUIRED=1
+// to reuse BASIC_AUTH_* credentials (returns 401 if neither is configured).
+func MutateAuth(next http.Handler) http.Handler {
+	mutateUser := strings.TrimSpace(os.Getenv("MUTATE_AUTH_USER"))
+	mutatePass := strings.TrimSpace(os.Getenv("MUTATE_AUTH_PASSWORD"))
+	required := strings.EqualFold(strings.TrimSpace(os.Getenv("MUTATE_AUTH_REQUIRED")), "1") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("MUTATE_AUTH_REQUIRED")), "true")
+
+	var creds *basicAuthCreds
+	if mutateUser != "" && mutatePass != "" {
+		creds = &basicAuthCreds{user: mutateUser, pass: mutatePass}
+	} else if basic := loadBasicAuth(); basic != nil {
+		creds = basic
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !isMutatePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if creds == nil {
+			if required {
+				w.Header().Set("WWW-Authenticate", `Basic realm="netwatch-mutate"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = fmt.Fprintln(w, "mutate auth required but not configured")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok || u != creds.user || subtle.ConstantTimeCompare([]byte(p), []byte(creds.pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="netwatch-mutate"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = fmt.Fprintln(w, "Unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

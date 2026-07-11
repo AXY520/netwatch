@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"netwatch/internal/logger"
@@ -665,14 +666,21 @@ func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Bridge string `json:"bridge"`
-		Mode   string `json:"mode"` // "internet" | "all"
+		Mode   string `json:"mode"` // currently only "internet" is supported
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || body.Bridge == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	body.Mode = "internet"
-	if err := h.service.BlockApp(r.Context(), body.Bridge, body.Mode); err != nil {
+	mode := strings.TrimSpace(body.Mode)
+	if mode == "" {
+		mode = "internet"
+	}
+	if mode != "internet" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "only mode=internet is supported"})
+		return
+	}
+	if err := h.service.BlockApp(r.Context(), body.Bridge, mode); err != nil {
 		logger.Error("block app %s mode %s: %v", body.Bridge, body.Mode, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

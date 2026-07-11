@@ -15,7 +15,7 @@ import (
 	"netwatch/internal/lzcsdk"
 )
 
-const maxHistoryItems = 3
+const maxHistoryItems = 30
 const maxNotificationEvents = 100
 const maxBroadbandSteps = 50
 
@@ -95,6 +95,7 @@ type Service struct {
 	scheduledNotifyEnabled      bool
 	scheduledNotifyTime         string
 	lanMu                       sync.Mutex
+	lanDeviceMap                map[string]LANDevice
 	lanSnapshot                 LANDeviceSnapshot
 	lanInterfaceState           map[string]bool
 	lanNotifyCooldown           map[string]time.Time   // MAC -> last notification time
@@ -216,6 +217,20 @@ func (s *Service) traceCtx() context.Context {
 
 func (s *Service) Close() {
 	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		broadbandCancel := s.broadbandTaskCancel
+		s.mu.Unlock()
+		if broadbandCancel != nil {
+			broadbandCancel()
+		}
+
+		s.traceMu.Lock()
+		traceCancel := s.traceCancel
+		s.traceMu.Unlock()
+		if traceCancel != nil {
+			traceCancel()
+		}
+
 		s.closeCancel()
 		close(s.nicStop)
 		close(s.appTrafficStop)
@@ -226,6 +241,41 @@ func (s *Service) Close() {
 		<-s.backgroundMonitorDone
 		<-s.lanInterfaceDone
 	})
+}
+
+func cloneLANDeviceMap(in map[string]LANDevice) map[string]LANDevice {
+	out := make(map[string]LANDevice, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// getLANDevicesCopy returns a mutable copy of the in-memory LAN device map.
+// Disk is only read on first access.
+func (s *Service) getLANDevicesCopy() map[string]LANDevice {
+	s.lanMu.Lock()
+	defer s.lanMu.Unlock()
+	if s.lanDeviceMap == nil {
+		s.lanDeviceMap = loadLANDeviceMap(s.cfg.DataDir)
+	}
+	return cloneLANDeviceMap(s.lanDeviceMap)
+}
+
+// putLANDevices updates the in-memory map and persists to disk.
+func (s *Service) putLANDevices(devices map[string]LANDevice) error {
+	cloned := cloneLANDeviceMap(devices)
+	s.lanMu.Lock()
+	s.lanDeviceMap = cloned
+	s.lanMu.Unlock()
+	return saveLANDeviceMap(s.cfg.DataDir, cloned)
+}
+
+// putLANDevicesLocked updates the in-memory map while lanMu is already held, then persists.
+func (s *Service) putLANDevicesLocked(devices map[string]LANDevice) error {
+	cloned := cloneLANDeviceMap(devices)
+	s.lanDeviceMap = cloned
+	return saveLANDeviceMap(s.cfg.DataDir, cloned)
 }
 
 func (s *Service) Refresh(ctx context.Context) Summary {
@@ -285,7 +335,7 @@ func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
 	}
 
 	duration := s.cfg.BroadbandDuration
-	ctx, cancel := context.WithTimeout(context.Background(), broadbandTaskTimeout(duration))
+	ctx, cancel := context.WithTimeout(s.backgroundCtx(), broadbandTaskTimeout(duration))
 	task := BroadbandTaskStatus{
 		ID:              fmt.Sprintf("broadband-%d", time.Now().UnixNano()),
 		Stage:           "starting",

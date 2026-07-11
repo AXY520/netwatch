@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0a0a0b">
+    <meta name="theme-color" content="#0b0f14">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' *;">
     <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
     <script>
@@ -25,7 +25,13 @@
 
     <div class="container">
         <header>
-            <div class="logo">NET<span>WATCH</span></div>
+            <div class="brand-block">
+                <div class="logo">NET<span>WATCH</span></div>
+                <div class="brand-meta">
+                    <span class="brand-kicker">HOST NETWORK CONSOLE</span>
+                    <span id="sse-status" class="live-chip is-connecting" title="实时连接状态">CONNECTING</span>
+                </div>
+            </div>
             <div class="controls">
                 <button id="theme-toggle" title="切换深浅模式" data-i18n-title="toggle_theme_title">🌓</button>
                 <button id="open-settings-window" data-i18n="settings_btn">设置</button>
@@ -656,6 +662,7 @@
 
     <script src="/speedtest.js" defer></script>
     <script src="/shared.js" defer></script>
+    <script src="/api.js" defer></script>
     <script src="/app-core.js" defer></script>
     <script src="/app-containers.js" defer></script>
     <script src="/app-network.js" defer></script>

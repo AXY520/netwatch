@@ -62,7 +62,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           api.BasicAuth(accessLogMiddleware(mux)),
+		Handler:           api.BasicAuth(api.MutateAuth(accessLogMiddleware(mux))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0,

@@ -267,34 +267,87 @@ function bindControls() {
     }
 }
 
+function setSSEStatus(status) {
+    var el = document.getElementById('sse-status');
+    if (!el) return;
+    var label = {
+        idle: 'IDLE',
+        connecting: 'CONNECTING',
+        reconnecting: 'RECONNECTING',
+        live: 'LIVE',
+        degraded: 'DEGRADED',
+        offline: 'OFFLINE',
+        closed: 'CLOSED'
+    }[status] || String(status || 'UNKNOWN').toUpperCase();
+    el.textContent = label;
+    el.className = 'live-chip is-' + (status || 'idle');
+    el.title = '实时连接: ' + label;
+}
+
 function initSSE() {
     if (state.sse) return;
+    setSSEStatus('connecting');
     try {
-        var es = new EventSource('/api/v1/events');
-        es.addEventListener('summary', function (ev) {
-            try {
-                var summary = JSON.parse(ev.data);
-                state.summary = summary;
-                if (window.__app.renderSummary) window.__app.renderSummary(summary);
-            } catch (_) {}
-        });
-        es.addEventListener('notification', function (ev) {
-            try {
-                if (window.__app.handleNotificationEvent) window.__app.handleNotificationEvent(JSON.parse(ev.data));
-            } catch (_) {}
-        });
-        es.addEventListener('nic_realtime', function (ev) {
-            try {
-                if (state.settings.nic_realtime_enabled && typeof window.renderNICRealtime === 'function') {
-                    window.renderNICRealtime(JSON.parse(ev.data));
+        if (window.NetwatchAPI && typeof window.NetwatchAPI.createSSE === 'function') {
+            state.sse = window.NetwatchAPI.createSSE('/api/v1/events', {
+                onStatus: setSSEStatus,
+                events: {
+                    summary: function (summary) {
+                        if (!summary) return;
+                        state.summary = summary;
+                        if (window.__app.renderSummary) window.__app.renderSummary(summary);
+                    },
+                    notification: function (payload) {
+                        if (payload && window.__app.handleNotificationEvent) window.__app.handleNotificationEvent(payload);
+                    },
+                    nic_realtime: function (payload) {
+                        if (!payload) return;
+                        if (state.settings.nic_realtime_enabled && typeof window.renderNICRealtime === 'function') {
+                            window.renderNICRealtime(payload);
+                        }
+                    },
+                    lan_devices: function (payload) {
+                        if (payload && window.__app.renderLANDevices) window.__app.renderLANDevices(payload);
+                    }
                 }
-            } catch (_) {}
+            });
+        } else {
+            var es = new EventSource('/api/v1/events');
+            es.addEventListener('summary', function (ev) {
+                try {
+                    var summary = JSON.parse(ev.data);
+                    state.summary = summary;
+                    if (window.__app.renderSummary) window.__app.renderSummary(summary);
+                } catch (_) {}
+            });
+            es.addEventListener('notification', function (ev) {
+                try {
+                    if (window.__app.handleNotificationEvent) window.__app.handleNotificationEvent(JSON.parse(ev.data));
+                } catch (_) {}
+            });
+            es.addEventListener('nic_realtime', function (ev) {
+                try {
+                    if (state.settings.nic_realtime_enabled && typeof window.renderNICRealtime === 'function') {
+                        window.renderNICRealtime(JSON.parse(ev.data));
+                    }
+                } catch (_) {}
+            });
+            es.onopen = function () { setSSEStatus('live'); };
+            es.onerror = function () { setSSEStatus('degraded'); };
+            state.sse = es;
+        }
+        window.addEventListener('pagehide', function () {
+            if (state.sse && state.sse.close) state.sse.close();
+            state.sse = null;
+            setSSEStatus('closed');
         });
-        es.onerror = function () {};
-        state.sse = es;
-        window.addEventListener('pagehide', function () { es.close(); state.sse = null; });
-        window.addEventListener('beforeunload', function () { es.close(); state.sse = null; });
-    } catch (_) {}
+        window.addEventListener('beforeunload', function () {
+            if (state.sse && state.sse.close) state.sse.close();
+            state.sse = null;
+        });
+    } catch (_) {
+        setSSEStatus('offline');
+    }
 }
 
 function initWithRetry(maxRetries) {

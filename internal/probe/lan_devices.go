@@ -43,7 +43,7 @@ func (s *Service) GetLANDevices() LANDeviceSnapshot {
 	if s.lanSnapshot.GeneratedAt != "" {
 		return s.lanSnapshot
 	}
-	snap := loadLANDeviceSnapshot(s.cfg.DataDir)
+	snap := s.loadLANDeviceSnapshotCached()
 	s.lanSnapshot = snap
 	return snap
 }
@@ -90,7 +90,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	// Phase 1: Discover networks and interfaces
 	networks := discoverLANScanNetworks()
 	interfaceUp := lanInterfaceUpMap(networks)
-	stored := loadLANDeviceMap(s.cfg.DataDir)
+	stored := s.getLANDevicesCopy()
 	removeInternalLANDevices(stored)
 	addStoredLANInterfaces(interfaceUp, stored)
 	interfaceEvents := s.updateLANInterfaceState(interfaceUp)
@@ -297,7 +297,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 
 	snap := buildLANDeviceSnapshotFromMap(stored, networks, "综合 ARP/NDP/ICMP/DHCP 多源检测，仅扫描真实有线/Wi-Fi 网卡；Docker/Lazycat 内部网桥设备已过滤。")
 
-	_ = saveLANDeviceMap(s.cfg.DataDir, stored)
+	_ = s.putLANDevices(stored)
 	s.lanMu.Lock()
 	s.lanSnapshot = snap
 	s.lanMu.Unlock()
@@ -403,7 +403,7 @@ func (s *Service) startLANInterfaceMonitor() {
 func (s *Service) refreshLANInterfaceStatusSnapshot() []NotificationEvent {
 	networks := discoverLANScanNetworks()
 	interfaceUp := lanInterfaceUpMap(networks)
-	stored := loadLANDeviceMap(s.cfg.DataDir)
+	stored := s.getLANDevicesCopy()
 	removeInternalLANDevices(stored)
 	addStoredLANInterfaces(interfaceUp, stored)
 	events := s.updateLANInterfaceState(interfaceUp)
@@ -446,7 +446,7 @@ func (s *Service) refreshLANInterfaceStatusSnapshot() []NotificationEvent {
 		return events
 	}
 	snap := buildLANDeviceSnapshotFromMap(stored, networks, "网卡状态已更新。")
-	_ = saveLANDeviceMap(s.cfg.DataDir, stored)
+	_ = s.putLANDevices(stored)
 	s.lanMu.Lock()
 	s.lanSnapshot = snap
 	s.lanMu.Unlock()
@@ -540,7 +540,7 @@ func (s *Service) UpdateLANDeviceMeta(in LANDeviceMetaUpdate) LANDeviceSnapshot 
 	if mac == "" {
 		return s.GetLANDevices()
 	}
-	stored := loadLANDeviceMap(s.cfg.DataDir)
+	stored := s.getLANDevicesCopy()
 	s.lanMu.Lock()
 	if s.lanSnapshot.GeneratedAt != "" {
 		for _, dev := range s.lanSnapshot.Devices {
@@ -571,7 +571,7 @@ func (s *Service) UpdateLANDeviceMeta(in LANDeviceMetaUpdate) LANDeviceSnapshot 
 	dev.Known = lanDeviceKnown(dev)
 	stored[mac] = dev
 	removeInternalLANDevices(stored)
-	_ = saveLANDeviceMap(s.cfg.DataDir, stored)
+	_ = s.putLANDevicesLocked(stored)
 
 	networks := s.lanSnapshot.Networks
 	s.lanSnapshot = buildLANDeviceSnapshotFromMap(stored, networks, "已更新设备标记。")
@@ -821,6 +821,12 @@ func readARPDevices() []LANDevice {
 
 func loadLANDeviceSnapshot(dataDir string) LANDeviceSnapshot {
 	devices := loadLANDeviceMap(dataDir)
+	removeInternalLANDevices(devices)
+	return buildLANDeviceSnapshotFromMap(devices, nil, "")
+}
+
+func (s *Service) loadLANDeviceSnapshotCached() LANDeviceSnapshot {
+	devices := s.getLANDevicesCopy()
 	removeInternalLANDevices(devices)
 	return buildLANDeviceSnapshotFromMap(devices, nil, "")
 }

@@ -45,12 +45,15 @@ func main() {
 			req.URL.Host = targetURL.Host
 			req.Host = targetURL.Host
 		},
+		// Flush immediately so SSE / streaming responses are not buffered by the proxy.
+		FlushInterval: -1,
 		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			MaxIdleConns:          20,
-			MaxIdleConnsPerHost:   20,
-			IdleConnTimeout:       60 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
+			Proxy:               http.ProxyFromEnvironment,
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     120 * time.Second,
+			// Leave ResponseHeaderTimeout unset so long-lived SSE connections can open
+			// and stay open without a header deadline racing the event stream.
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			http.Error(w, "upstream unavailable: "+err.Error(), http.StatusBadGateway)
