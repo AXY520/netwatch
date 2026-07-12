@@ -29,7 +29,7 @@
             .finally(function () { clearTimeout(timer); });
     }
     function lanPost(path, body, timeoutMs) {
-        timeoutMs = timeoutMs || 45000;
+        timeoutMs = timeoutMs || 30000;
         if (window.NetwatchAPI) return withTimeout(window.NetwatchAPI.post(path, body), timeoutMs);
         const ctrl = new AbortController();
         const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
@@ -558,7 +558,7 @@ const state = {
         }
         try {
             const devices = scan
-                ? await lanPost('/api/v1/lan/devices', undefined, 45000)
+                ? await lanPost('/api/v1/lan/devices', undefined, 30000)
                 : await lanGet('/api/v1/lan/devices', 15000);
             render(devices || { devices: [], online: 0 });
         } catch (err) {
@@ -747,6 +747,11 @@ const state = {
     loadSettingsAndScheduleRefresh();
     // Show cache immediately, then force a scan for fresh data.
     load(false).finally(function () {
-        load(true);
+        load(true).catch(function () {}).finally(function () {
+            // If scan failed/timed out and list still empty, try cache once more.
+            if (!state.lastLANData || !(state.lastLANData.devices || []).length) {
+                load(false);
+            }
+        });
     });
 })();
