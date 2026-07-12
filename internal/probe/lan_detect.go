@@ -14,71 +14,114 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// icmpPings sends ICMP echo requests to the given IPs and returns those that responded.
+// icmpPings sends ICMP echo requests and returns hosts that replied.
+// Uses a single PacketConn with separate write/read phases. The previous
+// concurrent SetDeadline+ReadFrom design raced on the shared conn and could
+// hang indefinitely, which surfaces as a frontend "scan timeout" with no
+// backend error log.
 func icmpPings(ctx context.Context, ips []string, timeout time.Duration) map[string]bool {
 	responded := make(map[string]bool, len(ips))
 	if len(ips) == 0 {
 		return responded
 	}
+	if timeout <= 0 {
+		timeout = 250 * time.Millisecond
+	}
 
-	// Try raw ICMP first (requires root/capabilities)
 	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		// Fallback: use UDP "ping" trick (doesn't require root, but less reliable)
 		return icmpPingsFallback(ctx, ips, timeout)
 	}
 	defer conn.Close()
 
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	sem := make(chan struct{}, 32)
-
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil || ip.To4() == nil {
-			continue
+	// Bound the whole ICMP wave so one bad path cannot stall LAN scan.
+	budget := timeout
+	if n := len(ips); n > 64 {
+		// Rough upper bound: ~4 concurrent waves worth of timeout, capped.
+		wave := time.Duration(n/64+1) * timeout
+		if wave > 2*time.Second {
+			wave = 2 * time.Second
 		}
+		if wave > budget {
+			budget = wave
+		}
+	}
+	if budget > 3*time.Second {
+		budget = 3 * time.Second
+	}
+	deadline := time.Now().Add(budget)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = conn.SetDeadline(deadline)
+
+	id := uint16(time.Now().UnixNano() & 0xFFFF)
+	// Phase 1: blast echo requests (writes only).
+	for i, ipStr := range ips {
 		select {
 		case <-ctx.Done():
 			return responded
 		default:
 		}
-
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(target string, ip net.IP) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			// Build ICMP echo request
-			seq := uint16(time.Now().UnixNano() & 0xFFFF)
-			msg := []byte{
-				8, 0, 0, 0, // Type=8 (Echo), Code=0, Checksum placeholder
-				0, 1, // Identifier
-				byte(seq >> 8), byte(seq & 0xFF), // Sequence
-			}
-			// Calculate checksum
-			cs := icmpChecksum(msg)
-			msg[2] = byte(cs >> 8)
-			msg[3] = byte(cs & 0xFF)
-
-			dst := &net.IPAddr{IP: ip}
-			_ = conn.SetDeadline(time.Now().Add(timeout))
-			_, err := conn.WriteTo(msg, dst)
-			if err != nil {
-				return
-			}
-
-			buf := make([]byte, 1500)
-			_, _, err = conn.ReadFrom(buf)
-			if err == nil {
-				mu.Lock()
-				responded[target] = true
-				mu.Unlock()
-			}
-		}(ipStr, ip.To4())
+		ip := net.ParseIP(ipStr)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		seq := uint16(i + 1)
+		msg := []byte{
+			8, 0, 0, 0,
+			byte(id >> 8), byte(id),
+			byte(seq >> 8), byte(seq),
+		}
+		cs := icmpChecksum(msg)
+		msg[2] = byte(cs >> 8)
+		msg[3] = byte(cs & 0xFF)
+		_, _ = conn.WriteTo(msg, &net.IPAddr{IP: ip.To4()})
 	}
-	wg.Wait()
+
+	// Phase 2: drain replies until budget expires.
+	buf := make([]byte, 1500)
+	for {
+		select {
+		case <-ctx.Done():
+			return responded
+		default:
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(80 * time.Millisecond))
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if time.Now().After(deadline) {
+					break
+				}
+				continue
+			}
+			break
+		}
+		if n < 8 || addr == nil {
+			continue
+		}
+		// IPv4 raw ICMP may include IP header on some platforms; locate ICMP echo reply.
+		off := 0
+		if n >= 28 && buf[0]>>4 == 4 {
+			off = int(buf[0]&0x0f) * 4
+			if off >= n {
+				continue
+			}
+		}
+		icmp := buf[off:n]
+		if len(icmp) < 8 || icmp[0] != 0 { // type 0 = echo reply
+			continue
+		}
+		host := addr.String()
+		if hostIP, _, err := net.SplitHostPort(host); err == nil {
+			host = hostIP
+		}
+		responded[host] = true
+	}
 	return responded
 }
 
@@ -100,14 +143,19 @@ func icmpChecksum(data []byte) uint16 {
 }
 
 func icmpPingsFallback(ctx context.Context, ips []string, timeout time.Duration) map[string]bool {
-	responded := make(map[string]bool, len(ips))
+	// Without raw ICMP capability we only warm the ARP table via UDP.
+	// Actual reachability comes from neighbor table reads after warm-up.
+	responded := make(map[string]bool)
+	if timeout <= 0 {
+		timeout = 120 * time.Millisecond
+	}
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	sem := make(chan struct{}, 32)
+	sem := make(chan struct{}, 128)
 
 	for _, ipStr := range ips {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return responded
 		default:
 		}
@@ -117,13 +165,12 @@ func icmpPingsFallback(ctx context.Context, ips []string, timeout time.Duration)
 			defer wg.Done()
 			defer func() { <-sem }()
 			d := net.Dialer{Timeout: timeout}
-			conn, err := d.DialContext(ctx, "ip4:icmp", target)
-			if err == nil {
-				conn.Close()
-				mu.Lock()
-				responded[target] = true
-				mu.Unlock()
+			conn, err := d.DialContext(ctx, "udp4", net.JoinHostPort(target, "9"))
+			if err != nil {
+				return
 			}
+			_, _ = conn.Write([]byte{0})
+			_ = conn.Close()
 		}(ipStr)
 	}
 	wg.Wait()
@@ -286,18 +333,22 @@ func warmNeighborsWithICMP(ctx context.Context, cidr string) int {
 	}
 
 	ipStrings := make([]string, len(ips))
-	for i, ip := range ips {
-		ipStrings[i] = ip.String()
+	for i, host := range ips {
+		ipStrings[i] = host.String()
 	}
 
-	// UDP warm-up first (populates ARP table)
-	udpCount := warmLANNeighbors(ctx, cidr)
+	// Per-network budget so multi-NIC scans stay snappy.
+	netCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
 
-	// ICMP ping as supplementary (catches devices that don't respond to UDP)
-	icmpResponded := icmpPings(ctx, ipStrings, 250*time.Millisecond)
+	udpCount := warmLANNeighbors(netCtx, cidr)
+	icmpResponded := icmpPings(netCtx, ipStrings, 200*time.Millisecond)
 
-	// Brief pause to let ARP table update
-	time.Sleep(100 * time.Millisecond)
+	// Tiny settle so kernel ARP/NDP tables catch up before we read them.
+	select {
+	case <-netCtx.Done():
+	case <-time.After(80 * time.Millisecond):
+	}
 
 	return udpCount + len(icmpResponded)
 }

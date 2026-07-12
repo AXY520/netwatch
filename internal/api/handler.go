@@ -580,7 +580,7 @@ func (h *Handler) handlePushPlusNotificationTest(w http.ResponseWriter, r *http.
 func (h *Handler) handleLANDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		// Bound scan duration so the UI never waits forever on a stuck probe path.
-		ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
 		writeJSON(w, http.StatusOK, h.service.ScanLANDevices(ctx))
 		return

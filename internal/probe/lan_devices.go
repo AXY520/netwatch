@@ -56,6 +56,13 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Hard cap even if caller forgets a deadline (UI previously waited forever).
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+	}
+	scanStarted := time.Now()
 	now := time.Now()
 	nowText := localTimestamp()
 	policy := s.lan.policySnapshot()
@@ -311,6 +318,8 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 			s.pushNotification(ev.Kind, ev.Severity, ev.Title, ev.Body)
 		}
 	}
+	logger.Info("LAN scan done: devices=%d online=%d networks=%d elapsed=%s",
+		len(snap.Devices), snap.Online, len(networks), time.Since(scanStarted).Round(time.Millisecond))
 	return snap
 }
 
@@ -689,7 +698,7 @@ func warmLANNeighbors(ctx context.Context, cidr string) int {
 		return 0
 	}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 32)
+	sem := make(chan struct{}, 128)
 	count := 0
 	for _, target := range ips {
 		if target.Equal(ip) {
@@ -697,6 +706,7 @@ func warmLANNeighbors(ctx context.Context, cidr string) int {
 		}
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return count
 		default:
 		}
@@ -706,7 +716,7 @@ func warmLANNeighbors(ctx context.Context, cidr string) int {
 		go func(addr string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			d := net.Dialer{Timeout: 250 * time.Millisecond}
+			d := net.Dialer{Timeout: 120 * time.Millisecond}
 			conn, err := d.DialContext(ctx, "udp4", net.JoinHostPort(addr, "9"))
 			if err == nil {
 				_, _ = conn.Write([]byte{0})
@@ -715,7 +725,10 @@ func warmLANNeighbors(ctx context.Context, cidr string) int {
 		}(target.String())
 	}
 	wg.Wait()
-	time.Sleep(250 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+	case <-time.After(80 * time.Millisecond):
+	}
 	return count
 }
 
