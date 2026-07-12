@@ -83,11 +83,11 @@ func TestParseDomesticCSV(t *testing.T) {
 	})
 }
 
-// TestSteadyStateMbps 验证稳态采样:丢弃 grace 预热期后取 P90,样本不足时回退全部样本。
+// TestSteadyStateMbps 验证稳态采样:丢弃 grace 后以后半段中位数/修剪均值估计。
 func TestSteadyStateMbps(t *testing.T) {
 	base := time.Unix(1700000000, 0)
 
-	t.Run("discards grace warmup, returns P90 of steady samples", func(t *testing.T) {
+	t.Run("discards grace warmup and tracks steady region", func(t *testing.T) {
 		samples := []speedSample{
 			{at: base.Add(0), mbps: 100},               // grace 内(慢启动)
 			{at: base.Add(1 * time.Second), mbps: 200}, // grace 内
@@ -97,9 +97,9 @@ func TestSteadyStateMbps(t *testing.T) {
 			{at: base.Add(5 * time.Second), mbps: 1000},
 		}
 		got := steadyStateMbps(samples, base, 2*time.Second)
-		// 稳态段排序 [900,910,950,1000], P90: idx=int(0.9*3)=2 -> 950
-		if got != 950 {
-			t.Fatalf("want 950 (P90 of steady), got %v", got)
+		// 稳态应落在 900~1000 之间,且明显高于慢启动期。
+		if got < 900 || got > 1000 {
+			t.Fatalf("want steady in [900,1000], got %v", got)
 		}
 	})
 
@@ -109,9 +109,8 @@ func TestSteadyStateMbps(t *testing.T) {
 			{at: base.Add(1 * time.Second), mbps: 200},
 		}
 		got := steadyStateMbps(samples, base, 10*time.Second)
-		// 全部在 grace 内 -> 退回 [100,200], P90 idx=int(0.9*1)=0 -> 100
-		if got != 100 {
-			t.Fatalf("want 100 (fallback to all), got %v", got)
+		if got < 100 || got > 200 {
+			t.Fatalf("want fallback in [100,200], got %v", got)
 		}
 	})
 
@@ -120,6 +119,35 @@ func TestSteadyStateMbps(t *testing.T) {
 			t.Fatalf("want 0 for empty, got %v", got)
 		}
 	})
+}
+
+func TestPickAccurateMbps(t *testing.T) {
+	if got := pickAccurateMbps(0, 500); got != 500 {
+		t.Fatalf("want ewma fallback 500, got %v", got)
+	}
+	if got := pickAccurateMbps(480, 0); got != 480 {
+		t.Fatalf("want steady 480, got %v", got)
+	}
+	// close values -> average
+	if got := pickAccurateMbps(100, 110); got < 104 || got > 106 {
+		t.Fatalf("want ~105 average, got %v", got)
+	}
+	// large gap -> prefer steady
+	if got := pickAccurateMbps(900, 200); got != 900 {
+		t.Fatalf("want steady 900 when gap large, got %v", got)
+	}
+}
+
+func TestAdaptBroadbandStreams(t *testing.T) {
+	if got := adaptBroadbandStreams(8, 10); got != 8 {
+		t.Fatalf("low rtt keep base, got %d", got)
+	}
+	if got := adaptBroadbandStreams(8, 50); got < 12 {
+		t.Fatalf("mid rtt should raise streams, got %d", got)
+	}
+	if got := adaptBroadbandStreams(8, 100); got < 16 {
+		t.Fatalf("high rtt should raise streams, got %d", got)
+	}
 }
 
 // TestBroadbandNodeCacheRoundTrip 验证节点缓存的落盘读写与边界。

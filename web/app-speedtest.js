@@ -292,8 +292,25 @@ async function runTransferTest() {
     s.setParameter('test_order', 'P_D_U');
     s.setParameter('time_dl_max', durationSec);
     s.setParameter('time_ul_max', durationSec);
+    // Fixed window: do not auto-shorten on fast links (that under-samples steady state).
     s.setParameter('time_auto', false);
-    s.setParameter('count_ping', 10);
+    // More pings reduce RTT noise on local loopback / LAN.
+    s.setParameter('count_ping', 20);
+    // Skip TCP slow-start before measuring.
+    s.setParameter('time_dlGraceTime', Math.min(2.5, Math.max(1.5, durationSec * 0.2)));
+    s.setParameter('time_ulGraceTime', Math.min(3.5, Math.max(2.5, durationSec * 0.25)));
+    // Saturate local multi-gig paths; explicit values also disable browser quirks overrides.
+    s.setParameter('xhr_dlMultistream', 8);
+    s.setParameter('xhr_ulMultistream', 6);
+    s.setParameter('xhr_multistreamDelay', 150);
+    s.setParameter('xhr_ignoreErrors', 1);
+    // Larger upload blobs keep each stream busy longer between restarts.
+    s.setParameter('xhr_ul_blob_megabytes', 32);
+    // Local path: report application-layer throughput without ISP-style overhead inflation.
+    s.setParameter('overheadCompensationFactor', 1.0);
+    s.setParameter('useMebibits', false);
+    s.setParameter('enable_quirks', false);
+    s.setParameter('ping_allowPerformanceApi', true);
 
     var lastData = {};
     var transferStartedAt = Date.now();
@@ -354,8 +371,33 @@ async function runTransferTest() {
             return;
         }
 
-        var downloadMbps = window.__app.finiteNumber(lastData.dlStatus, window.__app.finiteNumber(els.transferDownload.textContent));
-        var uploadMbps = window.__app.finiteNumber(lastData.ulStatus, window.__app.finiteNumber(els.transferUpload.textContent));
+        // Prefer byte/time throughput over the last instantaneous sample.
+        // LibreSpeed dlStatus/ulStatus are rolling averages that can lag or spike at stop.
+        var computeMbps = function (bytes, durationMs, statusFallback) {
+            var b = Number(bytes) || 0;
+            var ms = Number(durationMs) || 0;
+            if (b > 0 && ms > 50) {
+                return (b * 8) / (ms / 1000) / 1e6;
+            }
+            return window.__app.finiteNumber(statusFallback, 0);
+        };
+        var downloadMbps = computeMbps(lastData.dlBytes, lastData.dlDuration, lastData.dlStatus || els.transferDownload.textContent);
+        var uploadMbps = computeMbps(lastData.ulBytes, lastData.ulDuration, lastData.ulStatus || els.transferUpload.textContent);
+        // Soft-blend with worker status when both exist and are close (noise reduction).
+        var blend = function (computed, statusRaw) {
+            var status = window.__app.finiteNumber(statusRaw, 0);
+            if (computed <= 0) return status;
+            if (status <= 0) return computed;
+            var lo = Math.min(computed, status);
+            var hi = Math.max(computed, status);
+            if (hi > 0 && (hi - lo) / hi <= 0.12) return (computed + status) / 2;
+            return computed;
+        };
+        downloadMbps = blend(downloadMbps, lastData.dlStatus);
+        uploadMbps = blend(uploadMbps, lastData.ulStatus);
+        els.transferDownload.textContent = downloadMbps > 0 ? downloadMbps.toFixed(1) : '--';
+        els.transferUpload.textContent = uploadMbps > 0 ? uploadMbps.toFixed(1) : '--';
+
         var pingMs = window.__app.finiteNumber(lastData.pingStatus, window.__app.finiteNumber(els.transferLatency.textContent));
         var jitterMs = window.__app.finiteNumber(lastData.jitterStatus, window.__app.finiteNumber(els.transferJitter.textContent));
         var rtt = window.__app.summarizeRTT(lastData.pingSamples || []);

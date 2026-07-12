@@ -147,7 +147,7 @@ func DefaultConfig() Config {
 		DataDir:                envOrDefault("DATA_DIR", "/app/data"),
 		BroadbandDuration:      envDurationValue("BROADBAND_TEST_SEC", 15*time.Second),
 		BroadbandDomesticOnly:  envBool("BROADBAND_DOMESTIC_ONLY", true),
-		BroadbandStreams:       envInt("BROADBAND_STREAMS", 8),
+		BroadbandStreams:       envInt("BROADBAND_STREAMS", 10),
 		LocalTransferDuration:  envDurationValue("LOCAL_TRANSFER_TEST_SEC", 10*time.Second),
 		LocalTransferPayloadMB: envInt("LOCAL_TRANSFER_PAYLOAD_MB", 32),
 	}

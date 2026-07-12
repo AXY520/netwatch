@@ -5,18 +5,41 @@ import (
 	"errors"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"netwatch/internal/logger"
 	"netwatch/internal/probe"
 )
 
-var downloadPayload = make([]byte, 1024*1024)
+// downloadPayload is incompressible pseudo-random data so proxies/browsers
+// cannot silently compress the stream and inflate measured throughput.
+var (
+	downloadPayload     []byte
+	downloadPayloadOnce sync.Once
+)
 
-var maxLocalUploadBytes int64 = 128 * 1024 * 1024
+func localDownloadPayload() []byte {
+	downloadPayloadOnce.Do(func() {
+		// 2 MiB chunks reduce syscall overhead on multi-gig paths.
+		buf := make([]byte, 2*1024*1024)
+		// math/rand is fine here: we only need entropy against compression, not crypto.
+		r := rand.New(rand.NewSource(0x4e455457)) // NETW
+		for i := range buf {
+			buf[i] = byte(r.Intn(256))
+		}
+		downloadPayload = buf
+	})
+	return downloadPayload
+}
+
+// maxLocalUploadBytes caps a single upload request body. Multi-stream tests
+// restart streams, so this only bounds one blob (not total test volume).
+var maxLocalUploadBytes int64 = 512 * 1024 * 1024
 
 type Handler struct {
 	service *probe.Service
@@ -325,9 +348,13 @@ func (h *Handler) handleLocalPing(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// Discourage intermediate compression / transformation.
+	w.Header().Set("Content-Encoding", "identity")
 
+	payload := localDownloadPayload()
 	secStr := r.URL.Query().Get("sec")
 	if secStr != "" {
 		sec, err := strconv.ParseFloat(secStr, 64)
@@ -337,22 +364,26 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 		if sec > 60 {
 			sec = 60
 		}
-		deadline := time.Now().Add(time.Duration(sec * float64(time.Second)))
+		// Client multi-stream tests may keep a connection slightly longer than
+		// the nominal window; allow a small overrun so streams do not starve.
+		deadline := time.Now().Add(time.Duration((sec+1.5)*float64(time.Second)))
 		ctx := r.Context()
 		flusher, canFlush := w.(http.Flusher)
-		nextFlush := time.Now().Add(200 * time.Millisecond)
+		nextFlush := time.Now()
 		for time.Now().Before(deadline) {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
-			if _, err := w.Write(downloadPayload); err != nil {
+			if _, err := w.Write(payload); err != nil {
 				return
 			}
-			if canFlush && time.Now().After(nextFlush) {
+			// Flush aggressively so browser onprogress sees real-time bytes
+			// instead of large buffered bursts that under-report mid-test rate.
+			if canFlush && !time.Now().Before(nextFlush) {
 				flusher.Flush()
-				nextFlush = time.Now().Add(200 * time.Millisecond)
+				nextFlush = time.Now().Add(50 * time.Millisecond)
 			}
 		}
 		if canFlush {
@@ -364,20 +395,24 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 	mb := parseMB(r.URL.Query().Get("mb"), 8)
 	remaining := mb * 1024 * 1024
 	ctx := r.Context()
+	flusher, canFlush := w.(http.Flusher)
 	for remaining > 0 {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		n := len(downloadPayload)
+		n := len(payload)
 		if remaining < n {
 			n = remaining
 		}
-		if _, err := w.Write(downloadPayload[:n]); err != nil {
+		if _, err := w.Write(payload[:n]); err != nil {
 			return
 		}
 		remaining -= n
+		if canFlush {
+			flusher.Flush()
+		}
 	}
 }
 
@@ -386,6 +421,8 @@ func (h *Handler) handleLocalUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// Read body as-is without decompression/transform so measured size matches wire intent.
+	w.Header().Set("Cache-Control", "no-store")
 	n, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxLocalUploadBytes))
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -424,8 +461,8 @@ func parseMB(value string, fallback int) int {
 	if err != nil || mb <= 0 {
 		return fallback
 	}
-	if mb > 64 {
-		return 64
+	if mb > 256 {
+		return 256
 	}
 	return mb
 }

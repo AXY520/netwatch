@@ -326,13 +326,22 @@ window.__app.finiteNumber = finiteNumber;
 
 function summarizeRTT(samples) {
     samples = samples || [];
-    var values = samples.map(Number).filter(function (v) { return Number.isFinite(v) && v > 0; });
+    var values = samples.map(Number).filter(function (v) { return Number.isFinite(v) && v > 0; }).sort(function (a, b) { return a - b; });
     if (!values.length) return { min: 0, avg: 0, max: 0 };
-    var sum = values.reduce(function (acc, v) { return acc + v; }, 0);
+    // Drop top/bottom outliers when enough samples; avg becomes a robust estimate.
+    var start = 0;
+    var end = values.length;
+    if (values.length >= 8) {
+        var drop = Math.max(1, Math.floor(values.length * 0.1));
+        start = drop;
+        end = values.length - drop;
+    }
+    var core = values.slice(start, end);
+    var sum = core.reduce(function (acc, v) { return acc + v; }, 0);
     return {
-        min: Math.round(Math.min.apply(null, values)),
-        avg: Math.round(sum / values.length),
-        max: Math.round(Math.max.apply(null, values))
+        min: Math.round(values[0]),
+        avg: Math.round(sum / core.length),
+        max: Math.round(values[values.length - 1])
     };
 }
 window.__app.summarizeRTT = summarizeRTT;
