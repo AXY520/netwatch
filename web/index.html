@@ -22,16 +22,24 @@
     <div id="toast" class="toast"></div>
     <div id="window-backdrop" class="window-backdrop"></div>
     <div id="trace-window-backdrop" class="window-backdrop"></div>
+    <div id="app-confirm-backdrop" class="window-backdrop app-confirm-backdrop"></div>
+    <section class="floating-window app-confirm-window" id="app-confirm-window" role="dialog" aria-modal="true" aria-labelledby="app-confirm-title">
+        <div class="window-head">
+            <div>
+                <div class="window-title" id="app-confirm-title">确认</div>
+                <div class="note" id="app-confirm-message"></div>
+            </div>
+        </div>
+        <div class="window-actions app-confirm-actions">
+            <button type="button" id="app-confirm-cancel" data-i18n="close_btn">取消</button>
+            <button type="button" id="app-confirm-ok" class="app-confirm-ok">确定</button>
+        </div>
+    </section>
 
     <div class="container">
         <header>
             <div class="brand-block">
                 <div class="logo">NET<span>WATCH</span></div>
-                <div class="brand-meta">
-                    <span class="brand-kicker">HOST NETWORK CONSOLE</span>
-                    <span id="sse-status" class="live-chip is-connecting" title="实时连接状态">CONNECTING</span>
-                    <span id="capability-strip" class="capability-strip" title="运行时能力">DETECTING</span>
-                </div>
             </div>
             <div class="controls">
                 <button id="theme-toggle" title="切换深浅模式" data-i18n-title="toggle_theme_title">🌓</button>

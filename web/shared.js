@@ -39,6 +39,67 @@ window.NetwatchShared = (function () {
         window.scrollTo(0, y);
     }
 
+    /**
+     * In-app confirm dialog. Resolves true/false.
+     * options: { title, message, okText, cancelText }
+     */
+    function confirmDialog(options) {
+        options = options || {};
+        return new Promise(function (resolve) {
+            var win = document.getElementById('app-confirm-window');
+            var backdrop = document.getElementById('app-confirm-backdrop');
+            var titleEl = document.getElementById('app-confirm-title');
+            var msgEl = document.getElementById('app-confirm-message');
+            var okBtn = document.getElementById('app-confirm-ok');
+            var cancelBtn = document.getElementById('app-confirm-cancel');
+            if (!win || !okBtn || !cancelBtn) {
+                // Fallback only if markup missing
+                resolve(window.confirm(options.message || options.title || ''));
+                return;
+            }
+            if (titleEl) titleEl.textContent = options.title || '确认';
+            if (msgEl) msgEl.textContent = options.message || '';
+            if (options.okText) okBtn.textContent = options.okText;
+            if (options.cancelText) cancelBtn.textContent = options.cancelText;
+
+            var prevActive = document.activeElement;
+            var settled = false;
+            function cleanup(result) {
+                if (settled) return;
+                settled = true;
+                win.classList.remove('active');
+                if (backdrop) backdrop.classList.remove('active');
+                document.removeEventListener('keydown', onKey);
+                okBtn.removeEventListener('click', onOk);
+                cancelBtn.removeEventListener('click', onCancel);
+                if (backdrop) backdrop.removeEventListener('click', onCancel);
+                if (prevActive && typeof prevActive.focus === 'function') {
+                    try { prevActive.focus(); } catch (_) {}
+                }
+                resolve(result);
+            }
+            function onOk(e) {
+                if (e) e.preventDefault();
+                cleanup(true);
+            }
+            function onCancel(e) {
+                if (e) e.preventDefault();
+                cleanup(false);
+            }
+            function onKey(e) {
+                if (e.key === 'Escape') onCancel(e);
+                if (e.key === 'Enter') onOk(e);
+            }
+            okBtn.addEventListener('click', onOk);
+            cancelBtn.addEventListener('click', onCancel);
+            if (backdrop) backdrop.addEventListener('click', onCancel);
+            document.addEventListener('keydown', onKey);
+            if (backdrop) backdrop.classList.add('active');
+            win.classList.add('active');
+            try { okBtn.focus(); } catch (_) {}
+        });
+    }
+
     function formatBytes(n) {
         var value = Number(n) || 0;
         if (value <= 0) return '0 B';
@@ -322,6 +383,7 @@ window.NetwatchShared = (function () {
         showToast: showToast,
         lockModalScroll: lockModalScroll,
         unlockModalScroll: unlockModalScroll,
+        confirmDialog: confirmDialog,
         formatBytes: formatBytes,
         isNotificationUnsupportedError: isNotificationUnsupportedError,
         markNotificationSeen: markNotificationSeen,

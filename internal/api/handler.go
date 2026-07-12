@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -578,7 +579,10 @@ func (h *Handler) handlePushPlusNotificationTest(w http.ResponseWriter, r *http.
 
 func (h *Handler) handleLANDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		writeJSON(w, http.StatusOK, h.service.ScanLANDevices(r.Context()))
+		// Bound scan duration so the UI never waits forever on a stuck probe path.
+		ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+		defer cancel()
+		writeJSON(w, http.StatusOK, h.service.ScanLANDevices(ctx))
 		return
 	}
 	if r.Method != http.MethodGet {

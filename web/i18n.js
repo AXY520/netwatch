@@ -402,7 +402,10 @@
             "sec_60": "60 秒",
             "sec_120": "120 秒",
             "sec_300": "300 秒",
-            "confirm_cancel_test": "测速正在进行，确定要关闭吗？"
+            "confirm_cancel_test": "测速正在进行，确定要关闭吗？",
+            "confirm_cancel_title": "取消测速",
+            "confirm_cancel_ok": "确定取消",
+            "confirm_cancel_keep": "继续测速"
         },
         "en": {
             "ok": "OK",
@@ -794,7 +797,10 @@
             "sec_60": "60 sec",
             "sec_120": "120 sec",
             "sec_300": "300 sec",
-            "confirm_cancel_test": "A speed test is in progress. Close anyway?"
+            "confirm_cancel_test": "A speed test is in progress. Close anyway?",
+            "confirm_cancel_title": "Cancel Speed Test",
+            "confirm_cancel_ok": "Cancel Test",
+            "confirm_cancel_keep": "Keep Testing"
         }
     };
 

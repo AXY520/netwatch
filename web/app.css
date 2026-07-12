@@ -109,6 +109,7 @@
             flex-direction: column;
             gap: 0.28rem;
             min-width: 0;
+            justify-content: center;
         }
 
         .brand-meta {
@@ -3294,4 +3295,51 @@ select,
 .capability-strip.is-degraded {
     color: var(--accent-amber);
     border-color: color-mix(in srgb, var(--accent-amber) 50%, var(--border-color));
+}
+
+
+/* In-app confirm dialog */
+.app-confirm-backdrop {
+    z-index: 1200;
+}
+.app-confirm-window {
+    z-index: 1201;
+    width: min(420px, calc(100vw - 2rem));
+    max-width: 420px;
+}
+.app-confirm-window .note {
+    margin-top: 0.35rem;
+    line-height: 1.5;
+    color: var(--text-main);
+}
+.app-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    padding: 0 1.1rem 1rem;
+}
+.app-confirm-ok {
+    border-color: var(--accent-amber) !important;
+    color: var(--accent-amber) !important;
+}
+.app-confirm-ok:hover {
+    background: var(--accent-amber) !important;
+    color: var(--bg-color) !important;
+}
+
+/* LAN scan: normal button (not muted link style stuck disabled look) */
+.lan-scan-btn {
+    min-width: 4.5rem;
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+    cursor: pointer;
+    opacity: 1;
+}
+.lan-scan-btn:hover:not(:disabled) {
+    background: var(--accent-cyan);
+    color: var(--bg-color);
+}
+.lan-scan-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
 }

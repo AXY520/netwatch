@@ -54,10 +54,16 @@ function openWindow(name) {
 
 window.__app.openWindow = openWindow;
 
-function closeCurrentWindow() {
+async function closeCurrentWindow() {
     if ((state.runningTest === 'broadband' && els.broadbandWindow.classList.contains('active')) ||
         (state.runningTest === 'transfer' && els.transferWindow.classList.contains('active'))) {
-        if (!confirm(i18n('confirm_cancel_test'))) return;
+        var ok = await NetwatchShared.confirmDialog({
+            title: i18n('confirm_cancel_title') || '取消测速',
+            message: i18n('confirm_cancel_test'),
+            okText: i18n('confirm_cancel_ok') || '确定取消',
+            cancelText: i18n('confirm_cancel_keep') || '继续测速'
+        });
+        if (!ok) return;
         if (state.runningTest === 'broadband' && window.__app.cancelBroadbandTest) {
             window.__app.cancelBroadbandTest(true);
         }

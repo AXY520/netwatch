@@ -1,26 +1,55 @@
 (function () {
     const i18n = window.__;
     
-    function lanGet(path) {
-        if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
-        return fetch(path, { cache: 'no-store' }).then(async (r) => {
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-            return data;
-        });
+    function withTimeout(promise, timeoutMs) {
+        if (!timeoutMs) return promise;
+        let timer;
+        return Promise.race([
+            promise.finally(function () { if (timer) clearTimeout(timer); }),
+            new Promise(function (_, reject) {
+                timer = setTimeout(function () { reject(new Error('扫描超时，请重试')); }, timeoutMs);
+            })
+        ]);
     }
-    function lanPost(path, body) {
-        if (window.NetwatchAPI) return window.NetwatchAPI.post(path, body);
+    function lanGet(path, timeoutMs) {
+        timeoutMs = timeoutMs || 15000;
+        if (window.NetwatchAPI) return withTimeout(window.NetwatchAPI.get(path), timeoutMs);
+        const ctrl = new AbortController();
+        const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+        return fetch(path, { cache: 'no-store', signal: ctrl.signal })
+            .then(async function (r) {
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+                return data;
+            })
+            .catch(function (err) {
+                if (err && err.name === 'AbortError') throw new Error('扫描超时，请重试');
+                throw err;
+            })
+            .finally(function () { clearTimeout(timer); });
+    }
+    function lanPost(path, body, timeoutMs) {
+        timeoutMs = timeoutMs || 45000;
+        if (window.NetwatchAPI) return withTimeout(window.NetwatchAPI.post(path, body), timeoutMs);
+        const ctrl = new AbortController();
+        const timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
         return fetch(path, {
             method: 'POST',
             headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
             body: body === undefined ? undefined : JSON.stringify(body),
-            cache: 'no-store'
-        }).then(async (r) => {
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-            return data;
-        });
+            cache: 'no-store',
+            signal: ctrl.signal
+        })
+            .then(async function (r) {
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+                return data;
+            })
+            .catch(function (err) {
+                if (err && err.name === 'AbortError') throw new Error('扫描超时，请重试');
+                throw err;
+            })
+            .finally(function () { clearTimeout(timer); });
     }
 
 const state = {
@@ -35,7 +64,9 @@ const state = {
         settings: null,
         sse: null,
         noteMAC: '',
-        noteButton: null
+        noteButton: null,
+        scanning: false,
+        lastLANData: null
     };
 
     const els = {
@@ -510,24 +541,41 @@ const state = {
     }
 
     async function load(scan = false) {
-        const originalTitle = els.refreshBtn?.getAttribute('title') || i18n('scan_btn');
-        const originalAria = els.refreshBtn?.getAttribute('aria-label') || i18n('scan_btn');
+        if (scan && state.scanning) return;
+        const originalLabel = els.refreshBtn?.textContent || i18n('scan_btn') || '扫描';
+        const originalTitle = i18n('scan_btn') || '扫描';
+        const originalAria = i18n('scan_btn') || '扫描';
+        if (scan) state.scanning = true;
         if (els.refreshBtn) {
             els.refreshBtn.disabled = true;
-            const busyLabel = scan ? i18n('scanning') : i18n('loading');
+            const busyLabel = scan ? (i18n('scanning') || '扫描中…') : (i18n('loading') || '加载中…');
+            els.refreshBtn.textContent = busyLabel;
             els.refreshBtn.setAttribute('title', busyLabel);
             els.refreshBtn.setAttribute('aria-label', busyLabel);
         }
+        if (els.count && scan) {
+            els.count.textContent = i18n('scanning') || '扫描中…';
+        }
         try {
             const devices = scan
-                ? await lanPost('/api/v1/lan/devices')
-                : await lanGet('/api/v1/lan/devices');
-            render(devices);
+                ? await lanPost('/api/v1/lan/devices', undefined, 45000)
+                : await lanGet('/api/v1/lan/devices', 15000);
+            render(devices || { devices: [], online: 0 });
         } catch (err) {
-            showToast(`${i18n('lan_load_failed')}: ${err.message}`, 'error');
+            console.error('lan load failed', err);
+            showToast(`${i18n('lan_load_failed') || '加载失败'}: ${err.message}`, 'error');
+            if (els.tbody && !state.lastLANData) {
+                els.tbody.innerHTML = '<tr><td colspan="5" class="placeholder">' +
+                    (i18n('lan_load_failed') || '加载失败') + ': ' + escapeHtml(err.message || '') +
+                    '</td></tr>';
+            }
         } finally {
+            if (scan) state.scanning = false;
             if (els.refreshBtn) {
                 els.refreshBtn.disabled = false;
+                els.refreshBtn.textContent = originalLabel === (i18n('scanning') || '扫描中…') ? (i18n('scan_btn') || '扫描') : (i18n('scan_btn') || originalLabel || '扫描');
+                // Always restore explicit scan label after busy state.
+                els.refreshBtn.textContent = i18n('scan_btn') || '扫描';
                 els.refreshBtn.setAttribute('title', originalTitle);
                 els.refreshBtn.setAttribute('aria-label', originalAria);
             }
@@ -695,7 +743,10 @@ const state = {
     }
 
     NetwatchShared.initLazycatFullscreen?.();
+    initTheme();
     loadSettingsAndScheduleRefresh();
-    // Always scan once on page open so list is fresh (POST path does not notify).
-    load(true);
+    // Show cache immediately, then force a scan for fresh data.
+    load(false).finally(function () {
+        load(true);
+    });
 })();
