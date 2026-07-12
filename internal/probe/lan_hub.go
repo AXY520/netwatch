@@ -28,6 +28,9 @@ type lanHub struct {
 	notifyCooldown  map[string]time.Time
 	flappingHistory map[string][]time.Time
 	policy          lanPolicy
+	scanRunning     bool
+	scanID          string
+	scanStartedAt   time.Time
 }
 
 func newLANHub(dataDir string, def MutableSettings) *lanHub {
@@ -141,4 +144,39 @@ func (h *lanHub) withLock(fn func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	fn()
+}
+
+
+func (h *lanHub) beginScan(scanID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.scanRunning {
+		return false
+	}
+	h.scanRunning = true
+	h.scanID = scanID
+	h.scanStartedAt = time.Now()
+	return true
+}
+
+func (h *lanHub) endScan(scanID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.scanID == scanID {
+		h.scanRunning = false
+	}
+}
+
+func (h *lanHub) scanMeta() (running bool, scanID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.scanRunning, h.scanID
+}
+
+func (h *lanHub) attachScanMeta(snap LANDeviceSnapshot) LANDeviceSnapshot {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	snap.Scanning = h.scanRunning
+	snap.ScanID = h.scanID
+	return snap
 }

@@ -335,6 +335,11 @@ type LANDeviceSnapshot struct {
 	NewCount       int              `json:"new_count"`
 	Unknown        int              `json:"unknown"`
 	Note           string           `json:"note,omitempty"`
+	// Scanning is true while a background LAN discovery pass is still running.
+	// The HTTP API returns immediately with cached devices + this flag so reverse
+	// proxies cannot cancel long scans via request context.
+	Scanning bool   `json:"scanning,omitempty"`
+	ScanID   string `json:"scan_id,omitempty"`
 }
 
 type EgressLookup struct {

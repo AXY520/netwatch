@@ -66,6 +66,7 @@ const state = {
         noteMAC: '',
         noteButton: null,
         scanning: false,
+        scanPoller: null,
         lastLANData: null
     };
 
@@ -540,54 +541,87 @@ const state = {
         return map[value] || value || '--';
     }
 
+    function setScanButtonBusy(busy) {
+        if (!els.refreshBtn) return;
+        const label = busy ? (i18n('scanning') || '扫描中…') : (i18n('scan_btn') || '扫描');
+        els.refreshBtn.disabled = !!busy;
+        els.refreshBtn.textContent = label;
+        els.refreshBtn.setAttribute('title', label);
+        els.refreshBtn.setAttribute('aria-label', label);
+    }
+
+    function stopScanPoller() {
+        if (state.scanPoller) {
+            clearInterval(state.scanPoller);
+            state.scanPoller = null;
+        }
+    }
+
+    async function pollScanUntilDone(startedAt, maxMs) {
+        maxMs = maxMs || 20000;
+        const deadline = (startedAt || Date.now()) + maxMs;
+        while (Date.now() < deadline) {
+            await new Promise(function (r) { setTimeout(r, 700); });
+            try {
+                const snap = await lanGet('/api/v1/lan/devices', 5000);
+                render(snap || { devices: [], online: 0 });
+                if (!snap || !snap.scanning) {
+                    return snap;
+                }
+            } catch (err) {
+                console.warn('lan poll failed', err);
+            }
+        }
+        // Final fetch even if still marked scanning.
+        try {
+            const snap = await lanGet('/api/v1/lan/devices', 5000);
+            render(snap || { devices: [], online: 0 });
+            return snap;
+        } catch (_) {
+            return state.lastLANData;
+        }
+    }
+
     async function load(scan = false) {
         if (scan && state.scanning) return;
-        const originalLabel = els.refreshBtn?.textContent || i18n('scan_btn') || '扫描';
-        const originalTitle = i18n('scan_btn') || '扫描';
-        const originalAria = i18n('scan_btn') || '扫描';
         if (scan) state.scanning = true;
-        if (els.refreshBtn) {
-            els.refreshBtn.disabled = true;
-            const busyLabel = scan ? (i18n('scanning') || '扫描中…') : (i18n('loading') || '加载中…');
-            els.refreshBtn.textContent = busyLabel;
-            els.refreshBtn.setAttribute('title', busyLabel);
-            els.refreshBtn.setAttribute('aria-label', busyLabel);
-        }
+        if (scan) setScanButtonBusy(true);
         if (els.count && scan) {
             els.count.textContent = i18n('scanning') || '扫描中…';
         }
         try {
-            let devices;
-            if (scan) {
-                try {
-                    devices = await lanPost('/api/v1/lan/devices', undefined, 20000);
-                } catch (scanErr) {
-                    // Scan timed out/failed: fall back to whatever snapshot the server already has.
-                    console.warn('lan scan failed, falling back to cache', scanErr);
-                    devices = await lanGet('/api/v1/lan/devices', 8000);
-                }
-            } else {
-                devices = await lanGet('/api/v1/lan/devices', 8000);
+            if (!scan) {
+                const devices = await lanGet('/api/v1/lan/devices', 8000);
+                render(devices || { devices: [], online: 0 });
+                return;
             }
-            render(devices || { devices: [], online: 0 });
+            // Async scan: POST returns immediately with scanning=true + current cache.
+            const started = await lanPost('/api/v1/lan/devices', undefined, 8000);
+            render(started || { devices: [], online: 0, scanning: true });
+            if (started && started.scanning) {
+                await pollScanUntilDone(Date.now(), 20000);
+            } else {
+                // Server finished extremely fast or returned final snapshot.
+                render(started || { devices: [], online: 0 });
+            }
         } catch (err) {
             console.error('lan load failed', err);
-            showToast(`${i18n('lan_load_failed') || '加载失败'}: ${err.message}`, 'error');
-            if (els.tbody && !state.lastLANData) {
-                els.tbody.innerHTML = '<tr><td colspan="5" class="placeholder">' +
-                    (i18n('lan_load_failed') || '加载失败') + ': ' + escapeHtml(err.message || '') +
-                    '</td></tr>';
+            // Last-resort cache read; never leave the page blank if server has data.
+            try {
+                const cached = await lanGet('/api/v1/lan/devices', 5000);
+                render(cached || { devices: [], online: 0 });
+            } catch (_) {
+                showToast(`${i18n('lan_load_failed') || '加载失败'}: ${err.message}`, 'error');
+                if (els.tbody && !state.lastLANData) {
+                    els.tbody.innerHTML = '<tr><td colspan="5" class="placeholder">' +
+                        (i18n('lan_load_failed') || '加载失败') + ': ' + escapeHtml(err.message || '') +
+                        '</td></tr>';
+                }
             }
         } finally {
             if (scan) state.scanning = false;
-            if (els.refreshBtn) {
-                els.refreshBtn.disabled = false;
-                els.refreshBtn.textContent = originalLabel === (i18n('scanning') || '扫描中…') ? (i18n('scan_btn') || '扫描') : (i18n('scan_btn') || originalLabel || '扫描');
-                // Always restore explicit scan label after busy state.
-                els.refreshBtn.textContent = i18n('scan_btn') || '扫描';
-                els.refreshBtn.setAttribute('title', originalTitle);
-                els.refreshBtn.setAttribute('aria-label', originalAria);
-            }
+            setScanButtonBusy(false);
+            stopScanPoller();
         }
     }
 

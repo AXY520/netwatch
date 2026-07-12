@@ -38,16 +38,37 @@ func lanDevicesPath(dataDir string) string {
 }
 
 func (s *Service) GetLANDevices() LANDeviceSnapshot {
-	s.lan.mu.Lock()
-	defer s.lan.mu.Unlock()
-	if s.lan.snapshot.GeneratedAt != "" {
-		return s.lan.snapshot
+	// Fast path: return in-memory snapshot without nested lock calls.
+	if snap, ok := s.lan.getSnapshot(); ok {
+		return s.lan.attachScanMeta(snap)
 	}
+	// Cold path: load device map (takes hub lock internally), build snapshot, cache it.
 	snap := s.loadLANDeviceSnapshotCached()
-	s.lan.snapshot = snap
-	return snap
+	s.lan.setSnapshot(snap)
+	return s.lan.attachScanMeta(snap)
 }
 
+// StartLANScan kicks off a background discovery pass and returns the current
+// snapshot immediately (with scanning=true). Request cancellation must not
+// abort discovery — Lazycat hostproxy cancels clients that wait too long.
+func (s *Service) StartLANScan() LANDeviceSnapshot {
+	scanID := fmt.Sprintf("%d", time.Now().UnixNano())
+	if !s.lan.beginScan(scanID) {
+		// Already running — return current snapshot with scanning flag.
+		return s.GetLANDevices()
+	}
+	go func(id string) {
+		defer s.lan.endScan(id)
+		// Detached from HTTP request context so proxy/client cancel cannot kill it.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = s.scanLANDevices(ctx, false)
+	}(scanID)
+	return s.GetLANDevices()
+}
+
+// ScanLANDevices runs a synchronous scan (tests/internal callers). Prefer
+// StartLANScan for HTTP handlers behind reverse proxies.
 func (s *Service) ScanLANDevices(ctx context.Context) LANDeviceSnapshot {
 	return s.scanLANDevices(ctx, false)
 }
@@ -59,10 +80,17 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	// Hard cap even if caller forgets a deadline (UI previously waited forever).
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
+	// Never inherit a cancelled request context from callers that forget to detach.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 	}
 	scanStarted := time.Now()
+	logger.Info("LAN scan start")
 	now := time.Now()
 	nowText := localTimestamp()
 	policy := s.lan.policySnapshot()
@@ -331,7 +359,7 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	}
 	logger.Info("LAN scan done: devices=%d online=%d networks=%d elapsed=%s",
 		len(snap.Devices), snap.Online, len(networks), time.Since(scanStarted).Round(time.Millisecond))
-	return snap
+	return s.lan.attachScanMeta(snap)
 }
 
 // isLANFlapping checks if a device has been changing state too frequently.
