@@ -307,8 +307,9 @@ func resolveMDNSHostname(ctx context.Context, ip string) string {
 	ctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
 
-	// Try reverse DNS first (faster, already implemented)
-	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+	// Prefer pure-Go resolver so short deadlines are honored.
+	resolver := &net.Resolver{PreferGo: true}
+	names, err := resolver.LookupAddr(ctx, ip)
 	if err == nil && len(names) > 0 {
 		name := strings.TrimSuffix(names[0], ".")
 		if !strings.HasSuffix(name, ".in-addr.arpa") {
@@ -321,7 +322,8 @@ func resolveMDNSHostname(ctx context.Context, ip string) string {
 	return ""
 }
 
-// warmNeighborsWithICMP combines UDP warm-up with ICMP ping for better detection.
+// warmNeighborsWithICMP combines UDP warm-up with a short ICMP wave.
+// Total time is hard-capped so multi-NIC environments stay interactive.
 func warmNeighborsWithICMP(ctx context.Context, cidr string) int {
 	ip, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil || ip.To4() == nil {
@@ -332,23 +334,26 @@ func warmNeighborsWithICMP(ctx context.Context, cidr string) int {
 		return 0
 	}
 
-	ipStrings := make([]string, len(ips))
-	for i, host := range ips {
-		ipStrings[i] = host.String()
-	}
-
-	// Per-network budget so multi-NIC scans stay snappy.
-	netCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	// Per-network budget; keep total scan snappy even with 2-3 LANs.
+	netCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
 
 	udpCount := warmLANNeighbors(netCtx, cidr)
-	icmpResponded := icmpPings(netCtx, ipStrings, 200*time.Millisecond)
 
-	// Tiny settle so kernel ARP/NDP tables catch up before we read them.
-	select {
-	case <-netCtx.Done():
-	case <-time.After(80 * time.Millisecond):
+	// ICMP is optional enrichment; skip if UDP already used most of the budget.
+	icmpCount := 0
+	if netCtx.Err() == nil {
+		ipStrings := make([]string, len(ips))
+		for i, host := range ips {
+			ipStrings[i] = host.String()
+		}
+		icmpCount = len(icmpPings(netCtx, ipStrings, 150*time.Millisecond))
 	}
 
-	return udpCount + len(icmpResponded)
+	select {
+	case <-netCtx.Done():
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	return udpCount + icmpCount
 }

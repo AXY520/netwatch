@@ -557,9 +557,18 @@ const state = {
             els.count.textContent = i18n('scanning') || '扫描中…';
         }
         try {
-            const devices = scan
-                ? await lanPost('/api/v1/lan/devices', undefined, 30000)
-                : await lanGet('/api/v1/lan/devices', 15000);
+            let devices;
+            if (scan) {
+                try {
+                    devices = await lanPost('/api/v1/lan/devices', undefined, 20000);
+                } catch (scanErr) {
+                    // Scan timed out/failed: fall back to whatever snapshot the server already has.
+                    console.warn('lan scan failed, falling back to cache', scanErr);
+                    devices = await lanGet('/api/v1/lan/devices', 8000);
+                }
+            } else {
+                devices = await lanGet('/api/v1/lan/devices', 8000);
+            }
             render(devices || { devices: [], online: 0 });
         } catch (err) {
             console.error('lan load failed', err);

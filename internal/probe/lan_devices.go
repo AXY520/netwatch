@@ -109,17 +109,28 @@ func (s *Service) scanLANDevices(ctx context.Context, allowNotify bool) LANDevic
 	}
 
 	// Phase 3: Read neighbor tables (ARP + IPv6 NDP)
+	// IMPORTANT: do not reverse-DNS every incomplete ARP entry here. Warming a
+	// /24 can produce hundreds of incomplete neighbors; serial LookupAddr then
+	// hangs the scan far past the UI timeout (and cgo DNS often ignores ctx).
 	seen := readLANNeighborDevices()
 	ipv6Map := readIPv6Neighbors()
 	dhcpHosts := readDHCPLeases()
 	seenConfirmed := confirmedLANDevicesByMAC(seen)
 
-	// Merge IPv6 addresses into seen devices by MAC
+	// Merge IPv6 addresses into seen devices by MAC and enrich hostnames cheaply.
 	for i := range seen {
-		if v6, ok := ipv6Map[strings.ToLower(seen[i].MAC)]; ok {
+		key := strings.ToLower(seen[i].MAC)
+		if v6, ok := ipv6Map[key]; ok {
 			seen[i].IPv6 = v6
 		}
+		if seen[i].Hostname == "" {
+			if h, ok := dhcpHosts[key]; ok {
+				seen[i].Hostname = h
+			}
+		}
 	}
+	// Bounded reverse-DNS only for confirmed-online devices still missing names.
+	fillLANHostnamesBounded(ctx, seen, 12, 150*time.Millisecond)
 
 	var events []NotificationEvent
 
@@ -779,7 +790,6 @@ func readNetlinkNeighborDevices() []LANDevice {
 			IP:           ip.String(),
 			MAC:          mac,
 			Interface:    ifaceName,
-			Hostname:     lookupLANHostname(ip.String()),
 			VendorHint:   macAddressHint(mac),
 			Reachability: state,
 		})
@@ -821,7 +831,6 @@ func readARPDevices() []LANDevice {
 			IP:           ip,
 			MAC:          mac,
 			Interface:    ifaceName,
-			Hostname:     lookupLANHostname(ip),
 			VendorHint:   macAddressHint(mac),
 			Reachability: "arp-cache",
 		})
@@ -1075,14 +1084,112 @@ func lanNeighborStateName(state uint16) string {
 	}
 }
 
+// lanResolver uses the pure-Go DNS client so context deadlines are actually
+// enforced (cgo/system resolver frequently ignores short timeouts).
+var lanResolver = &net.Resolver{PreferGo: true, StrictErrors: true}
+
 func lookupLANHostname(ip string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
 	defer cancel()
-	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+	return lookupLANHostnameCtx(ctx, ip)
+}
+
+func lookupLANHostnameCtx(ctx context.Context, ip string) string {
+	if strings.TrimSpace(ip) == "" {
+		return ""
+	}
+	names, err := lanResolver.LookupAddr(ctx, ip)
 	if err != nil || len(names) == 0 {
 		return ""
 	}
-	return strings.TrimSuffix(names[0], ".")
+	name := strings.TrimSuffix(names[0], ".")
+	if name == "" || strings.HasSuffix(name, ".in-addr.arpa") || strings.HasSuffix(name, ".ip6.arpa") {
+		return ""
+	}
+	return name
+}
+
+// fillLANHostnamesBounded reverse-resolves only confirmed/reachable neighbors
+// that still lack a hostname. Concurrency and per-lookup timeout are capped so
+// a broken DNS path cannot block LAN scan completion.
+func fillLANHostnamesBounded(ctx context.Context, devices []LANDevice, maxWorkers int, perLookup time.Duration) {
+	if len(devices) == 0 {
+		return
+	}
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	if perLookup <= 0 {
+		perLookup = 120 * time.Millisecond
+	}
+
+	type job struct {
+		idx int
+		ip  string
+	}
+	var queue []job
+	for i := range devices {
+		if devices[i].Hostname != "" || devices[i].IP == "" {
+			continue
+		}
+		// Skip incomplete/failed ARP noise created by warm-up floods.
+		if !lanNeighborConfirmsOnline(devices[i].Reachability) && devices[i].Reachability != "arp-cache" {
+			continue
+		}
+		queue = append(queue, job{idx: i, ip: devices[i].IP})
+	}
+	if len(queue) == 0 {
+		return
+	}
+
+	workers := maxWorkers
+	if workers > len(queue) {
+		workers = len(queue)
+	}
+	jobs := make(chan job, len(queue))
+	for _, j := range queue {
+		jobs <- j
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				lctx, cancel := context.WithTimeout(ctx, perLookup)
+				name := lookupLANHostnameCtx(lctx, j.ip)
+				cancel()
+				if name == "" {
+					continue
+				}
+				mu.Lock()
+				if devices[j.idx].Hostname == "" {
+					devices[j.idx].Hostname = name
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		// Absolute ceiling for hostname enrichment during scan.
+	}
 }
 
 func macAddressHint(mac string) string {
