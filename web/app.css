@@ -1048,10 +1048,47 @@
         .host-port-sort {
             font-size: 0.74rem;
         }
+        .host-port-search input {
+            width: 7.5rem;
+            height: 2rem;
+            padding: 0 0.6rem;
+            border: 1px solid var(--border-subtle);
+            background: rgba(255,255,255,0.025);
+            color: var(--text-primary);
+            font: inherit;
+        }
         .host-ports-grid {
+            display: grid;
+            gap: 0.8rem;
+        }
+        .host-port-group {
+            border: 1px solid var(--border-subtle);
+            background: rgba(255,255,255,0.012);
+        }
+        .host-port-group-head {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            min-height: 2.65rem;
+            padding: 0.45rem 0.7rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .host-port-group-count {
+            margin-left: auto;
+            color: var(--text-muted);
+            font-family: var(--font-number);
+            font-variant-numeric: tabular-nums;
+        }
+        .host-port-app-icon {
+            width: 1.55rem;
+            height: 1.55rem;
+            margin-right: 0;
+        }
+        .host-port-group-list {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 0.55rem;
+            padding: 0.55rem;
         }
         .host-port-item {
             min-width: 0;
@@ -1077,6 +1114,25 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        .host-port-listen {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: 0.78rem;
+        }
+        .host-port-row-owner {
+            color: var(--text-secondary);
+            font-family: var(--font-ui);
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+        .host-port-empty {
+            padding: 1rem 0.8rem;
+            color: var(--text-muted);
         }
         .host-port-main strong {
             font-size: 1rem;
@@ -1479,6 +1535,18 @@
             color: var(--text-muted);
             margin-top: -0.25rem;
             padding-bottom: 0.15rem;
+        }
+        .lan-setting-hint {
+            margin: -0.15rem 0 0.35rem;
+            padding: 0 0.55rem 0.45rem;
+            border-bottom: 1px solid var(--border-subtle);
+            line-height: 1.45;
+        }
+        .lan-settings-status {
+            min-height: 1.1rem;
+            margin: 0 0 0.2rem;
+            padding: 0.2rem 0.55rem;
+            line-height: 1.45;
         }
         .settings-input {
             background: var(--input-bg);
@@ -2111,7 +2179,8 @@
             .trace-summary { grid-template-columns: 1fr; }
             .trace-hop { grid-template-columns: 1fr; }
             .trace-hop-latency { justify-self: start; grid-column: auto; }
-            .host-ports-grid { grid-template-columns: 1fr; }
+            .host-port-group-list { grid-template-columns: 1fr; }
+            .host-port-search input { width: 6.5rem; }
             .host-port-detail-row { grid-template-columns: 1fr; gap: 0.25rem; }
         }
 
@@ -2481,9 +2550,6 @@
         }
 
         /* Traffic analysis page */
-        .traffic-page header {
-            align-items: flex-start;
-        }
         .traffic-header-copy {
             display: flex;
             flex-direction: column;
@@ -2573,7 +2639,7 @@
             color: var(--text-main);
             padding: 0.72rem;
             display: grid;
-            grid-template-columns: 1fr auto;
+            grid-template-columns: auto minmax(0, 1fr) auto;
             gap: 0.45rem 0.7rem;
             background: var(--glass-bg);
             cursor: pointer;
@@ -2588,8 +2654,9 @@
         }
         .traffic-app-title {
             display: flex;
-            align-items: center;
-            gap: 0.55rem;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.12rem;
             min-width: 0;
         }
         .traffic-app-title strong,
@@ -2606,7 +2673,6 @@
             line-height: 1.35;
         }
         .traffic-app-sub {
-            grid-column: 1 / -1;
             color: var(--text-muted);
             font-size: 0.74rem;
             font-weight: 500;
@@ -2618,6 +2684,29 @@
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
             font-feature-settings: "tnum";
+        }
+        .traffic-app-icon-wrap {
+            width: clamp(3rem, 5vw, 3.8rem);
+            height: clamp(3rem, 5vw, 3.8rem);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+        }
+        .traffic-app-icon-wrap .app-icon {
+            width: 100%;
+            height: 100%;
+            margin-right: 0;
+            border-radius: 0.55rem;
+            object-fit: cover;
+        }
+        .interface-link-speed {
+            display: block;
+            margin-top: 0.16rem;
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            line-height: 1.2;
+            white-space: nowrap;
         }
         .traffic-summary-grid {
             display: grid;
@@ -2757,6 +2846,40 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+        }
+        .lan-list-tools {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+        }
+        .lan-list-tools input,
+        .lan-list-tools select {
+            min-height: 2rem;
+            max-width: 9rem;
+            padding: 0 0.5rem;
+            border: 1px solid var(--border-subtle);
+            background: var(--glass-bg);
+            color: var(--text-main);
+            font: inherit;
+            font-size: 0.76rem;
+        }
+        .lan-seen-sub {
+            display: block;
+            margin-top: 0.2rem;
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            line-height: 1.35;
+        }
+        .network-config-preview {
+            margin-top: 0.7rem;
+            padding: 0.55rem 0.7rem;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            font-size: 0.78rem;
+            font-family: var(--font-mono);
+            overflow-wrap: anywhere;
         }
         .lan-page #lan-device-count {
             font-size: 0.82rem;
@@ -3138,7 +3261,6 @@
 
         @media (max-width: 900px) {
             .traffic-layout { grid-template-columns: 1fr; }
-            .traffic-page header { align-items: stretch; }
             .traffic-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .traffic-detail-grid { grid-template-columns: 1fr; }
             .lan-ignored-list {
@@ -3170,34 +3292,41 @@
         }
 
         @media (max-width: 640px) {
-            .traffic-toolbar-row,
-            .traffic-summary-grid {
+            .traffic-toolbar-row {
                 grid-template-columns: 1fr;
+            }
+            .traffic-summary-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
             .traffic-range-controls {
                 display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: .45rem;
             }
             .traffic-range-controls button {
                 width: 100%;
             }
+            .traffic-range-controls .traffic-live-toggle {
+                grid-column: 1 / -1;
+                min-height: 34px;
+            }
             .traffic-app-list {
-                display: grid;
-                grid-auto-flow: column;
-                grid-auto-columns: minmax(13rem, 78vw);
+                display: flex;
+                flex-direction: column;
                 gap: .55rem;
                 min-height: 0;
                 max-height: none !important;
-                overflow-x: auto;
-                overflow-y: hidden;
+                overflow: visible;
                 padding: .05rem .05rem .4rem;
-                scroll-snap-type: x proximity;
             }
             .traffic-app-item {
                 min-height: 4.1rem;
                 padding: .62rem .68rem;
                 align-content: center;
-                scroll-snap-align: start;
+            }
+            .traffic-app-icon-wrap {
+                width: 3.2rem;
+                height: 3.2rem;
             }
             .traffic-app-title strong {
                 font-size: .86rem;
@@ -3207,6 +3336,12 @@
             }
             .traffic-app-total {
                 font-size: .76rem;
+            }
+            .lan-page > .system-layout > .card {
+                overflow-x: auto;
+            }
+            .lan-device-table {
+                min-width: 720px;
             }
         }
 

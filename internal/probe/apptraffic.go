@@ -17,14 +17,28 @@ import (
 
 // sanitizeIconURL converts SDK icon URLs like "https://$boxdomain/sys/icons/X.png"
 // to relative paths "/sys/icons/X.png" so they work from any access domain.
-func sanitizeIconURL(raw string) string {
+func sanitizeIconURL(raw, boxDomain string) string {
 	if raw == "" {
 		return raw
 	}
-	// Handle placeholder $boxdomain
-	s := strings.Replace(raw, "$boxdomain", "", -1)
+	s := strings.TrimSpace(raw)
+	if strings.Contains(s, "$boxdomain") && boxDomain != "" {
+		s = strings.ReplaceAll(s, "$boxdomain", strings.TrimSpace(boxDomain))
+	} else if strings.Contains(s, "$boxdomain") {
+		if idx := strings.Index(s, "/sys/icons/"); idx >= 0 {
+			s = s[idx:]
+		} else {
+			s = strings.ReplaceAll(s, "$boxdomain", "")
+		}
+	}
 	// Strip scheme + host if present
 	if idx := strings.Index(s, "/sys/icons/"); idx >= 0 {
+		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+			return s
+		}
+		if boxDomain != "" {
+			return "https://" + strings.TrimSuffix(boxDomain, "/") + s[idx:]
+		}
 		return s[idx:]
 	}
 	if strings.HasPrefix(s, "/") {
@@ -199,21 +213,38 @@ func CollectAppTraffic() AppTrafficSnapshot {
 	// 通过 SDK PackageManager.QueryApplication 拿应用中文 title。失败时回落到
 	// 直接使用 appid（不影响主流程）。
 	var appMap map[string]lzcsdk.AppInfo
+	boxDomain := ""
 	if lzcsdk.Available() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		if m, err := lzcsdk.ListApps(ctx); err == nil {
 			appMap = m
 		}
+		boxDomain = lzcsdk.BoxDomain(ctx)
 		cancel()
+	} else {
 	}
 
 	// 兜底：从 /lzcapp/run/pkgm/<appid>/pkg/package.yml 读 name 字段。
 	// 测试机上 SDK 返回的 Title 经常为空，本地扫描更稳。
 	var localTitles map[string]string
+	var localAppIDs []string
 	if appmeta.Available() {
 		if m, err := appmeta.LoadTitles(); err == nil {
 			localTitles = m
 		}
+		if ids, err := appmeta.LoadAppIDs(); err == nil {
+			localAppIDs = ids
+		}
+	}
+	projectAppIDs := map[string]string{}
+	for appID := range appMap {
+		projectAppIDs[normalizeAppProject(appID)] = appID
+	}
+	for appID := range localTitles {
+		projectAppIDs[normalizeAppProject(appID)] = appID
+	}
+	for _, appID := range localAppIDs {
+		projectAppIDs[normalizeAppProject(appID)] = appID
 	}
 
 	for _, entry := range entries {
@@ -242,24 +273,30 @@ func CollectAppTraffic() AppTrafficSnapshot {
 				continue
 			}
 			stats.AppID = info.AppID
+			if stats.AppID == "" {
+				stats.AppID = projectAppIDs[normalizeAppProject(info.Project)]
+			}
 			stats.Project = info.Project
 			stats.ContainerCount = info.ContainerCount
 			stats.RunningCount = info.RunningCount
 			stats.StatusText = info.StatusText
 			stats.CreatedAt = info.CreatedAt
 			// 优先使用本地 package.yml 读到的中文 name；SDK 兜底
-			if title, ok := localTitles[info.AppID]; ok && title != "" {
+			if title, ok := localTitles[stats.AppID]; ok && title != "" {
 				stats.AppTitle = title
-			} else if app, ok := appMap[info.AppID]; ok && app.Title != "" && app.Title != info.AppID {
+			} else if app, ok := appMap[stats.AppID]; ok && app.Title != "" && app.Title != stats.AppID {
 				stats.AppTitle = app.Title
 			}
-			if app, ok := appMap[info.AppID]; ok {
+			if app, ok := appMap[stats.AppID]; ok {
 				if app.Domain != "" {
 					stats.Domain = app.Domain
 				}
 				if app.Icon != "" {
-					stats.Icon = sanitizeIconURL(app.Icon)
+					stats.Icon = sanitizeIconURL(app.Icon, boxDomain)
 				}
+			}
+			if stats.Icon == "" && stats.AppID != "" && boxDomain != "" {
+				stats.Icon = "https://" + strings.TrimSuffix(boxDomain, "/") + "/sys/icons/" + stats.AppID + ".png"
 			}
 		}
 		snap.Bridges = append(snap.Bridges, stats)

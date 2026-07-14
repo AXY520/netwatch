@@ -138,6 +138,31 @@ async function runFastRefresh(showOverlay) {
     }
 }
 
+async function refreshInterfacesOnly() {
+    if (!els.interfacesRefreshBtn || state.interfacesRefreshing) return;
+    state.interfacesRefreshing = true;
+    els.interfacesRefreshBtn.disabled = true;
+    try {
+        var data;
+        if (window.NetwatchAPI) {
+            data = await window.NetwatchAPI.get('/api/v1/summary');
+        } else {
+            var response = await fetch('/api/v1/summary', { cache: 'no-store' });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            data = await response.json();
+        }
+        if (!data || !data.network_info) throw new Error('network information unavailable');
+        if (state.summary) state.summary.network_info = data.network_info;
+        window.__app.renderNetworkInfo(data.network_info);
+    } catch (error) {
+        console.error(error);
+        NetwatchShared.showToast(i18n('refresh_failed') + ': ' + error.message, 'error');
+    } finally {
+        state.interfacesRefreshing = false;
+        els.interfacesRefreshBtn.disabled = false;
+    }
+}
+
 async function runWebsiteRefresh() {
     els.websiteRefreshBtn.disabled = true;
     els.websiteStatus.textContent = i18n('checking') + '...';
@@ -383,11 +408,13 @@ function networkConfigEls() {
         gateway: document.getElementById('network-config-gateway'),
         dns: document.getElementById('network-config-dns'),
         checkIP: document.getElementById('network-config-check-ip-btn'),
+        preflight: document.getElementById('network-config-preflight-btn'),
         apply: document.getElementById('network-config-apply-btn'),
         confirm: document.getElementById('network-config-confirm-btn'),
         rollback: document.getElementById('network-config-rollback-btn'),
         status: document.getElementById('network-config-status'),
         output: document.getElementById('network-config-output')
+        ,preview: document.getElementById('network-config-preview')
     };
 }
 
@@ -509,8 +536,47 @@ function fillNetworkConfigForm(dev) {
     if (e.address) e.address.value = (dev.ipv4 || '').split(',')[0] || '';
     if (e.gateway) e.gateway.value = dev.gateway || '';
     if (e.dns) e.dns.value = dev.dns || '';
+    state.networkConfigBaseline = {
+        method: e.method ? e.method.value : '',
+        address: e.address ? e.address.value : '',
+        gateway: e.gateway ? e.gateway.value : '',
+        dns: e.dns ? e.dns.value : ''
+    };
     updateNetworkConfigMethodState();
     if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
+}
+
+function updateNetworkConfigApplyState() {
+    var e = networkConfigEls();
+    if (!e.apply || (state.networkConfigPendingData && state.networkConfigPendingData.pending)) return;
+    var baseline = state.networkConfigBaseline;
+    if (!baseline) {
+        e.apply.disabled = true;
+        return;
+    }
+    var changed = [
+        ['method', e.method],
+        ['address', e.address],
+        ['gateway', e.gateway],
+        ['dns', e.dns]
+    ].some(function (entry) {
+        return String(entry[1] ? entry[1].value : '') !== String(baseline[entry[0]] || '');
+    });
+    e.apply.disabled = !changed;
+    renderNetworkConfigPreview();
+}
+
+function renderNetworkConfigPreview() {
+    var e = networkConfigEls();
+    if (!e.preview) return;
+    var method = e.method && e.method.value === 'auto' ? i18n('network_config_method_auto') : i18n('network_config_method_manual');
+    var values = [
+        method,
+        e.address && e.address.value ? e.address.value : '—',
+        e.gateway && e.gateway.value ? e.gateway.value : '—',
+        e.dns && e.dns.value ? e.dns.value : '—'
+    ];
+    e.preview.textContent = i18n('network_config_preview') + ': ' + values.join(' · ');
 }
 
 function updateNetworkConfigMethodState() {
@@ -519,6 +585,7 @@ function updateNetworkConfigMethodState() {
     [e.address, e.gateway, e.dns, e.checkIP].forEach(function (el) {
         if (el) el.disabled = !manual;
     });
+    updateNetworkConfigApplyState();
 }
 
 async function loadNetworkConfigDevices() {
@@ -577,7 +644,7 @@ async function loadNetworkConfigDevices() {
         }
         if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
-        if (e.apply) e.apply.disabled = false;
+        updateNetworkConfigApplyState();
         if (e.status) e.status.textContent = i18n('network_config_ready');
     } catch (err) {
         if (e.status) e.status.textContent = i18n('load_failed') + ': ' + err.message;
@@ -638,13 +705,22 @@ async function checkNetworkConfigIP() {
     if (e.status) e.status.textContent = i18n('network_config_checking_ip') + ': ' + ipOnly;
     try {
         var result = await netwatchPost('/api/v1/network/config/check-ip', payload);
-        if (!resp.ok || !result.ok) throw new Error(result.error || ('HTTP ' + resp.status));
+        if (!result.ok) throw new Error(result.error || 'IP check failed');
         if (e.status) e.status.textContent = result.available ? i18n('network_config_ip_available') : (i18n('network_config_ip_occupied') + ': ' + (result.error || result.ip || ''));
     } catch (err) {
         if (e.status) e.status.textContent = i18n('network_config_failed') + ': ' + err.message;
     } finally {
         if (e.checkIP) e.checkIP.disabled = false;
     }
+}
+
+async function preflightNetworkConfig() {
+    var e = networkConfigEls();
+    if (e.method && e.method.value === 'auto') {
+        if (e.status) e.status.textContent = i18n('network_config_preflight_auto');
+        return;
+    }
+    await checkNetworkConfigIP();
 }
 
 async function finishNetworkConfig(kind) {
@@ -1117,16 +1193,16 @@ function updateTrafficAnalysisLink() {
     var enabled = !!(state.settings && state.settings.traffic_sampling_enabled);
     // Keep the entry visible so users can always reach the trend page.
     // When sampling is off, dim the link and still allow navigation (page degrades itself).
-    link.hidden = false;
-    link.removeAttribute('hidden');
+    link.hidden = !enabled;
     link.classList.toggle('is-disabled', !enabled);
     link.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-    link.title = enabled ? i18n('traffic_analysis_btn') : (i18n('traffic_analysis_btn') + ' (' + i18n('sampling_off_hint') + ')');
+    link.title = i18n('traffic_analysis_btn');
 }
 
 window.__app.loadSummary = loadSummary;
 window.__app.renderSummary = renderSummary;
 window.__app.runFastRefresh = runFastRefresh;
+window.__app.refreshInterfacesOnly = refreshInterfacesOnly;
 window.__app.runWebsiteRefresh = runWebsiteRefresh;
 window.__app.runNATRefresh = runNATRefresh;
 window.__app.renderEgressLookups = renderEgressLookups;
@@ -1141,7 +1217,9 @@ window.__app.runIPv6Renew = runIPv6Renew;
 window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;
+window.__app.updateNetworkConfigApplyState = updateNetworkConfigApplyState;
 window.__app.checkNetworkConfigIP = checkNetworkConfigIP;
+window.__app.preflightNetworkConfig = preflightNetworkConfig;
 window.__app.applyNetworkConfig = applyNetworkConfig;
 window.__app.confirmNetworkConfig = confirmNetworkConfig;
 window.__app.rollbackNetworkConfig = rollbackNetworkConfig;

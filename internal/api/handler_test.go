@@ -84,6 +84,38 @@ func TestHandleLocalUploadRejectsOversizedBodies(t *testing.T) {
 	}
 }
 
+func TestHandleHealthReportsStartingUntilFirstProbe(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleHealth(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestSpeedStreamLimitReturnsTooManyRequests(t *testing.T) {
+	handler := newTestHandler(t)
+	for i := 0; i < maxConcurrentSpeedStreams; i++ {
+		handler.speedSlots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < maxConcurrentSpeedStreams; i++ {
+			<-handler.speedSlots
+		}
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/local/upload", strings.NewReader("abc"))
+	rec := httptest.NewRecorder()
+	handler.handleLocalUpload(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+}
+
 func TestHandleLocalResultRejectsInvalidNumbers(t *testing.T) {
 	handler := newTestHandler(t)
 	payload := strings.NewReader(`{"download_mbps":-1,"upload_mbps":10}`)

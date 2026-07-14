@@ -14,12 +14,12 @@ RUN apk add --no-cache ca-certificates tzdata mtr libcap iproute2 util-linux \
 WORKDIR /app
 COPY --from=build /out/netwatch /app/netwatch
 COPY web /app/web
-RUN mkdir -p /app/data /app/data && chown netwatch:netwatch /app/data && chmod 755 /app && chmod 755 /app/netwatch
+RUN mkdir -p /app/data && chown netwatch:netwatch /app/data && chmod 755 /app && chmod 755 /app/netwatch
 USER netwatch
 EXPOSE 8080
 ENV TZ=Asia/Shanghai \
     PORT=8080 \
     DATA_DIR=/app/data
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:${PORT:-8080}/healthz || exit 1
 CMD ["/app/netwatch"]

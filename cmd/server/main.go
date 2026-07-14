@@ -137,7 +137,11 @@ func noStoreStatic(next http.Handler) http.Handler {
 		switch ext {
 		case ".ttf", ".woff2", ".woff", ".otf", ".eot":
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		case ".html", ".js", ".css", ".ico", ".json", "":
+		case ".js", ".css":
+			w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico":
+			w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
+		case ".html", ".json", "":
 			w.Header().Set("Cache-Control", "no-store, max-age=0")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")

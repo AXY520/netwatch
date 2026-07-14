@@ -247,6 +247,7 @@ type HostPortContainer struct {
 	Image       string `json:"image,omitempty"`
 	AppID       string `json:"app_id,omitempty"`
 	AppTitle    string `json:"app_title,omitempty"`
+	Icon        string `json:"icon,omitempty"`
 	Project     string `json:"project,omitempty"`
 	NetworkMode string `json:"network_mode,omitempty"`
 	PID         int    `json:"pid,omitempty"`

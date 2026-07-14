@@ -20,7 +20,7 @@ function initHostPorts() {
     var detailNote = document.getElementById('host-port-detail-note');
     var detailClose = document.getElementById('close-host-port-detail-window');
     var sharedBackdrop = document.getElementById('window-backdrop');
-    var sortButtons = Array.from(document.querySelectorAll('[data-host-port-sort-key]'));
+    var searchInput = document.getElementById('host-ports-search');
     var latestPortsData = null;
     var clickCount = 0;
     var clickTimer = null;
@@ -29,17 +29,22 @@ function initHostPorts() {
     var ownerInfo = function (p) {
         var c = p.container || null;
         if (c) {
+            var appName = c.app_title || window.__app.shortAppName(c.app_id) || c.project || c.name || c.id || i18n('unknown_app');
             return {
                 type: 'app',
+                key: c.app_id || c.project || c.app_title || c.name || c.id || i18n('unknown_app'),
                 typeLabel: i18n('app_owner'),
-                name: c.app_title || window.__app.shortAppName(c.app_id) || c.name || c.project || c.id || i18n('unknown_app')
+                name: appName,
+                icon: c.icon || ''
             };
         }
         var proc = p.process || {};
         return {
             type: 'host',
+            key: 'host',
             typeLabel: i18n('host_owner'),
-            name: proc.name || proc.cmdline || i18n('unknown_process')
+            name: proc.name || proc.cmdline || i18n('unknown_process'),
+            icon: ''
         };
     };
 
@@ -63,6 +68,8 @@ function initHostPorts() {
                 ownerType: owner.type,
                 ownerTypeLabel: owner.typeLabel,
                 ownerName: owner.name,
+                ownerKey: owner.key,
+                ownerIcon: owner.icon,
                 processName: processName(p),
                 details: [p]
             });
@@ -78,28 +85,9 @@ function initHostPorts() {
         return out;
     };
 
-    var updateSortHeaders = function () {
-        sortButtons.forEach(function (button) {
-            var active = button.dataset.hostPortSortKey === state.hostPortsSort.key;
-            button.classList.toggle('active', active);
-            button.dataset.sortDirection = active ? state.hostPortsSort.direction : 'none';
-            button.setAttribute('aria-sort', active ? (state.hostPortsSort.direction === 'asc' ? 'ascending' : 'descending') : 'none');
-        });
-    };
-
     var sortRows = function (rows) {
-        var key = state.hostPortsSort.key;
-        var direction = state.hostPortsSort.direction;
         rows.sort(function (a, b) {
-            var result;
-            if (key === 'owner') {
-                result = String(a.ownerName || '').localeCompare(String(b.ownerName || ''), 'zh-CN');
-                if (result === 0) result = (a.port || 0) - (b.port || 0);
-            } else {
-                result = (a.port || 0) - (b.port || 0);
-                if (result === 0) result = String(a.ownerName || '').localeCompare(String(b.ownerName || ''), 'zh-CN');
-            }
-            return direction === 'asc' ? result : -result;
+            return ((a.port || 0) - (b.port || 0)) || String(a.protocol || '').localeCompare(String(b.protocol || '')) || String(a.ownerName || '').localeCompare(String(b.ownerName || ''), 'zh-CN');
         });
         return rows;
     };
@@ -170,28 +158,52 @@ function initHostPorts() {
     var render = function (data) {
         latestPortsData = data || {};
         var rows = compactPorts(Array.isArray(latestPortsData.ports) ? latestPortsData.ports : []);
+        var query = searchInput ? searchInput.value.trim() : '';
+        var queryPort = query === '' ? null : parseInt(query, 10);
+        var queryValid = query === '' || (String(queryPort) === query && queryPort >= 1 && queryPort <= 65535);
+        if (queryValid && queryPort !== null) rows = rows.filter(function (row) { return row.port === queryPort; });
         sortRows(rows);
-        updateSortHeaders();
         listEl.classList.toggle('advanced', !!state.hostPortsAdvanced);
         if (rows.length === 0) {
-            listEl.innerHTML = '<div class="placeholder">' + i18n('no_host_ports') + '</div>';
+            listEl.innerHTML = '<div class="host-port-empty"><strong>' + NetwatchShared.escapeHtml(query === '' ? i18n('no_host_ports') : (queryValid ? i18n('port_not_occupied') : i18n('port_search_invalid'))) + '</strong></div>';
         } else {
-            listEl.innerHTML = rows.map(function (row, index) {
-                var ownerClass = row.ownerType === 'app' ? 'app' : 'host';
-                var clickable = state.hostPortsAdvanced ? ' role="button" tabindex="0" data-index="' + index + '"' : '';
-                return '<div class="host-port-item"' + clickable + '>' +
-                    '<div class="host-port-main"><strong>' + NetwatchShared.escapeHtml(String(row.port || '')) + '</strong><span class="host-port-proto">' + NetwatchShared.escapeHtml(row.protocol) + '</span><span class="host-port-state">' + NetwatchShared.escapeHtml(row.state || '') + '</span></div>' +
-                    '<div class="host-port-owner"><span class="owner-badge ' + ownerClass + '">' + NetwatchShared.escapeHtml(row.ownerTypeLabel) + '</span><strong>' + NetwatchShared.escapeHtml(row.ownerName) + '</strong></div>' +
-                '</div>';
+            var groups = [];
+            var groupMap = {};
+            rows.forEach(function (row) {
+                var key = row.ownerType + '|' + row.ownerKey;
+                if (!groupMap[key]) {
+                    groupMap[key] = { type: row.ownerType, name: row.ownerName, icon: row.ownerIcon, rows: [] };
+                    groups.push(groupMap[key]);
+                }
+                groupMap[key].rows.push(row);
+            });
+            groups.sort(function (a, b) {
+                if (a.type !== b.type) return a.type === 'host' ? 1 : -1;
+                return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+            });
+            listEl.innerHTML = groups.map(function (group) {
+                var ownerClass = group.type === 'app' ? 'app' : 'host';
+                var iconHtml = group.icon ? '<img class="app-icon host-port-app-icon" src="' + NetwatchShared.escapeHtml(group.icon) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '';
+                var groupRows = group.rows.map(function (row, index) {
+                    var clickable = state.hostPortsAdvanced ? ' role="button" tabindex="0" data-group="' + NetwatchShared.escapeHtml(group.type + '|' + (group.type === 'host' ? 'host' : group.rows[0].ownerKey)) + '" data-index="' + index + '"' : '';
+                    return '<div class="host-port-item"' + clickable + '>' +
+                        '<div class="host-port-main"><strong>' + NetwatchShared.escapeHtml(String(row.port || '')) + '</strong><span class="host-port-proto">' + NetwatchShared.escapeHtml(row.protocol) + '</span><span class="host-port-state">' + NetwatchShared.escapeHtml(row.state || '') + '</span></div>' +
+                        '<div class="host-port-listen">' + (group.type === 'host' ? '<strong class="host-port-row-owner">' + NetwatchShared.escapeHtml(row.ownerName) + '</strong><span> · </span>' : '') + NetwatchShared.escapeHtml(uniqueJoined(row.details, function (item) { return item.address; })) + '</div>' +
+                    '</div>';
+                }).join('');
+                return '<section class="host-port-group ' + ownerClass + '"><div class="host-port-group-head">' + iconHtml + '<span class="owner-badge ' + ownerClass + '">' + NetwatchShared.escapeHtml(group.type === 'app' ? i18n('app_owner') : i18n('host_services')) + '</span><strong>' + NetwatchShared.escapeHtml(group.type === 'app' ? group.name : i18n('host_services')) + '</strong><span class="host-port-group-count">' + group.rows.length + '</span></div><div class="host-port-group-list">' + groupRows + '</div></section>';
             }).join('');
-            Array.from(listEl.querySelectorAll('[data-index]')).forEach(function (item) {
+            Array.from(listEl.querySelectorAll('[data-group]')).forEach(function (item) {
+                var group = groupMap[item.dataset.group];
+                if (!group) return;
+                var row = group.rows[parseInt(item.dataset.index || '0', 10)];
                 item.addEventListener('click', function () {
-                    openDetail(rows[parseInt(item.dataset.index || '0', 10)]);
+                    openDetail(row);
                 });
                 item.addEventListener('keydown', function (event) {
                     if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        openDetail(rows[parseInt(item.dataset.index || '0', 10)]);
+                        openDetail(row);
                     }
                 });
             });
@@ -233,18 +245,7 @@ function initHostPorts() {
     if (detailClose) detailClose.addEventListener('click', closeDetail);
     if (sharedBackdrop) sharedBackdrop.addEventListener('click', closeDetail);
 
-    sortButtons.forEach(function (button) {
-        button.addEventListener('click', function () {
-            var key = button.dataset.hostPortSortKey || 'port';
-            if (state.hostPortsSort.key === key) {
-                state.hostPortsSort.direction = state.hostPortsSort.direction === 'asc' ? 'desc' : 'asc';
-            } else {
-                state.hostPortsSort.key = key;
-                state.hostPortsSort.direction = 'asc';
-            }
-            render(latestPortsData);
-        });
-    });
+    if (searchInput) searchInput.addEventListener('input', function () { render(latestPortsData); });
     if (btn) btn.addEventListener('click', load);
     window.__app.refreshHostPorts = load;
     load();

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0a0a0b">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
     <title data-i18n="traffic_page_title">NETWATCH // 应用流量分析</title>
     <script>
         var savedTheme = localStorage.getItem('theme');
@@ -22,11 +23,10 @@
         <header>
             <div class="traffic-header-copy">
                 <div class="logo">NET<span>WATCH</span></div>
-                <div class="note" id="traffic-page-note" data-i18n="traffic_page_subtitle">应用流量分析</div>
             </div>
             <div class="controls">
                 <a class="button-link" href="/" data-i18n="back_to_dashboard">返回仪表盘</a>
-                <button id="traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                        <button id="traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
             </div>
         </header>
 

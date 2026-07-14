@@ -76,6 +76,7 @@ const state = {
         openSettings: document.getElementById('lan-open-settings'),
         refreshBtn: document.getElementById('lan-refresh-btn'),
         count: document.getElementById('lan-device-count'),
+        search: document.getElementById('lan-device-search'),
         tbody: document.querySelector('#lan-device-table tbody'),
         testBackdrop: document.getElementById('lan-test-backdrop'),
         settingsWindow: document.getElementById('lan-settings-window'),
@@ -448,9 +449,16 @@ const state = {
 
     function render(data) {
         state.lastLANData = data;
-        const devices = (data.devices || []).filter(dev => dev.known !== false);
+        var now = Date.now();
+        var query = (els.search?.value || '').trim().toLowerCase();
+        const devices = (data.devices || []).filter(dev => {
+            if (dev.known === false) return false;
+            var haystack = [deviceLabel(dev), dev.ip, dev.mac, dev.hostname, dev.vendor_hint].filter(Boolean).join(' ').toLowerCase();
+            if (query && !haystack.includes(query)) return false;
+            return true;
+        });
         if (els.count) {
-            els.count.textContent = `在线 ${data.online || 0} 台`;
+            els.count.textContent = `在线 ${devices.filter(dev => dev.status === 'online').length} / ${devices.length} 台`;
         }
         renderIgnoredDevices(data.ignored_devices || []);
 
@@ -486,7 +494,7 @@ const state = {
                             ${netRows.join('')}
                         </div>
                     </td>
-                    <td><span class="number">${escapeHtml(dev.last_seen || '--')}</span></td>
+                    <td><span class="number">首次 ${escapeHtml(dev.first_seen || '--')}</span><small class="lan-seen-sub">在线 ${escapeHtml(formatOnlineDuration(onlineDurationSeconds(dev, now)))}<br>最后 ${escapeHtml(dev.last_seen || '--')}</small></td>
                     <td>
                         <div class="lan-action-group">
                             <button class="lan-action danger" data-action="ignore" data-mac="${escapeHtml(dev.mac || '')}" title="从设备列表隐藏">忽略</button>
@@ -539,6 +547,29 @@ const state = {
             'arp-cache': 'ARP 缓存'
         };
         return map[value] || value || '--';
+    }
+
+    function parseLANTime(value) {
+        var time = Date.parse(String(value || '').replace(' ', 'T'));
+        return Number.isFinite(time) ? time : 0;
+    }
+
+    function onlineDurationSeconds(dev, now) {
+        var start = dev.status === 'online'
+            ? (parseLANTime(dev.last_changed) || parseLANTime(dev.first_seen))
+            : 0;
+        if (!start) return 0;
+        return Math.max(0, Math.floor((now - start) / 1000));
+    }
+
+    function formatOnlineDuration(seconds) {
+        if (!seconds) return '--';
+        var days = Math.floor(seconds / 86400);
+        var hours = Math.floor((seconds % 86400) / 3600);
+        var minutes = Math.floor((seconds % 3600) / 60);
+        if (days) return days + 'd ' + hours + 'h';
+        if (hours) return hours + 'h ' + minutes + 'm';
+        return minutes + 'm';
     }
 
     function setScanButtonBusy(busy) {
@@ -725,6 +756,9 @@ const state = {
     els.settingAutoRemoveDays?.addEventListener('change', () => {
         state.settings = { ...normalizeSettings(state.settings || {}), lan_device_auto_remove_days: Math.max(0, Number.parseInt(els.settingAutoRemoveDays.value || '30', 10) || 0) };
         applySettingsToForm();
+    });
+    els.search?.addEventListener('input', function () {
+        if (state.lastLANData) render(state.lastLANData);
     });
     els.refreshBtn?.addEventListener('click', () => load(true));
     els.tbody?.addEventListener('click', handleTableClick);

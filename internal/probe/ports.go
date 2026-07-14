@@ -364,18 +364,41 @@ func loadPortContainerIndex(ctx context.Context) portContainerIndex {
 		return idx
 	}
 	localTitles := map[string]string{}
+	localAppIDs := []string{}
 	if appmeta.Available() {
 		if titles, err := appmeta.LoadTitles(); err == nil {
 			localTitles = titles
 		}
+		if ids, err := appmeta.LoadAppIDs(); err == nil {
+			localAppIDs = ids
+		}
 	}
 	appMap := map[string]lzcsdk.AppInfo{}
+	boxDomain := ""
 	if lzcsdk.Available() {
 		appCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		if apps, err := lzcsdk.ListApps(appCtx); err == nil {
 			appMap = apps
 		}
+		boxDomain = lzcsdk.BoxDomain(appCtx)
 		cancel()
+	} else {
+	}
+	projectAppIDs := map[string]string{}
+	for appID := range appMap {
+		projectAppIDs[normalizeAppProject(appID)] = appID
+	}
+	for appID := range localTitles {
+		key := normalizeAppProject(appID)
+		if _, exists := projectAppIDs[key]; !exists {
+			projectAppIDs[key] = appID
+		}
+	}
+	for _, appID := range localAppIDs {
+		key := normalizeAppProject(appID)
+		if _, exists := projectAppIDs[key]; !exists {
+			projectAppIDs[key] = appID
+		}
 	}
 	titleByProject := map[string]string{}
 	if bridgeMap, err := dockerlzc.BuildBridgeMap(ctx); err == nil {
@@ -393,8 +416,9 @@ func loadPortContainerIndex(ctx context.Context) portContainerIndex {
 			ID:          shortContainerID(c.ID),
 			Name:        c.Name,
 			Image:       c.Image,
-			AppID:       c.AppID,
-			AppTitle:    resolveAppTitle(c.AppID, titleByProject[c.Project], localTitles, appMap),
+			AppID:       firstPortValue(c.AppID, projectAppIDs[normalizeAppProject(c.Project)]),
+			AppTitle:    resolveAppTitle(firstPortValue(c.AppID, projectAppIDs[normalizeAppProject(c.Project)]), titleByProject[c.Project], localTitles, appMap),
+			Icon:        appIcon(firstPortValue(c.AppID, projectAppIDs[normalizeAppProject(c.Project)]), appMap, boxDomain),
 			Project:     c.Project,
 			NetworkMode: c.NetworkMode,
 			PID:         c.PID,
@@ -403,6 +427,35 @@ func loadPortContainerIndex(ctx context.Context) portContainerIndex {
 	}
 	idx.buildAncestors()
 	return idx
+}
+
+func normalizeAppProject(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, ".", "")
+	value = strings.ReplaceAll(value, "-", "")
+	value = strings.ReplaceAll(value, "_", "")
+	return value
+}
+
+func firstPortValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func appIcon(appID string, appMap map[string]lzcsdk.AppInfo, boxDomain string) string {
+	if app, ok := appMap[appID]; ok {
+		if icon := sanitizeIconURL(app.Icon, boxDomain); icon != "" {
+			return icon
+		}
+	}
+	if appID != "" && boxDomain != "" {
+		return "https://" + strings.TrimSuffix(boxDomain, "/") + "/sys/icons/" + appID + ".png"
+	}
+	return ""
 }
 
 func resolveAppTitle(appID, fallback string, localTitles map[string]string, appMap map[string]lzcsdk.AppInfo) string {

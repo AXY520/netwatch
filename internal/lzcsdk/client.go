@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gohelper "gitee.com/linakesi/lzc-sdk/lang/go"
+	commonpb "gitee.com/linakesi/lzc-sdk/lang/go/common"
 	syspb "gitee.com/linakesi/lzc-sdk/lang/go/sys"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -25,6 +26,9 @@ var (
 	conn         *grpc.ClientConn
 	dialErr      error
 	dialLastFail time.Time
+	boxDomainMu  sync.Mutex
+	boxDomain    string
+	boxDomainAt  time.Time
 )
 
 // Available reports whether the lzc-apis socket and app certificates are
@@ -226,6 +230,38 @@ type AppInfo struct {
 	Icon   string // 图标 URL，如 https://$boxdomain/sys/icons/$appid.png
 }
 
+// BoxDomain returns the platform root domain used by system resources such as
+// application icons. The value is cached because it is stable for a box.
+func BoxDomain(ctx context.Context) string {
+	boxDomainMu.Lock()
+	if boxDomain != "" && time.Since(boxDomainAt) < 10*time.Minute {
+		value := boxDomain
+		boxDomainMu.Unlock()
+		return value
+	}
+	boxDomainMu.Unlock()
+
+	cc, err := dial()
+	if err != nil {
+		return ""
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	info, err := commonpb.NewBoxServiceClient(cc).QueryInfo(queryCtx, &emptypb.Empty{})
+	if err != nil {
+		if isConnectionError([]string{err.Error()}) {
+			markStale()
+		}
+		return ""
+	}
+	value := strings.TrimSpace(info.GetBoxDomain())
+	boxDomainMu.Lock()
+	boxDomain = value
+	boxDomainAt = time.Now()
+	boxDomainMu.Unlock()
+	return value
+}
+
 // ListApps queries the PackageManager for installed applications. Returns
 // a map keyed by appid for easy joining with docker bridge mapping data.
 func ListApps(ctx context.Context) (map[string]AppInfo, error) {
@@ -236,7 +272,16 @@ func ListApps(ctx context.Context) (map[string]AppInfo, error) {
 	cli := syspb.NewPackageManagerClient(cc)
 	c, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	resp, err := cli.QueryApplication(c, &syspb.QueryApplicationRequest{})
+	uids, err := commonpb.NewUserManagerClient(cc).ListUIDs(c, &commonpb.ListUIDsRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if len(uids.GetUids()) == 0 {
+		err := errors.New("lzc-sdk: no user uid returned")
+		return nil, err
+	}
+	uid := uids.GetUids()[0]
+	resp, err := cli.QueryApplication(c, &syspb.QueryApplicationRequest{OtherUid: &uid})
 	if err != nil {
 		if isConnectionError([]string{err.Error()}) {
 			markStale()

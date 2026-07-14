@@ -45,6 +45,22 @@ func LoadTitles() (map[string]string, error) {
 	return out, nil
 }
 
+// LoadAppIDs returns installed application IDs from the package manager mount.
+// The directory name is authoritative even when package.yml is unavailable.
+func LoadAppIDs() ([]string, error) {
+	entries, err := os.ReadDir(pkgmDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() && strings.TrimSpace(e.Name()) != "" {
+			out = append(out, e.Name())
+		}
+	}
+	return out, nil
+}
+
 // parsePackageName extracts the top-level `name:` field from a package.yml.
 // We avoid pulling in a full YAML library — the format is simple enough.
 func parsePackageName(path string) string {

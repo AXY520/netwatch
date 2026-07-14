@@ -192,8 +192,13 @@ const state = {
             const t1 = parseTimestamp(prev.timestamp);
             const t2 = parseTimestamp(curr.timestamp);
             const seconds = Math.max(1, (t2 - t1) / 1000);
-            const rxDelta = Math.max(0, (curr.rx_bytes || 0) - (prev.rx_bytes || 0));
-            const txDelta = Math.max(0, (curr.tx_bytes || 0) - (prev.tx_bytes || 0));
+            const previousRx = Number(prev.rx_bytes) || 0;
+            const previousTx = Number(prev.tx_bytes) || 0;
+            const currentRx = Number(curr.rx_bytes) || 0;
+            const currentTx = Number(curr.tx_bytes) || 0;
+            if (currentRx < previousRx || currentTx < previousTx) continue;
+            const rxDelta = currentRx - previousRx;
+            const txDelta = currentTx - previousTx;
             rates.push({
                 timestamp: curr.timestamp || '',
                 start: t1,
@@ -482,9 +487,9 @@ const state = {
             const subHtml = sub ? `<div class="traffic-app-sub">${escapeHtml(sub)}</div>` : '';
             return `
                 <div class="traffic-app-item ${item.bridge === state.selectedBridge ? 'active' : ''}" data-bridge="${escapeHtml(item.bridge)}" role="button" tabindex="0">
-                    <div class="traffic-app-title">${icon}<strong>${escapeHtml(title)}</strong></div>
+                    <div class="traffic-app-icon-wrap">${icon}</div>
+                    <div class="traffic-app-title"><strong>${escapeHtml(title)}</strong>${subHtml}</div>
                     <div class="traffic-app-total">${formatBytes(total)}</div>
-                    ${subHtml}
                 </div>
             `;
         }).join('');

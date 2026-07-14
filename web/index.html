@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0b0f14">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' *;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
     <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
     <script>
         var savedTheme = localStorage.getItem('theme');
@@ -173,6 +173,7 @@
                 <div class="card-title">
                     <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
                     <div class="title-tools">
+                        <button type="button" id="interfaces-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                         <button id="open-network-config-window" data-i18n="network_config_btn">修改配置</button>
                     </div>
                 </div>
@@ -187,7 +188,7 @@
                     <span data-i18n="app_traffic_title">应用流量</span>
                     <div class="title-tools">
                         <span id="app-traffic-status" class="placeholder" data-i18n="waiting_for_sample">等待采样</span>
-                        <a class="button-link" id="traffic-analysis-link" href="/traffic.html" data-i18n="traffic_analysis_btn">流量分析</a>
+                        <a class="button-link" id="traffic-analysis-link" href="/traffic.html" hidden data-i18n="traffic_analysis_btn">流量分析</a>
                         <button id="traffic-settings-btn" data-i18n="settings_btn">设置</button>
                         <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                     </div>
@@ -203,8 +204,7 @@
                 <div class="card-title">
                     <span id="host-ports-title" class="host-ports-title" data-i18n="host_ports_title">端口占用</span>
                     <div class="title-tools">
-                        <button type="button" class="sort-header host-port-sort active" data-host-port-sort-key="port" aria-sort="ascending"><span data-i18n="port_col">端口</span><span class="sort-indicator" aria-hidden="true"></span></button>
-                        <button type="button" class="sort-header host-port-sort" data-host-port-sort-key="owner" aria-sort="none"><span data-i18n="owner_col">占用方</span><span class="sort-indicator" aria-hidden="true"></span></button>
+                        <label class="host-port-search"><span class="sr-only" data-i18n="port_search_label">搜索端口</span><input id="host-ports-search" type="search" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="端口号" data-i18n-placeholder="port_search_placeholder" autocomplete="off"></label>
                         <span id="host-ports-status" class="placeholder" data-i18n="waiting">等待查询</span>
                         <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
                     </div>
@@ -454,8 +454,10 @@
                 <label><span data-i18n="network_config_gateway">网关</span><input id="network-config-gateway" placeholder="192.168.1.1"></label>
                 <label><span data-i18n="network_config_dns">DNS</span><input id="network-config-dns" placeholder="223.5.5.5,119.29.29.29"></label>
             </div>
+            <div id="network-config-preview" class="network-config-preview"></div>
             <div class="network-config-actions">
                 <button id="network-config-check-ip-btn" data-i18n="network_config_check_ip">检测 IP 占用</button>
+                <button id="network-config-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
                 <button id="network-config-apply-btn" data-i18n="network_config_apply">应用配置</button>
                 <button id="network-config-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
                 <button id="network-config-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>

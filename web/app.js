@@ -117,6 +117,25 @@ function bindControls() {
     els.openBroadbandWindow.addEventListener('click', function () { openWindow('broadband'); });
     els.openTransferWindow.addEventListener('click', function () { openWindow('transfer'); });
     if (els.openNetworkConfigWindow) els.openNetworkConfigWindow.addEventListener('click', function () { openWindow('network-config'); });
+    if (els.interfacesRefreshBtn) els.interfacesRefreshBtn.addEventListener('click', function () {
+        if (els.interfacesRefreshBtn.disabled) return;
+        if (window.__app.refreshInterfacesOnly) window.__app.refreshInterfacesOnly();
+    });
+    var networkPreflightBtn = document.getElementById('network-config-preflight-btn');
+    if (networkPreflightBtn) networkPreflightBtn.addEventListener('click', function () {
+        if (window.__app.preflightNetworkConfig) window.__app.preflightNetworkConfig();
+    });
+    ['network-config-method', 'network-config-address', 'network-config-gateway', 'network-config-dns'].forEach(function (id) {
+        var field = document.getElementById(id);
+        if (field) {
+            field.addEventListener('input', function () {
+                if (window.__app.updateNetworkConfigApplyState) window.__app.updateNetworkConfigApplyState();
+            });
+            field.addEventListener('change', function () {
+                if (window.__app.updateNetworkConfigApplyState) window.__app.updateNetworkConfigApplyState();
+            });
+        }
+    });
     els.closeSettingsWindow.addEventListener('click', closeCurrentWindow);
     els.closeBroadbandWindow.addEventListener('click', closeCurrentWindow);
     els.closeTransferWindow.addEventListener('click', closeCurrentWindow);
@@ -395,9 +414,13 @@ function initWithRetry(maxRetries) {
         window.__app.loadSpeedHistory ? window.__app.loadSpeedHistory() : Promise.resolve(),
         window.__app.loadSettings ? window.__app.loadSettings() : Promise.resolve()
     ]).then(function () {
+        var appTrafficWasInitialized = state.appTrafficInitialized;
+        if (!appTrafficWasInitialized && window.__app.initAppTraffic) {
+            window.__app.initAppTraffic();
+        }
         window.__app.updateWindowControls();
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
-        if (state.appTrafficInitialized && window.__app.refreshAppTraffic) {
+        if (appTrafficWasInitialized && window.__app.refreshAppTraffic) {
             window.__app.refreshAppTraffic();
         }
         if (window.__app.loadSummary) return window.__app.loadSummary(false, true);
@@ -407,6 +430,10 @@ function initWithRetry(maxRetries) {
                 setTimeout(function () { initWithRetry(maxRetries - 1); }, 2000);
             }
         }
+    }).catch(function () {
+        if (!state.appTrafficInitialized && window.__app.initAppTraffic) {
+            window.__app.initAppTraffic();
+        }
     });
 
     initSSE();
@@ -414,7 +441,6 @@ function initWithRetry(maxRetries) {
     if (window.__app.initTrace) window.__app.initTrace();
     if (window.__app.initEgressLookups) window.__app.initEgressLookups();
     if (window.__app.initHostPorts) window.__app.initHostPorts();
-    if (window.__app.initAppTraffic) window.__app.initAppTraffic();
 }
 
 function boot() {

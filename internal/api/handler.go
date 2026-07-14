@@ -41,12 +41,30 @@ func localDownloadPayload() []byte {
 // restart streams, so this only bounds one blob (not total test volume).
 var maxLocalUploadBytes int64 = 512 * 1024 * 1024
 
+const maxConcurrentSpeedStreams = 8
+
 type Handler struct {
-	service *probe.Service
+	service    *probe.Service
+	speedSlots chan struct{}
 }
 
 func NewHandler(service *probe.Service) *Handler {
-	return &Handler{service: service}
+	return &Handler{service: service, speedSlots: make(chan struct{}, maxConcurrentSpeedStreams)}
+}
+
+func (h *Handler) acquireSpeedSlot(w http.ResponseWriter) bool {
+	select {
+	case h.speedSlots <- struct{}{}:
+		return true
+	default:
+		w.Header().Set("Retry-After", "2")
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many concurrent speed tests"})
+		return false
+	}
+}
+
+func (h *Handler) releaseSpeedSlot() {
+	<-h.speedSlots
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -241,10 +259,17 @@ func (h *Handler) handleIPv6Renew(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok",
+	ready := h.service.GetSummary().Ready
+	status := http.StatusOK
+	state := "ok"
+	if !ready {
+		status = http.StatusServiceUnavailable
+		state = "starting"
+	}
+	writeJSON(w, status, map[string]any{
+		"status": state,
 		"time":   time.Now().Format(time.DateTime),
-		"ready":  h.service.GetSummary().Ready,
+		"ready":  ready,
 	})
 }
 
@@ -313,6 +338,10 @@ func (h *Handler) handleBroadbandRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if !h.acquireSpeedSlot(w) {
+		return
+	}
+	defer h.releaseSpeedSlot()
 	writeJSON(w, http.StatusOK, h.service.RunBroadbandSpeedTest(r.Context()))
 }
 
@@ -347,6 +376,10 @@ func (h *Handler) handleLocalPing(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
+	if !h.acquireSpeedSlot(w) {
+		return
+	}
+	defer h.releaseSpeedSlot()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
@@ -366,7 +399,7 @@ func (h *Handler) handleLocalDownload(w http.ResponseWriter, r *http.Request) {
 		}
 		// Client multi-stream tests may keep a connection slightly longer than
 		// the nominal window; allow a small overrun so streams do not starve.
-		deadline := time.Now().Add(time.Duration((sec+1.5)*float64(time.Second)))
+		deadline := time.Now().Add(time.Duration((sec + 1.5) * float64(time.Second)))
 		ctx := r.Context()
 		flusher, canFlush := w.(http.Flusher)
 		nextFlush := time.Now()
@@ -421,6 +454,10 @@ func (h *Handler) handleLocalUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if !h.acquireSpeedSlot(w) {
+		return
+	}
+	defer h.releaseSpeedSlot()
 	// Read body as-is without decompression/transform so measured size matches wire intent.
 	w.Header().Set("Cache-Control", "no-store")
 	n, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxLocalUploadBytes))

@@ -1,6 +1,6 @@
 ---
 name: netwatch-observer
-description: Check network connectivity, egress IP, NAT type, interface status, host port usage, LAN device discovery, per-app traffic stats, notifications, traceroute, and speed tests.
+description: Check network connectivity, egress IP, NAT type, interface status and link speed, host port usage, LAN device discovery, per-app traffic stats and controls, notifications, traceroute, network configuration, and speed tests.
 ---
 
 ## When to use this skill
@@ -25,11 +25,11 @@ Inter-app URL: `http://app.cloud.lazycat.app.netwatch.lzcx`
 
 If `.lzcx` resolution is unavailable in the current runtime, follow the platform's normal application access rules. Do not guess random ports.
 
-Authentication: forward the real user's ticket according to Lazycat's inter-app access rules. Netwatch itself requires no extra auth.
+Authentication: no upstream authentication is required by the default deployment. Do not add or forward a ticket unless the operator explicitly configured `BASIC_AUTH_*` or `MUTATE_AUTH_*` environment variables.
 
 ## Recommended call order
 
-1. `GET /healthz` — confirm the app is alive and data is ready.
+1. `GET /healthz` — confirm the app is alive and data is ready. During the first probe it returns HTTP `503` with `{"ready": false}`.
 2. `GET /api/v1/summary` — combined snapshot (connectivity, egress IP, NAT, interfaces, etc.).
 3. If `summary` is empty or `ready` is `false`, call `POST /api/v1/probe/run` to trigger a probe, then re-read `summary`.
 4. Call the narrower endpoints below only when the user needs more detail.
@@ -43,6 +43,7 @@ Authentication: forward the real user's ticket according to Lazycat's inter-app 
 | GET | `/healthz` | App health, server time, whether probe data is ready |
 | GET | `/api/v1/summary` | Combined snapshot: connectivity, egress IP, NAT, interfaces — preferred first call |
 | GET | `/api/v1/events` | SSE stream; pushes `summary`, `notification`, `nic_realtime`, `lan_devices` events in real-time |
+| GET | `/api/v1/capabilities` | Runtime capability flags, including app traffic and container-control availability |
 
 ### Website connectivity
 
@@ -85,7 +86,7 @@ Cumulative upload/download traffic grouped by bridge/app identity.
 |--------|------|-------------|
 | GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic with packets/errors/dropped, container count, domain |
 | GET | `/api/v1/network/app-traffic/history?bridge=<name>&limit=300` | Traffic history (rx/tx bytes over time) for a specific bridge |
-| GET | `/api/v1/network/app-traffic/live` | Live traffic snapshot (current rates) |
+| POST | `/api/v1/network/app-traffic/live?bridge=<name>&limit=1440&range=1m` | Take a fresh bridge sample and return current rates plus history |
 | GET | `/api/v1/network/app-traffic/top` | Top apps by traffic volume |
 | POST | `/api/v1/settings/persistent-traffic-bridges` | Update persistent traffic bridge list |
 
@@ -105,7 +106,7 @@ Discover and manage devices on the local network.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/lan/devices` | List all discovered LAN devices with status, IP, MAC, vendor info |
+| GET | `/api/v1/lan/devices` | List all discovered LAN devices with status, IP, MAC, vendor info, first/last seen times |
 | POST | `/api/v1/lan/devices` | Trigger an immediate LAN device scan |
 | POST | `/api/v1/lan/devices/meta` | Update device metadata (note, pin, ignore). Body: `{"mac": "...", "note": "...", "pinned": true, "ignored": false}` |
 
@@ -157,6 +158,19 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 | POST | `/api/v1/settings` | Update settings. Body: full `MutableSettings` JSON |
 | POST | `/api/v1/probe/run` | Trigger a full probe (website checks, egress IP, NAT, etc.) |
 
+### Network configuration
+
+Network configuration is an optional host-level control feature. Check `/api/v1/capabilities` first.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/network/config/devices` | List configurable host interfaces and current IPv4 settings |
+| GET | `/api/v1/network/config/pending` | Read a pending configuration change and rollback countdown |
+| POST | `/api/v1/network/config/check-ip` | Check whether a proposed address is available |
+| POST | `/api/v1/network/config/apply` | Apply a configuration with a temporary rollback window |
+| POST | `/api/v1/network/config/confirm` | Confirm a pending configuration |
+| POST | `/api/v1/network/config/rollback` | Roll back a pending configuration |
+
 ## Web pages
 
 | Path | Description |
@@ -168,14 +182,15 @@ Run a traceroute to a target host. Returns each hop's IP, latency, and geolocati
 ## Notes
 
 - **Prefer `summary`**: it's the combined snapshot and covers most use cases in a single call.
-- **Data may be stale**: Netwatch does not auto-refresh external probes by default. If `summary` is outdated or `ready` is `false`, call `POST /api/v1/probe/run` first.
-- **Read-only by default**: use GET for queries; only use POST when explicitly triggering a probe or speed test.
+- **Data may be stale**: Netwatch does not auto-refresh external probes by default. If `summary` is outdated or `ready` is `false`, call `POST /api/v1/probe/run` first and then poll `GET /api/v1/summary`.
+- **Read-only by default**: use GET for queries; use POST only for an explicit probe, scan, sampling, speed test, notification test, or host/network state change.
 - **Connectivity reporting**: distinguish domestic vs. global targets; quote observed values, not inferences.
 - **Egress IP reporting**: use the returned IP and geolocation directly; do not infer from interface names.
-- **App traffic reporting**: highlight the largest consumers by total bytes; note the sort basis (upload/download/total).
+- **App traffic reporting**: highlight the largest consumers by total bytes; note the sort basis (RX/TX/total). Bridge counters are accurate at the Linux bridge level but are an approximation of application traffic; host-network apps and some east-west traffic are not attributed like ordinary app egress.
 - **Host port reporting**: use `/api/v1/network/ports`; report `port`, `protocol`, `state`, and owner as either host process or Lazycat app display name. Do not expose full app IDs unless the user asks for diagnostic detail.
 - **Host port implementation**: backend collection is in `internal/probe/ports.go` with a short cache; the dashboard UI lives in `web/app-host-ports.js` and intentionally keeps the default list compact.
-- **Container network control**: per-app internet blocking is available via `/api/v1/containers/*`. Blocking is bridge-level — all containers in an app share one bridge. Whitelisted apps (system services like App Store, 相册, 网盘, AI Pod, 开发者工具, 端口转发, 懒猫影视, 轻量系统入口) cannot be blocked. The "容器网络控制" toggle in traffic settings must be enabled for the UI buttons to appear.
-- **LAN device management**: devices are auto-discovered via ARP scan; users can pin, ignore, or add notes to devices.
-- **Traceroute is async**: `GET /diagnostics/trace?host=<host>` starts a background task; use `/diagnostics/trace/task` to poll intermediate progress.
+- **Container network control**: per-app internet blocking is available via `/api/v1/containers/*`. Blocking is bridge-level — all containers in an app share one bridge. Use `{"bridge":"...","mode":"internet"}` for block; `mode` defaults to `internet` but no other mode is currently supported. Whitelisted apps (system services like App Store, 相册, 网盘, AI Pod, 开发者工具, 端口转发, 懒猫影视, 轻量系统入口) cannot be blocked. The "容器网络控制" toggle in traffic settings must be enabled for the UI buttons to appear.
+- **LAN device management**: devices are auto-discovered via ARP/NDP and neighbor probing. `POST /api/v1/lan/devices` returns immediately with the cached snapshot and `scanning=true`; poll `GET /api/v1/lan/devices` or consume the `lan_devices` SSE event for the completed scan.
+- **Speed-test protection**: broadband and local transfer streaming endpoints share an eight-stream concurrency limit; a `429` response means retry after the returned `Retry-After` interval.
+- **Traceroute is async**: `GET /api/v1/diagnostics/trace?host=<host>` starts a background task; use `/api/v1/diagnostics/trace/task` to poll intermediate progress.
 - **i18n**: the web UI supports Chinese (zh-CN) and English, auto-detected from browser locale.

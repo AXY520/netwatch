@@ -119,6 +119,22 @@ func FormatContainerCreated(created int64) string {
 	return t.Format("1月2日 15:04")
 }
 
+func FormatContainerStarted(started int64) string {
+	if started <= 0 {
+		return ""
+	}
+	t := time.Unix(started, 0)
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return "今天 " + t.Format("15:04")
+	}
+	yesterday := now.AddDate(0, 0, -1)
+	if t.Year() == yesterday.Year() && t.YearDay() == yesterday.YearDay() {
+		return "昨天 " + t.Format("15:04")
+	}
+	return t.Format("1月2日 15:04")
+}
+
 // BridgeAppInfo is the joined record returned by BuildBridgeMap.
 type BridgeAppInfo struct {
 	AppID          string // e.g. "cloud.lazycat.app.netwatch" — empty if unknown
@@ -127,7 +143,7 @@ type BridgeAppInfo struct {
 	ContainerCount int    // total containers in this project
 	RunningCount   int    // containers in "running" state
 	StatusText     string // human-readable status, e.g. "Up 2 hours"
-	CreatedAt      int64  // earliest container creation unix timestamp
+	CreatedAt      int64  // earliest container start timestamp, creation time as fallback
 }
 
 // ContainerRuntimeInfo is the small runtime slice netwatch needs from Docker.
@@ -144,6 +160,7 @@ type ContainerRuntimeInfo struct {
 	State       string            `json:"state,omitempty"`
 	Status      string            `json:"status,omitempty"`
 	Created     int64             `json:"created,omitempty"`
+	StartedAt   int64             `json:"started_at,omitempty"`
 	NetworkMode string            `json:"network_mode,omitempty"`
 	PID         int               `json:"pid,omitempty"`
 	Running     bool              `json:"running,omitempty"`
@@ -162,7 +179,7 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list networks: %w", err)
 	}
-	containers, err := listContainers(ctx)
+	containers, err := ListContainerRuntime(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
@@ -170,9 +187,9 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	// project → appid (and title) lookup from container labels
 	projectInfo := map[string]BridgeAppInfo{}
 	for _, c := range containers {
-		project := c.Labels["com.docker.compose.project"]
-		appid := c.Labels["lzcapp.app-id"]
-		if project == "" || appid == "" {
+		project := c.Project
+		appid := c.AppID
+		if project == "" {
 			continue
 		}
 		info := projectInfo[project]
@@ -184,17 +201,22 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 		info.ContainerCount++
 		if c.State == "running" {
 			info.RunningCount++
-			// Use the first running container's formatted start time
+			// Use the earliest running container's precise start time.
 			if info.StatusText == "" {
-				info.StatusText = FormatDockerStatus(c.Status)
+				info.StatusText = FormatContainerStarted(c.StartedAt)
+				if info.StatusText == "" {
+					info.StatusText = FormatDockerStatus(c.Status)
+				}
 				// Fallback: use created timestamp if status text can't be parsed
 				if info.StatusText == "" && c.Created > 0 {
 					info.StatusText = FormatContainerCreated(c.Created)
 				}
 			}
 		}
-		// Track earliest creation time
-		if c.Created > 0 && (info.CreatedAt == 0 || c.Created < info.CreatedAt) {
+		// Track earliest actual start time; creation is only a fallback.
+		if c.StartedAt > 0 && (info.CreatedAt == 0 || c.StartedAt < info.CreatedAt) {
+			info.CreatedAt = c.StartedAt
+		} else if info.CreatedAt == 0 && c.Created > 0 {
 			info.CreatedAt = c.Created
 		}
 		projectInfo[project] = info
@@ -263,6 +285,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 			if created := parseDockerCreated(inspect.Created); created > 0 {
 				info.Created = created
 			}
+			info.StartedAt = parseDockerCreated(inspect.State.StartedAt)
 		}
 		out = append(out, info)
 	}
@@ -284,9 +307,10 @@ type containerInspect struct {
 	Name    string `json:"Name"`
 	Created string `json:"Created"`
 	State   struct {
-		Status  string `json:"Status"`
-		Running bool   `json:"Running"`
-		Pid     int    `json:"Pid"`
+		Status    string `json:"Status"`
+		Running   bool   `json:"Running"`
+		Pid       int    `json:"Pid"`
+		StartedAt string `json:"StartedAt"`
 	} `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`
