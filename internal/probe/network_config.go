@@ -19,7 +19,7 @@ import (
 	"netwatch/internal/lzcsdk"
 )
 
-const networkConfigRollbackDelay = 60 * time.Second
+const networkConfigRollbackDelay = 3 * time.Minute
 
 type networkConfigSnapshot struct {
 	Connection string `json:"connection"`
@@ -255,6 +255,10 @@ func listNetworkConfigDevices(ctx context.Context) ([]NetworkConfigDevice, error
 			continue
 		}
 		if isUnsafeNetworkDevice(dev.Device) {
+			continue
+		}
+		// Skip NICs already enslaved as bridge ports (e.g. after VM bridge create).
+		if connectionIsBridgePort(ctx, dev.Connection) {
 			continue
 		}
 		if snap, err := readNetworkConfigSnapshot(ctx, dev.Connection); err == nil {
@@ -573,6 +577,10 @@ func normalizeDNS(value string) string {
 func isUnsafeNetworkDevice(name string) bool {
 	name = strings.TrimSpace(name)
 	if name == "" || name == "lo" {
+		return true
+	}
+	// Proxy TUN (Meta/mihomo) and other virtual stacks must not be reconfigured here.
+	if isProxyTunIface(name) {
 		return true
 	}
 	for _, prefix := range []string{"docker", "br-", "lzc-br", "veth", "tun", "tap", "wg", "zt", "tailscale"} {

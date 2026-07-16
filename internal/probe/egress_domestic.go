@@ -69,8 +69,9 @@ func lookupDomesticIPv4(ctx context.Context) DomesticIPEntry {
 		fn   func(context.Context) DomesticIPEntry
 	}
 	sources := []source{
-		{name: "cip.cc", fn: lookupDomesticIPv4ViaCipCC},
+		// Order verified 2026-07: ipip JSON stable; cip.cc needs curl UA; zxinc getip often drifts.
 		{name: "ipip.net", fn: lookupDomesticIPv4ViaIPIP},
+		{name: "cip.cc", fn: lookupDomesticIPv4ViaCipCC},
 		{name: "zxinc", fn: lookupDomesticIPv4ViaZXINC},
 	}
 
@@ -137,22 +138,34 @@ func pickDomesticIPv6FromInterfaces() string {
 	for _, n := range monitored {
 		target[n] = struct{}{}
 	}
-	for _, iface := range ifaces {
-		if _, ok := target[iface.Name]; !ok {
-			continue
-		}
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok || ipNet.IP.To4() != nil {
+	pick := func(restrict bool) string {
+		for _, iface := range ifaces {
+			name := iface.Name
+			if shouldIgnoreInterface(name) {
 				continue
 			}
-			if isCNIPv6(ipNet.IP) {
-				return ipNet.IP.String()
+			if restrict {
+				if _, ok := target[name]; !ok {
+					continue
+				}
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				ipNet, ok := addr.(*net.IPNet)
+				if !ok || ipNet.IP.To4() != nil {
+					continue
+				}
+				if isCNIPv6(ipNet.IP) {
+					return ipNet.IP.String()
+				}
 			}
 		}
+		return ""
 	}
-	return ""
+	if v := pick(true); v != "" {
+		return v
+	}
+	return pick(false)
 }
 
 // isCNIPv6 checks whether an IPv6 address falls in a known mainland-China
@@ -161,14 +174,18 @@ func isCNIPv6(ip net.IP) bool {
 	if ip == nil || ip.To4() != nil {
 		return false
 	}
+	// Common mainland CN / CNISP allocations (not exhaustive; geo API is fallback).
 	for _, cidr := range []string{
-		"240e::/20",
-		"2408::/20",
-		"2408:8000::/20",
-		"2409::/20",
-		"2409:8000::/20",
-		"2400:3200::/32",
-		"2001:da8::/32",
+		"240e::/20",      // 电信
+		"2408::/20",      // 联通
+		"2408:8000::/20", // 联通
+		"2409::/20",      // 移动
+		"2409:8000::/20", // 移动
+		"240a::/20",      // 移动等
+		"2400:3200::/32", // 阿里
+		"2400:da00::/32", // 百度
+		"240C::/28",      // CERNET 等
+		"2001:da8::/32",  // CERNET
 	} {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {
@@ -299,8 +316,15 @@ func lookupDomesticIPv4ViaIPIP(ctx context.Context) DomesticIPEntry {
 		entry.Error = err.Error()
 		return entry
 	}
-	entry.IP = payload.Data.IP
-	entry.HasPublicPath = isPublicIP(payload.Data.IP)
+	ip := strings.TrimSpace(payload.Data.IP)
+	if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
+		// myip.ipip.net sometimes answers with client IPv6 when dual-stack; we force tcp4 dial,
+		// but still guard and fall through to the next domestic source.
+		entry.Error = "ipip.net 未返回 IPv4"
+		return entry
+	}
+	entry.IP = ip
+	entry.HasPublicPath = isPublicIP(ip)
 	locParts := filterNonEmpty(payload.Data.Location)
 	loc := strings.TrimSpace(strings.Join(locParts, " "))
 	if !isMainlandChinaLocation(loc) {
@@ -328,7 +352,8 @@ func fetchZXINCIP(ctx context.Context, version int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", zxincUserAgent)
+	req.Header.Set("User-Agent", "curl/8.5.0 (netwatch/1.0)")
+	req.Header.Set("Accept", "text/plain")
 
 	client := &http.Client{
 		Timeout: 6 * time.Second,

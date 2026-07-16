@@ -65,19 +65,17 @@
             "target_node": "目标节点",
             "status_col": "状态",
             "lan_device_search_placeholder": "搜索设备",
-            "traffic_export_btn": "导出 CSV",
             "network_config_preflight": "预检配置",
             "network_config_preview": "配置预览",
             "network_config_preflight_auto": "自动获取模式无需 IP 占用预检",
-            "negotiated_rate": "协商",
             "latency_col": "延迟",
             "iface_col": "接口",
             "ipv4_col": "IPv4 地址",
             "ipv6_col": "IPv6 地址",
             "host_ports_title": "端口占用",
             "network_config_btn": "修改配置",
-            "network_config_title": "网卡配置",
-            "network_config_note": "修改 IPv4、网关与 DNS。应用后 60 秒内必须确认，否则自动回滚。",
+            "network_config_title": "网络配置",
+            "network_config_note": "网卡 IP 与网桥在同一窗口；应用后 3 分钟内需确认，否则自动回滚。",
             "network_config_device": "网卡",
             "network_config_method": "配置方式",
             "network_config_method_auto": "自动获取",
@@ -99,7 +97,7 @@
             "network_config_checking_ip": "正在检测 IP 是否被占用...",
             "network_config_ip_available": "该 IP 暂未发现占用，可以尝试使用",
             "network_config_ip_occupied": "该 IP 疑似已被占用",
-            "network_config_apply_confirm": "即将修改服务器网卡配置。应用后 60 秒内必须确认，否则自动回滚。继续？",
+            "network_config_apply_confirm": "即将修改服务器网卡配置。应用后 3 分钟内必须确认，否则自动回滚。继续？",
             "network_config_applying": "正在应用配置...",
             "network_config_pending": "配置已应用，等待确认，自动回滚时间",
             "network_config_pending_active": "网卡配置待确认，自动回滚倒计时",
@@ -107,6 +105,36 @@
             "network_config_no_pending": "没有待确认的网卡配置变更",
             "network_config_confirmed": "已确认网络可用，不再自动回滚",
             "network_config_rolled_back": "已回滚网卡配置",
+            "host_bridge_title": "网桥",
+            "host_bridge_no_ethernet": "无可用有线网卡（Wi-Fi 不支持创建网桥）",
+            "proxy_tun_title": "代理",
+            "host_bridge_name": "网桥名",
+            "host_bridge_method": "地址方式",
+            "host_bridge_method_inherit": "继承当前网卡",
+            "host_bridge_method_auto": "自动获取",
+            "host_bridge_method_manual": "手动配置",
+            "host_bridge_create": "创建网桥",
+            "host_bridge_confirm": "确认网桥可用",
+            "host_bridge_rollback": "回滚网桥",
+            "host_bridge_dissolve": "拆除网桥",
+            "host_bridge_create_confirm": "即将把该有线网卡加入网桥，主机地址会迁移到网桥上。创建后 3 分钟内必须确认，否则自动回滚。继续？",
+            "host_bridge_dissolve_confirm": "拆除网桥将恢复原网卡连接，已接入该网桥的设备网络会中断。继续？",
+            "host_bridge_none": "当前没有托管网桥",
+            "host_bridge_for_device": "当前网卡托管网桥",
+            "host_bridge_pending": "网桥待确认，自动回滚倒计时",
+            "host_bridge_creating": "正在创建网桥...",
+            "host_bridge_failed": "网桥操作失败",
+            "host_bridge_need_device": "请先选择有线网卡",
+            "host_bridge_disabled": "当前环境不支持网桥管理（需要懒猫系统接口或本机 nmcli）",
+            "host_bridge_select": "选择网桥",
+            "host_bridge_select_need": "请先选择要拆除的网桥",
+            "host_bridge_name_required": "请填写网桥名后缀",
+            "host_bridge_name_too_long": "网桥名最长 15 字符（含固定前缀 nw-）",
+            "host_bridge_name_invalid": "网桥名不合法：字母数字开头，仅允许 . _ -",
+            "host_bridge_name_prefix": "网桥名必须以 nw- 开头",
+            "host_bridge_preflight_skip": "继承/自动模式无需 IP 占用预检",
+            "network_config_tab_ip": "网卡配置",
+            "network_config_tab_bridge": "网桥",
             "port_col": "端口",
             "owner_col": "占用方",
             "listen_addr_col": "监听地址",
@@ -292,6 +320,8 @@
             "waiting_for_sample": "等待采样",
             "waiting_data": "等待数据",
             "traffic_analysis_btn": "流量分析",
+            "traffic_live_rate": "当前速率",
+            "traffic_open_settings_hint": "请在设置中启用流量分析后再查看",
             "stage": "阶段",
             "progress": "进度",
             "speedtest_node": "测速节点",
@@ -364,8 +394,8 @@
             "ipv6_renew_select_nic": "选择网卡",
             "ipv6_renew_exec": "重新获取 IPv6",
             "ipv6_renew_refresh": "刷新网卡",
-            "ipv6_renew_no_nic": "未发现可续约的网卡",
-            "ipv6_renew_unavailable": "当前环境不支持（需懒猫系统）",
+            "ipv6_renew_no_nic": "未发现可续约的网卡（需已连接的有线/Wi-Fi 或 nw- 网桥）",
+            "ipv6_renew_unavailable": "当前环境不支持（需懒猫系统接口或本机 nmcli）",
             "ipv6_renew_running": "正在续约…",
             "ipv6_renew_ok": "续约成功，已重新获取 IPv6",
             "ipv6_renew_failed": "续约失败",
@@ -473,11 +503,9 @@
             "target_node": "Target",
             "status_col": "Status",
             "lan_device_search_placeholder": "Search devices",
-            "traffic_export_btn": "Export CSV",
             "network_config_preflight": "Preflight config",
             "network_config_preview": "Config preview",
             "network_config_preflight_auto": "Automatic mode does not need an IP conflict check",
-            "negotiated_rate": "Link",
             "latency_col": "Latency",
             "iface_col": "Interface",
             "ipv4_col": "IPv4 Address",
@@ -485,7 +513,7 @@
             "host_ports_title": "Port Usage",
             "network_config_btn": "Configure",
             "network_config_title": "Network Config",
-            "network_config_note": "Change IPv4, gateway and DNS. Confirm within 60 seconds or it rolls back automatically.",
+            "network_config_note": "Interface IP and bridge share this window. Confirm within 3 minutes or changes roll back.",
             "network_config_device": "Interface",
             "network_config_method": "Method",
             "network_config_method_auto": "Automatic",
@@ -507,7 +535,7 @@
             "network_config_checking_ip": "Checking whether the IP is in use...",
             "network_config_ip_available": "No IP conflict detected, you can try using it",
             "network_config_ip_occupied": "This IP appears to be in use",
-            "network_config_apply_confirm": "This will change the server network config. Confirm within 60 seconds or it rolls back automatically. Continue?",
+            "network_config_apply_confirm": "This will change the server network config. Confirm within 3 minutes or it rolls back automatically. Continue?",
             "network_config_applying": "Applying config...",
             "network_config_pending": "Config applied, waiting for confirmation, rollback at",
             "network_config_pending_active": "Network config pending confirmation, rollback countdown",
@@ -515,6 +543,36 @@
             "network_config_no_pending": "No pending network config change",
             "network_config_confirmed": "Network reachability confirmed, rollback canceled",
             "network_config_rolled_back": "Network config rolled back",
+            "host_bridge_title": "Bridge",
+            "host_bridge_no_ethernet": "No ethernet NIC available (Wi-Fi cannot create a bridge)",
+            "proxy_tun_title": "Proxy",
+            "host_bridge_name": "Bridge name",
+            "host_bridge_method": "Address mode",
+            "host_bridge_method_inherit": "Inherit current NIC",
+            "host_bridge_method_auto": "Automatic",
+            "host_bridge_method_manual": "Manual",
+            "host_bridge_create": "Create bridge",
+            "host_bridge_confirm": "Confirm bridge OK",
+            "host_bridge_rollback": "Rollback bridge",
+            "host_bridge_dissolve": "Remove bridge",
+            "host_bridge_create_confirm": "This will enslave the wired NIC into a bridge and move the host address onto the bridge. Confirm within 3 minutes or it rolls back. Continue?",
+            "host_bridge_dissolve_confirm": "Removing the bridge restores the original NIC; devices on it will lose network. Continue?",
+            "host_bridge_none": "No managed bridges",
+            "host_bridge_for_device": "Managed bridge for NIC",
+            "host_bridge_pending": "Bridge pending confirmation, rollback in",
+            "host_bridge_creating": "Creating bridge...",
+            "host_bridge_failed": "Bridge operation failed",
+            "host_bridge_need_device": "Select a wired NIC first",
+            "host_bridge_disabled": "Bridge management unavailable (needs Lazycat system API or local nmcli)",
+            "host_bridge_select": "Select bridge",
+            "host_bridge_select_need": "Select a bridge to remove first",
+            "host_bridge_name_required": "Enter a bridge name suffix",
+            "host_bridge_name_too_long": "Bridge name max 15 chars (including fixed prefix nw-)",
+            "host_bridge_name_invalid": "Invalid bridge name: start with alnum, allow . _ - only",
+            "host_bridge_name_prefix": "Bridge name must start with nw-",
+            "host_bridge_preflight_skip": "Inherit/auto mode does not need an IP conflict check",
+            "network_config_tab_ip": "Interface",
+            "network_config_tab_bridge": "Bridge",
             "port_col": "Port",
             "owner_col": "Owner",
             "listen_addr_col": "Listen Address",
@@ -699,6 +757,8 @@
             "waiting_for_sample": "Waiting for samples",
             "waiting_data": "Waiting for data",
             "traffic_analysis_btn": "Traffic Analysis",
+            "traffic_live_rate": "Live rate",
+            "traffic_open_settings_hint": "Enable traffic analysis in settings first",
             "stage": "Stage",
             "progress": "Progress",
             "speedtest_node": "Speedtest Node",
@@ -772,7 +832,7 @@
             "ipv6_renew_exec": "Re-acquire IPv6",
             "ipv6_renew_refresh": "Refresh NICs",
             "ipv6_renew_no_nic": "No renewable NIC found (NetworkManager unavailable or non-Lazycat env)",
-            "ipv6_renew_unavailable": "Not supported in this environment (Lazycat OS required)",
+            "ipv6_renew_unavailable": "Not supported (needs Lazycat system API or local nmcli)",
             "ipv6_renew_running": "Renewing...",
             "ipv6_renew_ok": "Renewed. IPv6 re-acquired.",
             "ipv6_renew_failed": "Renewal failed",
@@ -950,6 +1010,10 @@
         menu.setAttribute('data-custom-select-menu', 'true');
         trigger.addEventListener('click', function () {
             if (select.disabled) return;
+            // Never open menus for selects sitting in a closed floating window
+            // (menus are portaled to body and would float over the homepage).
+            var hostWin = select.closest('.floating-window');
+            if (hostWin && !hostWin.classList.contains('active')) return;
             var willOpen = !wrapper.classList.contains('open');
             closeCustomSelects(wrapper);
             wrapper.classList.toggle('open', willOpen);
@@ -963,8 +1027,11 @@
         wrapper.appendChild(trigger);
         document.body.appendChild(menu);
         select.classList.add('custom-select-native');
-        select.setAttribute('aria-hidden', 'true');
+        // Do NOT set aria-hidden on the native select: browsers may still focus it
+        // (label click / autofocus / form reset) and then warn about aria-hidden focus.
+        select.removeAttribute('aria-hidden');
         select.tabIndex = -1;
+        select.setAttribute('aria-label', select.getAttribute('aria-label') || select.name || 'select');
         select.__customSelect = wrapper;
         menu.__customSelectWrapper = wrapper;
         wrapper.__customSelectMenu = menu;
@@ -1035,6 +1102,7 @@
     window.applyI18n = applyI18n;
     window.enhanceSelects = enhanceSelects;
     window.syncCustomSelect = syncCustomSelect;
+    window.closeCustomSelects = closeCustomSelects;
 
     document.addEventListener('click', function (ev) {
         var checkboxLabel = ev.target.closest('label');

@@ -27,9 +27,9 @@
                 <div class="logo" id="lan-logo">NET<span>WATCH</span></div>
             </div>
             <div class="controls">
-                <a class="button-link" href="/" data-i18n="back_to_dashboard">返回仪表盘</a>
-                <button id="lan-open-settings" data-i18n="settings_btn">设置</button>
-                <button id="lan-refresh-btn" class="lan-scan-btn" type="button" title="扫描局域网" aria-label="扫描" data-i18n="scan_btn" data-i18n-title="scan_btn" data-i18n-aria-label="scan_btn">扫描</button>
+                <a class="button-link btn-with-icon" href="/"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span data-i18n="back_to_dashboard">返回仪表盘</span></a>
+                <button id="lan-open-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
+                <button id="lan-refresh-btn" class="lan-scan-btn btn-with-icon" type="button" title="扫描局域网" aria-label="扫描" data-i18n-title="scan_btn" data-i18n-aria-label="scan_btn"><span class="ui-icon ui-icon--scan" aria-hidden="true"></span><span data-i18n="scan_btn">扫描</span></button>
             </div>
         </header>
 
@@ -64,19 +64,18 @@
                 <div class="window-title" data-i18n="background_monitor">局域网设置</div>
             </div>
             <div class="window-actions">
-                <button id="lan-save-settings" data-i18n="save_btn">保存</button>
-                <button id="lan-settings-close" data-i18n="close_btn">关闭</button>
+                <button id="lan-save-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
+                <button type="button" id="lan-settings-close" class="icon-button window-close-btn" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="settings-layout settings-compact">
             <div id="lan-settings-status" class="settings-hint lan-settings-status"></div>
             <div class="settings-row">
-                <span data-i18n="notify_lan_device_change">设备变动通知</span>
+                <span class="lan-setting-label" title="设备上线或下线时发送通知"><span data-i18n="notify_lan_device_change">设备变动通知</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <label class="settings-toggle inline"><input type="checkbox" id="lan-setting-notify-lan-device-change"><span>on</span></label>
             </div>
-            <div class="settings-hint lan-setting-hint">设备上线或下线时发送通知</div>
             <div class="settings-row">
-                <span data-i18n="lan_device_offline_after">离线判定</span>
+                <span class="lan-setting-label" title="设备持续未响应多久后判定为离线"><span data-i18n="lan_device_offline_after">离线判定</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-offline-after-sec">
                     <option value="60">1 分钟</option>
                     <option value="120">2 分钟</option>
@@ -85,9 +84,8 @@
                     <option value="600">10 分钟</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">设备持续未响应多久后判定为离线</div>
             <div class="settings-row">
-                <span data-i18n="lan_device_online_after">上线判定</span>
+                <span class="lan-setting-label" title="设备被发现后多久确认上线"><span data-i18n="lan_device_online_after">上线判定</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-online-after-sec">
                     <option value="0">立即</option>
                     <option value="30">30 秒</option>
@@ -96,9 +94,8 @@
                     <option value="300">5 分钟</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">设备被发现后多久确认上线</div>
             <div class="settings-row">
-                <span data-i18n="lan_device_offline_notify_delay">离线通知延迟</span>
+                <span class="lan-setting-label" title="离线后延迟再通知，避免短暂断开误报"><span data-i18n="lan_device_offline_notify_delay">离线通知延迟</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-offline-notify-delay-sec">
                     <option value="0">不延迟</option>
                     <option value="120">2 分钟</option>
@@ -107,9 +104,8 @@
                     <option value="600">10 分钟</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">离线后延迟再通知，避免短暂断开误报</div>
             <div class="settings-row">
-                <span data-i18n="lan_device_online_notify_delay">上线通知延迟</span>
+                <span class="lan-setting-label" title="上线后延迟再通知，避免频繁闪烁"><span data-i18n="lan_device_online_notify_delay">上线通知延迟</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-online-notify-delay-sec">
                     <option value="0">不延迟</option>
                     <option value="120">2 分钟</option>
@@ -118,9 +114,8 @@
                     <option value="900">15 分钟</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">上线后延迟再通知，避免频繁闪烁</div>
             <div class="settings-row">
-                <span data-i18n="lan_max_check_attempts">离线确认次数</span>
+                <span class="lan-setting-label" title="连续未发现多少次才确认离线，减少误判"><span data-i18n="lan_max_check_attempts">离线确认次数</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-max-check-attempts">
                     <option value="1">1 次</option>
                     <option value="2">2 次</option>
@@ -129,9 +124,8 @@
                     <option value="10">10 次</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">连续未发现多少次才确认离线，减少误判</div>
             <div class="settings-row">
-                <span data-i18n="lan_notify_cooldown_sec">通知冷却</span>
+                <span class="lan-setting-label" title="同一设备两次通知之间的最短间隔"><span data-i18n="lan_notify_cooldown_sec">通知冷却</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-notify-cooldown-sec">
                     <option value="60">1 分钟</option>
                     <option value="180">3 分钟</option>
@@ -141,9 +135,8 @@
                     <option value="3600">1 小时</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">同一设备两次通知之间的最短间隔</div>
             <div class="settings-row">
-                <span data-i18n="lan_flapping_threshold">抖动抑制</span>
+                <span class="lan-setting-label" title="短时间内状态反复变化超过此次数后暂停通知"><span data-i18n="lan_flapping_threshold">抖动抑制</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-flapping-threshold">
                     <option value="3">3 次</option>
                     <option value="5">5 次</option>
@@ -151,9 +144,8 @@
                     <option value="20">20 次</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">短时间内状态反复变化超过此次数后暂停通知</div>
             <div class="settings-row">
-                <span data-i18n="lan_flapping_window_sec">抖动窗口</span>
+                <span class="lan-setting-label" title="抖动抑制的统计时间窗口"><span data-i18n="lan_flapping_window_sec">抖动窗口</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-flapping-window-sec">
                     <option value="300">5 分钟</option>
                     <option value="600">10 分钟</option>
@@ -161,9 +153,8 @@
                     <option value="3600">1 小时</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">抖动抑制的统计时间窗口</div>
             <div class="settings-row">
-                <span data-i18n="lan_device_auto_remove_days">自动清理</span>
+                <span class="lan-setting-label" title="离线超过指定天数自动移除，已标记/忽略的不受影响"><span data-i18n="lan_device_auto_remove_days">自动清理</span><span class="lan-help-dot ui-icon ui-icon--help" aria-hidden="true"></span></span>
                 <select id="lan-setting-auto-remove-days">
                     <option value="0">不清理</option>
                     <option value="7">7 天</option>
@@ -173,7 +164,6 @@
                     <option value="180">180 天</option>
                 </select>
             </div>
-            <div class="settings-hint lan-setting-hint">离线超过指定天数自动移除，已标记/忽略的不受影响</div>
             <div class="settings-divider"></div>
             <div class="settings-row">
                 <span>已忽略设备</span>
@@ -190,7 +180,7 @@
         <div class="window-actions">
             <button id="lan-note-save">保存</button>
             <button id="lan-note-cancel">取消</button>
-            <button id="lan-note-close" hidden>关闭</button>
+            <button type="button" id="lan-note-close" class="icon-button window-close-btn" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
         </div>
     </section>
 
@@ -201,7 +191,7 @@
                 <div class="note">用于验证当前客户端系统通知能力。这个入口通过连续点击 NETWATCH 5 次显示。</div>
             </div>
             <div class="window-actions">
-                <button id="lan-notify-test-close">关闭</button>
+                <button type="button" id="lan-notify-test-close" class="icon-button window-close-btn" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="settings-layout">

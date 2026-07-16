@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -74,6 +75,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/connectivity/websites", h.handleWebsiteConnectivity)
 	mux.HandleFunc("/api/v1/connectivity/websites/run", h.handleWebsiteRefresh)
 	mux.HandleFunc("/api/v1/network", h.handleNetworkInfo)
+	mux.HandleFunc("/api/v1/network/interfaces/refresh", h.handleNetworkInterfacesRefresh)
 	mux.HandleFunc("/api/v1/network/nat/run", h.handleNATRefresh)
 	mux.HandleFunc("/api/v1/probe/run", h.handleRefresh)
 	mux.HandleFunc("/api/v1/speed/config", h.handleSpeedConfig)
@@ -114,6 +116,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/config/apply", h.handleNetworkConfigApply)
 	mux.HandleFunc("/api/v1/network/config/confirm", h.handleNetworkConfigConfirm)
 	mux.HandleFunc("/api/v1/network/config/rollback", h.handleNetworkConfigRollback)
+	mux.HandleFunc("/api/v1/network/bridges", h.handleHostBridges)
+	mux.HandleFunc("/api/v1/network/bridges/create", h.handleHostBridgeCreate)
+	mux.HandleFunc("/api/v1/network/bridges/confirm", h.handleHostBridgeConfirm)
+	mux.HandleFunc("/api/v1/network/bridges/rollback", h.handleHostBridgeRollback)
+	mux.HandleFunc("/api/v1/network/bridges/dissolve", h.handleHostBridgeDissolve)
+	mux.HandleFunc("/api/v1/network/bridges/pending", h.handleHostBridgePending)
 	mux.HandleFunc("/api/v1/containers", h.handleContainers)
 	mux.HandleFunc("/api/v1/containers/block", h.handleContainerBlock)
 	mux.HandleFunc("/api/v1/containers/unblock", h.handleContainerUnblock)
@@ -225,6 +233,108 @@ func (h *Handler) handleNetworkConfigRollback(w http.ResponseWriter, r *http.Req
 	writeJSON(w, status, result)
 }
 
+func (h *Handler) handleHostBridges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	resp := h.service.ListHostBridges(r.Context())
+	status := http.StatusOK
+	if !resp.Enabled && resp.Error != "" {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, resp)
+}
+
+func (h *Handler) handleHostBridgePending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.GetHostBridgePending())
+}
+
+func (h *Handler) handleHostBridgeCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.HostBridgeCreateRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	// Detach from request context: creating a bridge rewires the host NIC and can
+	// briefly drop the browser's TCP connection mid-flight. Cancelling the op leaves
+	// a half-applied bridge and can break host routing / app-traffic visibility.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result := h.service.CreateHostBridge(ctx, req)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleHostBridgeConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.HostBridgeActionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.ConfirmHostBridge(req.ID)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleHostBridgeRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.HostBridgeActionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result := h.service.RollbackHostBridge(ctx, req.ID)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleHostBridgeDissolve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.HostBridgeActionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result := h.service.DissolveHostBridge(ctx, req.Bridge)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
 func (h *Handler) handleIPv6RenewNICs(w http.ResponseWriter, r *http.Request) {
 	nics, err := h.service.ListIPv6RenewNICs(r.Context())
 	if err != nil {
@@ -291,6 +401,14 @@ func (h *Handler) handleWebsiteRefresh(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleNetworkInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetSummary().NetworkInfo)
+}
+
+func (h *Handler) handleNetworkInterfacesRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.RefreshNetworkInfo(r.Context()))
 }
 
 func (h *Handler) handleNATRefresh(w http.ResponseWriter, r *http.Request) {
@@ -684,11 +802,14 @@ func parseTrafficRange(value string) (time.Duration, bool) {
 }
 
 func (h *Handler) handleAppTrafficTop(w http.ResponseWriter, r *http.Request) {
-	limit := 5
+	limit := 15
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
+	}
+	if limit > 30 {
+		limit = 30
 	}
 	var since time.Time
 	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {

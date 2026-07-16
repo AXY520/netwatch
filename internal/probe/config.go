@@ -126,20 +126,22 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Port: envOrDefault("PORT", "8080"),
+		// Tiny assets (same idea as zashboard favicon probes). Full homepages are
+		// slower and flakier for a "latency" card.
 		DomesticSites: envTargets("DOMESTIC_SITES", []SiteTarget{
-			{Name: "Baidu", URL: "https://www.baidu.com"},
-			{Name: "Bilibili", URL: "https://www.bilibili.com"},
+			{Name: "Baidu", URL: "https://apps.bdimg.com/favicon.ico"},
+			{Name: "Bilibili", URL: "https://www.bilibili.com/favicon.ico"},
 		}),
 		GlobalSites: envTargets("GLOBAL_SITES", []SiteTarget{
-			{Name: "GitHub", URL: "https://github.com"},
-			{Name: "YouTube", URL: "https://www.youtube.com"},
+			{Name: "GitHub", URL: "https://github.githubassets.com/favicon.ico"},
+			{Name: "YouTube", URL: "https://yt3.ggpht.com/favicon.ico"},
 		}),
 		STUNServers: envCSV("STUN_SERVERS", []string{
 			"stun.chat.bilibili.com:3478",
 			"stun.miwifi.com:3478",
 			"stun.l.google.com:19302",
 		}),
-		HTTPTimeout:            envDurationValue("HTTP_TIMEOUT_SEC", 6*time.Second),
+		HTTPTimeout:            envDurationValue("HTTP_TIMEOUT_SEC", 5*time.Second),
 		NATTimeout:             envDurationValue("NAT_TIMEOUT_SEC", 1500*time.Millisecond),
 		RefreshInterval:        envDurationValue("REFRESH_INTERVAL_SEC", 10*time.Second),
 		PublicIPv4Endpoint:     envOrDefault("PUBLIC_IPV4_ENDPOINT", "https://api.ipify.org"),

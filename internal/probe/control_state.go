@@ -9,6 +9,9 @@ type controlState struct {
 	blocked   map[string]string // bridge -> mode
 	netcfgMu  sync.Mutex
 	rollbacks map[string]*networkConfigRollback
+
+	// Host VM bridge create/dissolve pending rollback (at most one).
+	bridgeRollback *hostBridgeRollback
 }
 
 func newControlState() *controlState {

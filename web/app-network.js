@@ -52,15 +52,45 @@ function detectProxyState() {
     var domesticV4 = state.egressData && state.egressData.domestic_ip && state.egressData.domestic_ip.ipv4;
     var inChina = function (entry) {
         if (!entry) return false;
-        var c = (entry.country || '') + (entry.region || '') + (entry.location || '');
-        return c.indexOf('\u4E2D\u56FD') !== -1 || c.indexOf('China') !== -1 || c.indexOf('CN') !== -1;
+        var country = String(entry.country || '').trim();
+        var region = String(entry.region || entry.location || '').trim();
+        var blob = country + ' ' + region;
+        if (/中国|中國|China/i.test(blob)) return true;
+        // ISO code only when it's a standalone country code field, not substring of ISP text.
+        if (/^(CN|CHN)$/i.test(country)) return true;
+        return false;
     };
+    var hasMetaTun = false;
+    try {
+        var ifaces = (state.summary && state.summary.network_info && state.summary.network_info.interfaces) || [];
+        hasMetaTun = ifaces.some(function (iface) {
+            return iface && iface.present && iface.link_type === 'tun' &&
+                (iface.device_status === 'connected' || iface.oper_state === 'up');
+        });
+    } catch (_) {}
+
+    // Need egress geo to decide "proxy vs overseas direct"; otherwise stay unknown.
+    var hasEgress = !!(domesticV4 && (domesticV4.ip || domesticV4.country || domesticV4.location)) || !!(glb && glb.ip);
     var boxInChina = inChina(domesticV4) || inChina(glb);
+
     if (okCount === total) {
-        if (boxInChina) return { mode: 'proxy', label: i18n('proxy_detected') };
+        if (!hasEgress && !hasMetaTun) {
+            return { mode: 'unknown', label: i18n('unknown_status') };
+        }
+        // Domestic geo + all foreign sites OK ⇒ system proxy/TUN is carrying global traffic.
+        if (boxInChina || hasMetaTun) {
+            return { mode: 'proxy', label: i18n('proxy_detected') };
+        }
         return { mode: 'direct', label: i18n('global_egress_detected') };
     }
-    if (okCount === 0) return { mode: 'direct', label: i18n('no_proxy') };
+    if (okCount === 0) {
+        // All blocked: no working proxy path (or network dead). Don't claim "proxy on".
+        return { mode: 'direct', label: i18n('no_proxy') };
+    }
+    // Split routing / partial proxy.
+    if (hasMetaTun) {
+        return { mode: 'partial', label: i18n('proxy_detected') + ' · ' + i18n('unknown_status') };
+    }
     return { mode: 'partial', label: i18n('unknown_status') };
 }
 
@@ -89,6 +119,33 @@ function renderSummary(summary) {
     window.__app.renderNetworkInfo(summary.network_info || {});
     if (window.__app.renderNATInfo) window.__app.renderNATInfo((summary.network_info && summary.network_info.nat) || {});
     refreshProxyDisplay();
+}
+
+
+async function refreshNetworkDetailCards() {
+    // Lightweight: re-collect interfaces for NIC detail table without full probe/run.
+    try {
+        var info = await netwatchPost('/api/v1/network/interfaces/refresh');
+        if (info && window.__app && window.__app.renderNetworkInfo) {
+            if (state.summary) state.summary.network_info = info;
+            window.__app.renderNetworkInfo(info);
+        }
+    } catch (err) {
+        // Fallback to full summary if light path unavailable.
+        try {
+            if (window.__app && window.__app.refreshInterfacesOnly) {
+                await window.__app.refreshInterfacesOnly();
+            } else if (window.__app && window.__app.loadSummary) {
+                await window.__app.loadSummary(false, true);
+            }
+        } catch (_) {}
+    }
+    try {
+        if (typeof window.renderNICRealtime === 'function') {
+            var rt = await netwatchGet('/api/v1/network/realtime?force=1');
+            window.renderNICRealtime(rt);
+        }
+    } catch (_) {}
 }
 
 async function loadSummary(showOverlay, refresh) {
@@ -143,17 +200,7 @@ async function refreshInterfacesOnly() {
     state.interfacesRefreshing = true;
     els.interfacesRefreshBtn.disabled = true;
     try {
-        var data;
-        if (window.NetwatchAPI) {
-            data = await window.NetwatchAPI.get('/api/v1/summary');
-        } else {
-            var response = await fetch('/api/v1/summary', { cache: 'no-store' });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            data = await response.json();
-        }
-        if (!data || !data.network_info) throw new Error('network information unavailable');
-        if (state.summary) state.summary.network_info = data.network_info;
-        window.__app.renderNetworkInfo(data.network_info);
+        await refreshNetworkDetailCards();
     } catch (error) {
         console.error(error);
         NetwatchShared.showToast(i18n('refresh_failed') + ': ' + error.message, 'error');
@@ -183,7 +230,7 @@ async function runWebsiteRefresh() {
     } catch (error) {
         console.error(error);
         els.websiteStatus.textContent = i18n('check_failed');
-        NetwatchShared.showToast(i18n('speedtest_failed'), 'error');
+        NetwatchShared.showToast(i18n('check_failed'), 'error');
     } finally {
         els.websiteRefreshBtn.disabled = false;
     }
@@ -298,28 +345,57 @@ function renderIPv6DetailWindow(avail) {
 }
 
 function openIPv6DetailWindow() {
-    renderIPv6DetailWindow(state.ipv6Avail);
-    if (els.ipv6DetailWindow) els.ipv6DetailWindow.classList.add('active');
-    if (els.ipv6DetailBackdrop) els.ipv6DetailBackdrop.classList.add('active');
+    if (window.closeCustomSelects) window.closeCustomSelects();
+    var win = document.getElementById('ipv6-detail-window') || (els && els.ipv6DetailWindow);
+    var backdrop = document.getElementById('ipv6-detail-window-backdrop') || (els && els.ipv6DetailBackdrop);
+    renderIPv6DetailWindow(state.ipv6Avail || {});
+    if (!win) {
+        console.warn('ipv6-detail-window missing');
+        return;
+    }
+    // Ensure above any other floating layer / sticky headers.
+    win.style.zIndex = '1300';
+    if (backdrop) {
+        backdrop.style.zIndex = '1290';
+        backdrop.classList.add('active');
+    }
+    win.classList.add('active');
     NetwatchShared.lockModalScroll();
 }
 
 function closeIPv6DetailWindow() {
-    if (els.ipv6DetailWindow) els.ipv6DetailWindow.classList.remove('active');
-    if (els.ipv6DetailBackdrop) els.ipv6DetailBackdrop.classList.remove('active');
+    if (window.closeCustomSelects) window.closeCustomSelects();
+    var win = document.getElementById('ipv6-detail-window') || (els && els.ipv6DetailWindow);
+    var backdrop = document.getElementById('ipv6-detail-window-backdrop') || (els && els.ipv6DetailBackdrop);
+    if (win) win.classList.remove('active');
+    if (backdrop) backdrop.classList.remove('active');
     NetwatchShared.unlockModalScroll();
 }
 
 async function openIPv6RenewWindow() {
-    if (els.ipv6RenewWindow) els.ipv6RenewWindow.classList.add('active');
-    if (els.ipv6RenewBackdrop) els.ipv6RenewBackdrop.classList.add('active');
+    if (window.closeCustomSelects) window.closeCustomSelects();
+    var win = document.getElementById('ipv6-renew-window') || (els && els.ipv6RenewWindow);
+    var backdrop = document.getElementById('ipv6-renew-window-backdrop') || (els && els.ipv6RenewBackdrop);
+    if (!win) {
+        console.warn('ipv6-renew-window missing');
+        return;
+    }
+    win.style.zIndex = '1300';
+    if (backdrop) {
+        backdrop.style.zIndex = '1290';
+        backdrop.classList.add('active');
+    }
+    win.classList.add('active');
     NetwatchShared.lockModalScroll();
     await loadIPv6RenewNICs();
 }
 
 function closeIPv6RenewWindow() {
-    if (els.ipv6RenewWindow) els.ipv6RenewWindow.classList.remove('active');
-    if (els.ipv6RenewBackdrop) els.ipv6RenewBackdrop.classList.remove('active');
+    if (window.closeCustomSelects) window.closeCustomSelects();
+    var win = document.getElementById('ipv6-renew-window') || (els && els.ipv6RenewWindow);
+    var backdrop = document.getElementById('ipv6-renew-window-backdrop') || (els && els.ipv6RenewBackdrop);
+    if (win) win.classList.remove('active');
+    if (backdrop) backdrop.classList.remove('active');
     NetwatchShared.unlockModalScroll();
 }
 
@@ -381,11 +457,21 @@ async function runIPv6Renew() {
     try {
         var result = await netwatchPost('/api/v1/network/ipv6/renew', { device: device });
         if (result.ok) {
-            if (statusEl) statusEl.textContent = i18n('ipv6_renew_ok') + ': ' + device;
-            if (outputEl && result.output) {
-                outputEl.textContent = result.output;
-                outputEl.hidden = false;
+            var note = result.note || (i18n('ipv6_renew_ok') + ': ' + device);
+            if (statusEl) statusEl.textContent = note;
+            var detail = [];
+            if (result.ipv6_before && result.ipv6_before.length) detail.push('before: ' + result.ipv6_before.join(', '));
+            if (result.ipv6_after && result.ipv6_after.length) detail.push('after: ' + result.ipv6_after.join(', '));
+            if (result.output) detail.push(result.output);
+            if (outputEl) {
+                if (detail.length) {
+                    outputEl.textContent = detail.join('\n');
+                    outputEl.hidden = false;
+                } else {
+                    outputEl.hidden = true;
+                }
             }
+            try { await refreshNetworkDetailCards(); } catch (_) {}
             setTimeout(function () {
                 netwatchPost('/api/v1/network/egress-lookups')
                     .then(renderEgressLookups).catch(function () {});
@@ -407,7 +493,6 @@ function networkConfigEls() {
         address: document.getElementById('network-config-address'),
         gateway: document.getElementById('network-config-gateway'),
         dns: document.getElementById('network-config-dns'),
-        checkIP: document.getElementById('network-config-check-ip-btn'),
         preflight: document.getElementById('network-config-preflight-btn'),
         apply: document.getElementById('network-config-apply-btn'),
         confirm: document.getElementById('network-config-confirm-btn'),
@@ -416,6 +501,47 @@ function networkConfigEls() {
         output: document.getElementById('network-config-output')
         ,preview: document.getElementById('network-config-preview')
     };
+}
+
+function setNetworkConfigFormEnabled(enabled) {
+    var e = networkConfigEls();
+    var body = document.querySelector('.network-config-body');
+    // is-empty only greys out when BOTH IP config and bridge create have no device.
+    // Dissolve of existing bridges remains available separately.
+    if (body) body.classList.toggle('is-empty', !enabled);
+    [e.device, e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
+        if (el) el.disabled = !enabled;
+    });
+    if (enabled) {
+        updateNetworkConfigMethodState();
+    } else {
+        if (e.apply) e.apply.disabled = true;
+        if (e.preflight) e.preflight.disabled = true;
+        if (e.confirm) e.confirm.hidden = true;
+        if (e.rollback) e.rollback.hidden = true;
+    }
+    [e.device, e.method].forEach(function (select) {
+        if (select && window.syncCustomSelect) window.syncCustomSelect(select);
+    });
+    // Bridge create needs a NIC; dissolve depends on existing managed bridges.
+    setHostBridgeCreateEnabled(enabled);
+}
+
+function setHostBridgeCreateEnabled(enabled) {
+    var e = typeof hostBridgeEls === 'function' ? hostBridgeEls() : {};
+    if (!e.section) return;
+    var pending = !!(hostBridgeState && hostBridgeState.pending && hostBridgeState.pending.pending);
+    var canCreate = !!enabled && !pending && hostBridgeState.enabled !== false;
+    [e.suffix, e.method, e.address, e.gateway, e.dns, e.preflight, e.create].forEach(function (el) {
+        if (el) el.disabled = !canCreate;
+    });
+    if (!canCreate && e.create) {
+        // keep create visible unless pending UI hides it
+    }
+    if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
+    if (!pending) {
+        updateHostBridgeMethodState();
+    }
 }
 
 function stopNetworkConfigCountdown() {
@@ -427,10 +553,10 @@ function stopNetworkConfigCountdown() {
 
 function setNetworkConfigLocked(locked) {
     var e = networkConfigEls();
-    [e.device, e.method, e.address, e.gateway, e.dns, e.checkIP, e.apply].forEach(function (el) {
+    [e.device, e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
         if (el) el.disabled = !!locked;
     });
-    [e.checkIP, e.apply].forEach(function (el) {
+    [e.preflight, e.apply].forEach(function (el) {
         if (el) el.hidden = !!locked;
     });
     if (!locked) updateNetworkConfigMethodState();
@@ -548,21 +674,37 @@ function fillNetworkConfigForm(dev) {
 
 function updateNetworkConfigApplyState() {
     var e = networkConfigEls();
-    if (!e.apply || (state.networkConfigPendingData && state.networkConfigPendingData.pending)) return;
+    if (!e.apply) return;
+    if (state.networkConfigPendingData && state.networkConfigPendingData.pending) {
+        e.apply.disabled = true;
+        renderNetworkConfigPreview();
+        return;
+    }
     var baseline = state.networkConfigBaseline;
     if (!baseline) {
         e.apply.disabled = true;
+        renderNetworkConfigPreview();
         return;
     }
-    var changed = [
-        ['method', e.method],
-        ['address', e.address],
-        ['gateway', e.gateway],
-        ['dns', e.dns]
-    ].some(function (entry) {
-        return String(entry[1] ? entry[1].value : '') !== String(baseline[entry[0]] || '');
-    });
+    var method = e.method ? String(e.method.value || '') : '';
+    var baseMethod = String(baseline.method || '');
+    var methodChanged = method !== baseMethod;
+    var changed;
+    if (method === 'auto') {
+        // Switching to auto is itself a valid change (manual fields are ignored).
+        changed = methodChanged;
+    } else {
+        // Manual: method flip OR any of address/gateway/dns differs from baseline.
+        var addressChanged = String(e.address ? e.address.value : '') !== String(baseline.address || '');
+        var gatewayChanged = String(e.gateway ? e.gateway.value : '') !== String(baseline.gateway || '');
+        var dnsChanged = String(e.dns ? e.dns.value : '') !== String(baseline.dns || '');
+        changed = methodChanged || addressChanged || gatewayChanged || dnsChanged;
+    }
     e.apply.disabled = !changed;
+    // Keep preflight always clickable on the IP panel (auto path shows a note).
+    if (e.preflight && !(state.networkConfigPendingData && state.networkConfigPendingData.pending)) {
+        e.preflight.disabled = false;
+    }
     renderNetworkConfigPreview();
 }
 
@@ -582,9 +724,10 @@ function renderNetworkConfigPreview() {
 function updateNetworkConfigMethodState() {
     var e = networkConfigEls();
     var manual = !e.method || e.method.value !== 'auto';
-    [e.address, e.gateway, e.dns, e.checkIP].forEach(function (el) {
+    [e.address, e.gateway, e.dns].forEach(function (el) {
         if (el) el.disabled = !manual;
     });
+    if (e.preflight) e.preflight.disabled = false;
     updateNetworkConfigApplyState();
 }
 
@@ -596,6 +739,9 @@ async function loadNetworkConfigDevices() {
     if (e.apply) e.apply.disabled = true;
     if (e.status) e.status.textContent = i18n('loading') + '...';
     if (e.output) e.output.hidden = true;
+    // Loading: lock interactive fields until we know device list state.
+    setNetworkConfigFormEnabled(false);
+    e.device.disabled = true;
     try {
         var respData;
         var respStatus = 200;
@@ -615,38 +761,50 @@ async function loadNetworkConfigDevices() {
             json: async function () { return respData; }
         };
         if (resp.status === 404) {
+            setNetworkConfigFormEnabled(false);
             if (e.status) e.status.textContent = i18n('network_config_backend_old');
             return;
         }
         var data = await resp.json();
         if (!resp.ok || !data.enabled) {
+            setNetworkConfigFormEnabled(false);
             if (e.status) e.status.textContent = data.error || i18n('network_config_disabled');
             return;
         }
         var devices = data.devices || [];
+        e.device.__allDevices = devices;
+        e.device.onchange = function () {
+            var list = e.device.__devices || [];
+            var idx = e.device.selectedIndex;
+            fillNetworkConfigForm(list[idx]);
+            var be = hostBridgeEls();
+            if (be.suffix) be.suffix.dataset.touched = '';
+            if (typeof fillHostBridgeFormForDevice === 'function') {
+                fillHostBridgeFormForDevice(e.device.value);
+            }
+        };
         if (devices.length === 0) {
+            e.device.innerHTML = '';
+            e.device.disabled = true;
+            e.device.__devices = [];
+            setNetworkConfigFormEnabled(false);
+            if (window.syncCustomSelect) window.syncCustomSelect(e.device);
             if (e.status) e.status.textContent = i18n('network_config_no_device');
+            if (typeof loadHostBridges === 'function') loadHostBridges();
             return;
         }
-        e.device.innerHTML = devices.map(function (d, idx) {
-            var label = d.device + ' · ' + d.type + (d.connection ? ' · ' + d.connection : '');
-            return '<option value="' + NetwatchShared.escapeHtml(d.device) + '" data-index="' + idx + '">' + NetwatchShared.escapeHtml(label) + '</option>';
-        }).join('');
-        e.device.disabled = false;
-        e.device.__devices = devices;
-        e.device.onchange = function () {
-            fillNetworkConfigForm((e.device.__devices || [])[e.device.selectedIndex]);
-        };
-        fillNetworkConfigForm(devices[0]);
+        // Fill options for current tab (bridge = ethernet only).
+        renderNetworkConfigDeviceOptions();
+        if (typeof loadHostBridges === 'function') { loadHostBridges(); }
         if (state.networkConfigPendingData && state.networkConfigPendingData.pending) {
             applyPendingNetworkConfigToForm(state.networkConfigPendingData);
             setNetworkConfigLocked(true);
         }
-        if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
         updateNetworkConfigApplyState();
         if (e.status) e.status.textContent = i18n('network_config_ready');
     } catch (err) {
+        setNetworkConfigFormEnabled(false);
         if (e.status) e.status.textContent = i18n('load_failed') + ': ' + err.message;
     }
 }
@@ -701,7 +859,7 @@ async function checkNetworkConfigIP() {
         if (e.status) e.status.textContent = i18n('network_config_ip_invalid');
         return;
     }
-    if (e.checkIP) e.checkIP.disabled = true;
+    if (e.preflight) e.preflight.disabled = true;
     if (e.status) e.status.textContent = i18n('network_config_checking_ip') + ': ' + ipOnly;
     try {
         var result = await netwatchPost('/api/v1/network/config/check-ip', payload);
@@ -710,12 +868,13 @@ async function checkNetworkConfigIP() {
     } catch (err) {
         if (e.status) e.status.textContent = i18n('network_config_failed') + ': ' + err.message;
     } finally {
-        if (e.checkIP) e.checkIP.disabled = false;
+        if (e.preflight) e.preflight.disabled = false;
     }
 }
 
 async function preflightNetworkConfig() {
     var e = networkConfigEls();
+    // Single preflight entry: auto mode has nothing to ARP-check; manual runs IP occupancy.
     if (e.method && e.method.value === 'auto') {
         if (e.status) e.status.textContent = i18n('network_config_preflight_auto');
         return;
@@ -1034,6 +1193,27 @@ function initAppTraffic() {
     updateTrafficAnalysisLink();
 }
 
+
+function nicRealtimeColumnCount(n) {
+    // PC adaptive: fill rows without empty columns.
+    // 1→1, 2→2, 3→3, 4→2x2, 5+→3.
+    n = Number(n) || 0;
+    if (n <= 1) return 1;
+    if (n === 2) return 2;
+    if (n === 3) return 3;
+    if (n === 4) return 2;
+    return 3;
+}
+
+function applyNicRealtimeLayout(listEl, count) {
+    if (!listEl) return;
+    var cols = nicRealtimeColumnCount(count);
+    listEl.dataset.count = String(count || 0);
+    listEl.dataset.cols = String(cols);
+    // Inline style wins on PC; CSS media queries can override on narrow screens.
+    listEl.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+}
+
 function initNICRealtime() {
     if (state.nicRealtimeInitialized) return;
     state.nicRealtimeInitialized = true;
@@ -1041,14 +1221,51 @@ function initNICRealtime() {
     var statusEl = document.getElementById('nic-realtime-status');
     if (!listEl) return;
     window.renderNICRealtime = function (data) {
-        if (!data.nics || data.nics.length === 0) {
+        var nics = Array.isArray(data && data.nics) ? data.nics.slice() : [];
+        if (!nics.length) {
+            applyNicRealtimeLayout(listEl, 1);
             listEl.innerHTML = '<div class="nic-realtime-item"><small>' + i18n('no_monitored_nics') + '</small></div>';
             if (statusEl) statusEl.textContent = i18n('no_data');
             return;
         }
-        listEl.innerHTML = data.nics.map(function (n) {
-            var isUp = n.oper_state ? n.oper_state === 'up' : n.present;
-            return '<div class="nic-realtime-item"><div class="nic-realtime-head"><span class="nic-realtime-name">' + NetwatchShared.escapeHtml(n.name) + '</span><span class="nic-realtime-badge ' + (isUp ? 'online' : 'offline') + '">' + (isUp ? 'UP' : 'DOWN') + '</span></div><div class="nic-realtime-rows"><div class="nic-realtime-cell"><span class="nic-realtime-label">\u2193 ' + i18n('rx') + '</span><span class="nic-realtime-value rx">' + window.__app.formatBitsPerSec(n.rx_bps) + '</span></div><div class="nic-realtime-cell"><span class="nic-realtime-label">\u2191 ' + i18n('tx') + '</span><span class="nic-realtime-value tx">' + window.__app.formatBitsPerSec(n.tx_bps) + '</span></div></div><div class="nic-realtime-total">' + i18n('cumulative') + ' \u2193 ' + NetwatchShared.formatBytes(n.rx_total) + ' / \u2191 ' + NetwatchShared.formatBytes(n.tx_total) + '</div></div>';
+        // Fixed positions: wired → wifi → bridge → proxy tun → other; name ASC. Never sort by rate.
+        function isProxyTunName(name) {
+            name = String(name || '');
+            return /^(meta|mihomo|clash|utun|metacore|singbox|sb)\d*$/i.test(name);
+        }
+        function nicRank(name) {
+            name = String(name || '');
+            if (/^(en|eth|usb)/.test(name)) return 0;
+            if (/^wl/.test(name)) return 1;
+            if (name.indexOf('nw-') === 0) return 2;
+            if (isProxyTunName(name)) return 3;
+            return 4;
+        }
+        nics.sort(function (a, b) {
+            var ra = nicRank(a.name), rb = nicRank(b.name);
+            if (ra !== rb) return ra - rb;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        applyNicRealtimeLayout(listEl, nics.length);
+        listEl.innerHTML = nics.map(function (n, idx) {
+            var st = String(n.oper_state || '').toLowerCase();
+            var isUp = st === 'up' || (!st && n.present) ||
+                (n.present && st !== 'down' && st !== 'lowerlayerdown' && st !== 'notpresent' && isProxyTunName(n.name));
+            var label = n.name || '';
+            if (label.indexOf('nw-') === 0) {
+                label = (i18n('host_bridge_title') || '网桥') + ' · ' + label;
+            } else if (isProxyTunName(label)) {
+                label = (i18n('proxy_tun_title') || '代理') + ' · ' + label;
+            }
+            return '<div class="nic-realtime-item" data-nic="' + NetwatchShared.escapeHtml(n.name || '') + '" style="--nic-order:' + idx + '">' +
+                '<div class="nic-realtime-head"><span class="nic-realtime-name">' + NetwatchShared.escapeHtml(label) +
+                '</span><span class="nic-realtime-badge ' + (isUp ? 'online' : 'offline') + '">' + (isUp ? 'UP' : 'DOWN') + '</span></div>' +
+                '<div class="nic-realtime-rows"><div class="nic-realtime-cell"><span class="nic-realtime-label">↓ ' + i18n('rx') +
+                '</span><span class="nic-realtime-value rx">' + window.__app.formatBitsPerSec(n.rx_bps) + '</span></div>' +
+                '<div class="nic-realtime-cell"><span class="nic-realtime-label">↑ ' + i18n('tx') +
+                '</span><span class="nic-realtime-value tx">' + window.__app.formatBitsPerSec(n.tx_bps) + '</span></div></div>' +
+                '<div class="nic-realtime-total">' + i18n('cumulative') + ' ↓ ' + NetwatchShared.formatBytes(n.rx_total) +
+                ' / ↑ ' + NetwatchShared.formatBytes(n.tx_total) + '</div></div>';
         }).join('');
         if (statusEl) statusEl.textContent = i18n('sampled_at') + ' ' + (data.timestamp || '');
     };
@@ -1191,15 +1408,36 @@ function updateTrafficAnalysisLink() {
     var link = document.getElementById('traffic-analysis-link');
     if (!link) return;
     var enabled = !!(state.settings && state.settings.traffic_sampling_enabled);
-    // Keep the entry visible so users can always reach the trend page.
-    // When sampling is off, dim the link and still allow navigation (page degrades itself).
+    // Entry only when traffic analysis sampling is enabled in settings.
     link.hidden = !enabled;
-    link.classList.toggle('is-disabled', !enabled);
-    link.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-    link.title = i18n('traffic_analysis_btn');
+    if (enabled) {
+        link.removeAttribute('hidden');
+        link.classList.remove('is-disabled');
+        link.setAttribute('aria-disabled', 'false');
+        link.removeAttribute('tabindex');
+    } else {
+        link.setAttribute('hidden', '');
+        link.classList.add('is-disabled');
+        link.setAttribute('aria-disabled', 'true');
+        link.setAttribute('tabindex', '-1');
+    }
+    link.title = enabled ? i18n('traffic_analysis_btn') : (i18n('traffic_sampling_disabled') || i18n('traffic_analysis_btn'));
+}
+
+function refreshAppTrafficSoon() {
+    // Host bridge create briefly rewires the default route; give counters/docker a beat.
+    var run = function () {
+        if (window.__app && typeof window.__app.refreshAppTraffic === 'function') {
+            window.__app.refreshAppTraffic();
+        }
+        updateTrafficAnalysisLink();
+    };
+    setTimeout(run, 400);
+    setTimeout(run, 2000);
 }
 
 window.__app.loadSummary = loadSummary;
+window.__app.refreshNetworkDetailCards = refreshNetworkDetailCards;
 window.__app.renderSummary = renderSummary;
 window.__app.runFastRefresh = runFastRefresh;
 window.__app.refreshInterfacesOnly = refreshInterfacesOnly;
@@ -1214,7 +1452,584 @@ window.__app.openIPv6RenewWindow = openIPv6RenewWindow;
 window.__app.closeIPv6RenewWindow = closeIPv6RenewWindow;
 window.__app.loadIPv6RenewNICs = loadIPv6RenewNICs;
 window.__app.runIPv6Renew = runIPv6Renew;
+
+// --- Host bridge (tab inside network config window) ---
+
+var hostBridgeCountdownTimer = null;
+var hostBridgeState = { pending: null, bridges: [], enabled: true, candidates: [] };
+var HOST_BRIDGE_PREFIX = 'nw-';
+var HOST_BRIDGE_NAME_MAX = 15;
+
+function hostBridgeEls() {
+    return {
+        section: document.getElementById('host-bridge-section'),
+        panel: document.getElementById('network-config-panel-bridge'),
+        suffix: document.getElementById('host-bridge-name-suffix'),
+        name: document.getElementById('host-bridge-name'),
+        method: document.getElementById('host-bridge-method'),
+        address: document.getElementById('host-bridge-address'),
+        gateway: document.getElementById('host-bridge-gateway'),
+        dns: document.getElementById('host-bridge-dns'),
+        preflight: document.getElementById('host-bridge-preflight-btn'),
+        create: document.getElementById('host-bridge-create-btn'),
+        confirm: document.getElementById('host-bridge-confirm-btn'),
+        rollback: document.getElementById('host-bridge-rollback-btn'),
+        dissolve: document.getElementById('host-bridge-dissolve-btn'),
+        select: document.getElementById('host-bridge-select'),
+        status: document.getElementById('host-bridge-status-line'),
+        list: document.getElementById('host-bridge-list'),
+        output: document.getElementById('host-bridge-output'),
+        device: document.getElementById('network-config-device')
+    };
+}
+
+function setHostBridgeOutput(text) {
+    var e = hostBridgeEls();
+    if (!e.output) return;
+    if (!text) {
+        e.output.hidden = true;
+        e.output.textContent = '';
+        return;
+    }
+    e.output.hidden = false;
+    e.output.textContent = text;
+}
+
+function currentNetworkConfigDevice() {
+    var e = hostBridgeEls();
+    return e.device ? String(e.device.value || '').trim() : '';
+}
+
+function sanitizeHostBridgeSuffix(raw) {
+    raw = String(raw || '').trim();
+    // Strip accidental full-name / prefix the user may paste.
+    if (raw.toLowerCase().indexOf(HOST_BRIDGE_PREFIX) === 0) {
+        raw = raw.slice(HOST_BRIDGE_PREFIX.length);
+    }
+    raw = raw.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    // Linux IFNAMSIZ: full name <= 15; prefix "nw-" is 3 chars.
+    var maxSuffix = HOST_BRIDGE_NAME_MAX - HOST_BRIDGE_PREFIX.length;
+    if (raw.length > maxSuffix) raw = raw.slice(0, maxSuffix);
+    raw = raw.replace(/^[._-]+/, '').replace(/[._-]+$/, '');
+    return raw;
+}
+
+function suggestHostBridgeSuffix(device) {
+    device = String(device || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!device) return 'br0';
+    var maxSuffix = HOST_BRIDGE_NAME_MAX - HOST_BRIDGE_PREFIX.length;
+    if (device.length > maxSuffix) device = device.slice(0, maxSuffix).replace(/[._-]+$/, '');
+    return device || 'br0';
+}
+
+function composedHostBridgeName() {
+    var e = hostBridgeEls();
+    var suffix = sanitizeHostBridgeSuffix(e.suffix ? e.suffix.value : '');
+    if (!suffix) return '';
+    return HOST_BRIDGE_PREFIX + suffix;
+}
+
+function syncHostBridgeNameHidden() {
+    var e = hostBridgeEls();
+    var full = composedHostBridgeName();
+    if (e.name) e.name.value = full;
+    if (e.suffix && e.suffix.value !== sanitizeHostBridgeSuffix(e.suffix.value)) {
+        // normalize only when dirty chars present; keep caret friendly by not always rewriting
+    }
+    return full;
+}
+
+function validateHostBridgeNameClient(full) {
+    full = String(full || '');
+    if (!full || full === HOST_BRIDGE_PREFIX) {
+        return i18n('host_bridge_name_required') || '请填写网桥名后缀';
+    }
+    if (full.length > HOST_BRIDGE_NAME_MAX) {
+        return i18n('host_bridge_name_too_long') || ('网桥名最长 ' + HOST_BRIDGE_NAME_MAX + ' 字符');
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$/.test(full)) {
+        return i18n('host_bridge_name_invalid') || '网桥名不合法：字母数字开头，仅允许 . _ -';
+    }
+    if (full.indexOf(HOST_BRIDGE_PREFIX) !== 0) {
+        return i18n('host_bridge_name_prefix') || '网桥名必须以 nw- 开头';
+    }
+    return '';
+}
+
+function updateHostBridgeMethodState() {
+    var e = hostBridgeEls();
+    var manual = e.method && e.method.value === 'manual';
+    document.querySelectorAll('.host-bridge-manual-field').forEach(function (el) {
+        el.hidden = !manual;
+    });
+    // If create is locked (no NIC / pending / disabled), keep manual fields disabled too.
+    var createLocked = !e.create || e.create.disabled || e.create.hidden;
+    [e.address, e.gateway, e.dns].forEach(function (el) {
+        if (el) el.disabled = createLocked || !manual;
+    });
+    if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
+}
+
+function renderHostBridgeList() {
+    var e = hostBridgeEls();
+    if (!e.list) return;
+    var bridges = hostBridgeState.bridges || [];
+    // Dissolve select lists ALL managed bridges (multi-NIC multi-bridge).
+    if (e.select) {
+        var prev = e.select.value;
+        if (!bridges.length) {
+            e.select.innerHTML = '<option value="">' + NetwatchShared.escapeHtml(i18n('host_bridge_none')) + '</option>';
+            e.select.disabled = true;
+            if (e.dissolve) e.dissolve.disabled = true;
+        } else {
+            e.select.innerHTML = bridges.map(function (b) {
+                var label = b.bridge + (b.device ? ' ← ' + b.device : '');
+                return '<option value="' + NetwatchShared.escapeHtml(b.bridge) + '">' + NetwatchShared.escapeHtml(label) + '</option>';
+            }).join('');
+            e.select.disabled = false;
+            if (prev && bridges.some(function (b) { return b.bridge === prev; })) {
+                e.select.value = prev;
+            }
+            if (e.dissolve) e.dissolve.disabled = false;
+        }
+        if (window.syncCustomSelect) window.syncCustomSelect(e.select);
+    }
+
+    if (!bridges.length) {
+        e.list.innerHTML = '<div class="note">' + i18n('host_bridge_none') + '</div>';
+        return;
+    }
+    var selected = e.select ? e.select.value : '';
+    e.list.innerHTML = bridges.map(function (b) {
+        var meta = [b.device, b.method || '', b.address || '', b.ipv6_method || '', b.note || ''].filter(Boolean).join(' · ');
+        var active = selected && selected === b.bridge ? ' active-select' : '';
+        return '<div class="host-bridge-card' + active + '" data-bridge="' + NetwatchShared.escapeHtml(b.bridge) + '">' +
+            '<div><strong>' + NetwatchShared.escapeHtml(b.bridge) + '</strong></div>' +
+            '<div class="meta">' + NetwatchShared.escapeHtml(meta) + '</div></div>';
+    }).join('');
+}
+
+function fillHostBridgeFormForDevice(device) {
+    var e = hostBridgeEls();
+    if (e.suffix && !e.suffix.dataset.touched) {
+        e.suffix.value = suggestHostBridgeSuffix(device);
+        syncHostBridgeNameHidden();
+    }
+    // Prefer inheriting current NIC IP fields when switching device.
+    var ne = networkConfigEls();
+    if (e.address && ne.address && !e.address.dataset.touched) e.address.value = ne.address.value || '';
+    if (e.gateway && ne.gateway && !e.gateway.dataset.touched) e.gateway.value = ne.gateway.value || '';
+    if (e.dns && ne.dns && !e.dns.dataset.touched) e.dns.value = ne.dns.value || '';
+    updateHostBridgeMethodState();
+    renderHostBridgeList();
+}
+
+async function loadHostBridges() {
+    var e = hostBridgeEls();
+    if (!e.section) return;
+    try {
+        var data = await netwatchGet('/api/v1/network/bridges');
+        hostBridgeState.enabled = data.enabled !== false;
+        hostBridgeState.bridges = data.bridges || [];
+        hostBridgeState.candidates = data.candidates || [];
+        var hasDevice = !!currentNetworkConfigDevice();
+        if (!hostBridgeState.enabled) {
+            if (e.status && e.status.dataset.kind !== 'pending') {
+                e.status.textContent = data.error || i18n('host_bridge_disabled');
+            }
+            setHostBridgeCreateEnabled(false);
+            if (e.select) e.select.disabled = true;
+            if (e.dissolve) e.dissolve.disabled = true;
+            renderHostBridgeList();
+            // Keep confirm UI if a pending change exists (reconnect recovery).
+            renderHostBridgePending(data.pending || null, false);
+            return;
+        }
+        // Create needs a selected NIC; dissolve works from managed bridge list even if NIC dropdown is empty.
+        setHostBridgeCreateEnabled(hasDevice);
+        if (hasDevice) {
+            fillHostBridgeFormForDevice(currentNetworkConfigDevice());
+        }
+        renderHostBridgeList();
+        renderHostBridgePending(data.pending || null, false);
+        if (e.status && e.status.dataset.kind !== 'pending' && !e.status.textContent) {
+            e.status.textContent = '';
+        }
+        return data;
+    } catch (err) {
+        if (e.status) e.status.textContent = (err && err.message) || i18n('host_bridge_failed');
+        return null;
+    }
+}
+
+/** Like loadNetworkConfigPending: fetch pending and optionally auto-open the confirm UI. */
+async function loadHostBridgePending(openWindow) {
+    try {
+        // Dedicated pending endpoint (same contract as /network/config/pending).
+        var pending = await netwatchGet('/api/v1/network/bridges/pending');
+        renderHostBridgePending(pending, !!openWindow);
+        // Best-effort refresh inventory when a confirm window is needed.
+        if (pending && pending.pending) {
+            try { await loadHostBridges(); } catch (_) {}
+        }
+    } catch (_) {}
+}
+
+function stopHostBridgeCountdown() {
+    if (hostBridgeCountdownTimer) {
+        clearInterval(hostBridgeCountdownTimer);
+        hostBridgeCountdownTimer = null;
+    }
+}
+
+function renderHostBridgePending(pending, openWindow) {
+    var e = hostBridgeEls();
+    stopHostBridgeCountdown();
+    hostBridgeState.pending = pending && pending.pending ? pending : null;
+    if (!hostBridgeState.pending) {
+        if (e.confirm) e.confirm.hidden = true;
+        if (e.rollback) e.rollback.hidden = true;
+        if (e.create) e.create.hidden = false;
+        if (e.preflight) e.preflight.hidden = false;
+        if (e.status && e.status.dataset.kind === 'pending') {
+            e.status.textContent = '';
+            e.status.dataset.kind = '';
+        }
+        // re-enable create fields when not pending
+        setHostBridgeCreateEnabled(!!currentNetworkConfigDevice());
+        return;
+    }
+    if (e.confirm) e.confirm.hidden = false;
+    if (e.rollback) e.rollback.hidden = false;
+    if (e.create) e.create.hidden = true;
+    if (e.preflight) e.preflight.hidden = true;
+    // lock create fields during pending
+    [e.suffix, e.method, e.address, e.gateway, e.dns, e.preflight, e.create].forEach(function (el) {
+        if (el) el.disabled = true;
+    });
+    // Same as NIC config pending: auto-open window + bridge tab after reconnect.
+    if (openWindow) {
+        if (window.__app && window.__app.openWindow) {
+            window.__app.openWindow('network-config');
+        }
+        // Defer tab switch so window layout exists first.
+        setTimeout(function () {
+            if (typeof switchNetworkConfigTab === 'function') {
+                switchNetworkConfigTab('bridge');
+            }
+        }, 30);
+    }
+    var untilMs = Date.now() + Math.max(0, pending.remaining_sec || 0) * 1000;
+    function paint() {
+        var remain = Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
+        if (e.status) {
+            e.status.dataset.kind = 'pending';
+            e.status.textContent = i18n('host_bridge_pending') + ' ' + remain + 's · ' +
+                (pending.bridge || '') + ' ← ' + (pending.device || '');
+        }
+        return remain;
+    }
+    paint();
+    hostBridgeCountdownTimer = setInterval(function () {
+        var remain = paint();
+        if (remain <= 0) {
+            stopHostBridgeCountdown();
+            setTimeout(function () { loadHostBridges(); }, 1200);
+        }
+    }, 1000);
+}
+
+async function finishHostBridge(action) {
+    var e = hostBridgeEls();
+    var pending = hostBridgeState.pending;
+    var body = { id: pending && pending.id ? pending.id : '' };
+    var path = action === 'confirm'
+        ? '/api/v1/network/bridges/confirm'
+        : '/api/v1/network/bridges/rollback';
+    try {
+        var result = await netwatchPost(path, body);
+        setHostBridgeOutput(result.output || result.note || '');
+        if (e.status) {
+            e.status.dataset.kind = '';
+            e.status.textContent = result.note || '';
+        }
+        await loadHostBridges();
+        if (window.__app && window.__app.loadNetworkConfigDevices) {
+            await window.__app.loadNetworkConfigDevices();
+        }
+        try { await refreshNetworkDetailCards(); } catch (_) {}
+        refreshAppTrafficSoon();
+    } catch (err) {
+        var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_bridge_failed');
+        if (e.status) e.status.textContent = msg;
+        setHostBridgeOutput((err && err.payload && err.payload.output) || '');
+    }
+}
+
+async function preflightHostBridge() {
+    var e = hostBridgeEls();
+    var method = e.method ? e.method.value : 'inherit';
+    if (method !== 'manual') {
+        if (e.status) e.status.textContent = i18n('host_bridge_preflight_skip') || '继承/自动模式无需 IP 占用预检';
+        return;
+    }
+    var device = currentNetworkConfigDevice();
+    var address = e.address ? e.address.value.trim() : '';
+    if (!device || !address) {
+        if (e.status) e.status.textContent = i18n('network_config_check_required');
+        return;
+    }
+    var ipOnly = String(address).split('/')[0];
+    if (!/^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$/.test(ipOnly)) {
+        if (e.status) e.status.textContent = i18n('network_config_ip_invalid');
+        return;
+    }
+    if (e.preflight) e.preflight.disabled = true;
+    if (e.status) e.status.textContent = i18n('network_config_checking_ip') + ': ' + ipOnly;
+    try {
+        var result = await netwatchPost('/api/v1/network/config/check-ip', { device: device, address: address });
+        if (!result.ok) throw new Error(result.error || 'IP check failed');
+        if (e.status) {
+            e.status.textContent = result.available
+                ? i18n('network_config_ip_available')
+                : (i18n('network_config_ip_occupied') + ': ' + (result.error || result.ip || ''));
+        }
+    } catch (err) {
+        if (e.status) e.status.textContent = i18n('host_bridge_failed') + ': ' + ((err && err.message) || '');
+    } finally {
+        if (e.preflight) e.preflight.disabled = false;
+    }
+}
+
+async function createHostBridge() {
+    var e = hostBridgeEls();
+    var device = currentNetworkConfigDevice();
+    if (!device) {
+        if (e.status) e.status.textContent = i18n('host_bridge_need_device');
+        return;
+    }
+    var fullName = syncHostBridgeNameHidden();
+    var nameErr = validateHostBridgeNameClient(fullName);
+    if (nameErr) {
+        if (e.status) e.status.textContent = nameErr;
+        return;
+    }
+    var method = e.method ? e.method.value : 'inherit';
+    var body = {
+        device: device,
+        bridge: fullName,
+        method: method,
+        ipv6_method: 'auto'
+    };
+    if (method === 'manual') {
+        body.address = e.address ? e.address.value.trim() : '';
+        body.gateway = e.gateway ? e.gateway.value.trim() : '';
+        body.dns = e.dns ? e.dns.value.trim() : '';
+        if (!body.address || !body.gateway || !body.dns) {
+            if (e.status) e.status.textContent = i18n('network_config_required');
+            return;
+        }
+    }
+    if (!window.confirm(i18n('host_bridge_create_confirm'))) return;
+    if (e.status) e.status.textContent = i18n('host_bridge_creating');
+    setHostBridgeOutput('');
+    if (e.create) e.create.disabled = true;
+    try {
+        var result = await netwatchPost('/api/v1/network/bridges/create', body);
+        setHostBridgeOutput(result.output || result.note || '');
+        if (e.status) e.status.textContent = result.note || '';
+        if (e.suffix) e.suffix.dataset.touched = '';
+        // Prefer dedicated pending UI (confirm/rollback + countdown).
+        await loadHostBridgePending(true);
+        if (window.__app && window.__app.loadNetworkConfigDevices) {
+            await window.__app.loadNetworkConfigDevices();
+        }
+        try { await refreshNetworkDetailCards(); } catch (_) {}
+        refreshAppTrafficSoon();
+    } catch (err) {
+        var msg = (err && err.payload && (err.payload.error || err.payload.message)) || (err && err.message) || i18n('host_bridge_failed');
+        if (e.status) e.status.textContent = msg;
+        setHostBridgeOutput((err && err.payload && err.payload.output) || '');
+    } finally {
+        if (e.create) e.create.disabled = false;
+    }
+}
+
+async function dissolveHostBridge() {
+    var e = hostBridgeEls();
+    var bridge = e.select ? String(e.select.value || '').trim() : '';
+    if (!bridge) {
+        if (e.status) e.status.textContent = i18n('host_bridge_select_need') || '请先选择要拆除的网桥';
+        return;
+    }
+    if (!window.confirm(i18n('host_bridge_dissolve_confirm'))) return;
+    try {
+        var result = await netwatchPost('/api/v1/network/bridges/dissolve', { bridge: bridge });
+        setHostBridgeOutput(result.output || result.note || '');
+        if (e.status) e.status.textContent = result.note || '';
+        await loadHostBridges();
+        if (window.__app && window.__app.loadNetworkConfigDevices) {
+            await window.__app.loadNetworkConfigDevices();
+        }
+        try { await refreshNetworkDetailCards(); } catch (_) {}
+        refreshAppTrafficSoon();
+    } catch (err) {
+        var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_bridge_failed');
+        if (e.status) e.status.textContent = msg;
+        setHostBridgeOutput((err && err.payload && err.payload.output) || '');
+    }
+}
+
+
+/** Bridge create only allows wired ethernet — Wi-Fi client mode cannot L2-bridge reliably. */
+function isBridgeEligibleDevice(d) {
+    if (!d || !d.device) return false;
+    var typ = String(d.type || '').toLowerCase();
+    if (typ && typ !== 'ethernet') return false;
+    var name = String(d.device || '');
+    if (/^wl/i.test(name) || /wireless/i.test(typ)) return false;
+    return true;
+}
+
+function currentNetworkConfigTab() {
+    var active = document.querySelector('.network-config-tab.active');
+    return (active && active.dataset.tab === 'bridge') ? 'bridge' : 'ip';
+}
+
+function renderNetworkConfigDeviceOptions() {
+    var e = networkConfigEls();
+    if (!e.device) return;
+    var all = e.device.__allDevices || [];
+    var tab = currentNetworkConfigTab();
+    var devices = tab === 'bridge' ? all.filter(isBridgeEligibleDevice) : all.slice();
+    var prev = e.device.value;
+    e.device.__devices = devices;
+    if (!devices.length) {
+        e.device.innerHTML = '';
+        e.device.disabled = true;
+        setNetworkConfigFormEnabled(false);
+        if (window.syncCustomSelect) window.syncCustomSelect(e.device);
+        if (e.status && tab === 'bridge') {
+            e.status.textContent = i18n('host_bridge_no_ethernet') || i18n('network_config_no_device');
+        }
+        return;
+    }
+    e.device.innerHTML = devices.map(function (d, idx) {
+        var label = d.device + ' · ' + d.type + (d.connection ? ' · ' + d.connection : '');
+        return '<option value="' + NetwatchShared.escapeHtml(d.device) + '" data-index="' + idx + '">' + NetwatchShared.escapeHtml(label) + '</option>';
+    }).join('');
+    e.device.disabled = false;
+    if (prev && devices.some(function (d) { return d.device === prev; })) {
+        e.device.value = prev;
+    }
+    setNetworkConfigFormEnabled(true);
+    var selected = devices.find(function (d) { return d.device === e.device.value; }) || devices[0];
+    if (tab === 'ip') {
+        fillNetworkConfigForm(selected);
+    } else if (typeof fillHostBridgeFormForDevice === 'function') {
+        fillHostBridgeFormForDevice(e.device.value);
+    }
+    if (window.syncCustomSelect) window.syncCustomSelect(e.device);
+}
+
+function switchNetworkConfigTab(tab) {
+    tab = tab === 'bridge' ? 'bridge' : 'ip';
+    // Blur any focused control BEFORE hiding a panel — otherwise Chrome warns
+    // "Blocked aria-hidden on an element because its descendant retained focus"
+    // (common with network-config-method custom select).
+    var active = document.activeElement;
+    if (active && active.closest && active.closest('.network-config-panel')) {
+        try { active.blur(); } catch (_) {}
+    }
+    document.querySelectorAll('.network-config-tab').forEach(function (btn) {
+        var on = btn.dataset.tab === tab;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        btn.tabIndex = on ? 0 : -1;
+    });
+    document.querySelectorAll('.network-config-panel').forEach(function (panel) {
+        var match = panel.dataset.panel === tab;
+        panel.classList.toggle('active', match);
+        // Keep both panels in layout (stacked) so window height doesn't jump.
+        panel.removeAttribute('hidden');
+        if (match) {
+            panel.removeAttribute('aria-hidden');
+            panel.removeAttribute('inert');
+        } else {
+            panel.setAttribute('aria-hidden', 'true');
+            // inert prevents focus entering the inactive stacked panel.
+            panel.setAttribute('inert', '');
+        }
+    });
+    // Rebuild device dropdown: bridge tab hides Wi-Fi (cannot L2-bridge in client mode).
+    if (typeof renderNetworkConfigDeviceOptions === 'function') {
+        renderNetworkConfigDeviceOptions();
+    }
+    if (tab === 'bridge' && typeof loadHostBridges === 'function') {
+        loadHostBridges();
+    }
+}
+
+function bindHostBridgeUI() {
+    var e = hostBridgeEls();
+    if (!e.section || e.section.dataset.bound) return;
+    e.section.dataset.bound = '1';
+
+    document.querySelectorAll('.network-config-tab').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            switchNetworkConfigTab(btn.dataset.tab);
+        });
+    });
+
+    if (e.create) e.create.addEventListener('click', createHostBridge);
+    if (e.dissolve) e.dissolve.addEventListener('click', dissolveHostBridge);
+    if (e.preflight) e.preflight.addEventListener('click', preflightHostBridge);
+    if (e.confirm) e.confirm.addEventListener('click', function () { finishHostBridge('confirm'); });
+    if (e.rollback) e.rollback.addEventListener('click', function () { finishHostBridge('rollback'); });
+    if (e.method) {
+        e.method.addEventListener('change', updateHostBridgeMethodState);
+    }
+    if (e.suffix) {
+        e.suffix.addEventListener('input', function () {
+            e.suffix.dataset.touched = '1';
+            // live-sanitize illegal chars but keep typing smooth
+            var cleaned = sanitizeHostBridgeSuffix(e.suffix.value);
+            if (e.suffix.value !== cleaned && /[^a-z0-9._-]/i.test(e.suffix.value)) {
+                e.suffix.value = cleaned;
+            }
+            syncHostBridgeNameHidden();
+        });
+        e.suffix.addEventListener('blur', function () {
+            e.suffix.value = sanitizeHostBridgeSuffix(e.suffix.value);
+            syncHostBridgeNameHidden();
+        });
+    }
+    ['address', 'gateway', 'dns'].forEach(function (key) {
+        var el = e[key];
+        if (!el) return;
+        el.addEventListener('input', function () { el.dataset.touched = '1'; });
+    });
+    if (e.select) {
+        e.select.addEventListener('change', function () {
+            renderHostBridgeList();
+        });
+    }
+    if (e.device) {
+        e.device.addEventListener('change', function () {
+            if (e.suffix) e.suffix.dataset.touched = '';
+            fillHostBridgeFormForDevice(e.device.value);
+        });
+    }
+    updateHostBridgeMethodState();
+    syncHostBridgeNameHidden();
+}
+
+
 window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
+window.__app.loadHostBridges = loadHostBridges;
+window.__app.loadHostBridgePending = loadHostBridgePending;
+window.__app.bindHostBridgeUI = bindHostBridgeUI;
+window.__app.switchNetworkConfigTab = switchNetworkConfigTab;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;
 window.__app.updateNetworkConfigApplyState = updateNetworkConfigApplyState;

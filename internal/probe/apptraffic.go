@@ -132,11 +132,21 @@ func CollectBridgeTraffic(bridge string) (AppBridgeStats, bool) {
 // (`network_mode: host` in lzc-manifest.yml) — otherwise the bridges aren't
 // visible. NET_ADMIN is not strictly required just for /sys reads.
 // isNetwatchApp returns true if the bridge belongs to the netwatch app itself.
+// Keep matching strict: a loose "contains netwatch" would hide unrelated apps.
 func isNetwatchApp(info dockerlzc.BridgeAppInfo) bool {
-	if info.AppID == "cloud.lazycat.app.netwatch" || info.AppID == "netwatch" {
+	id := strings.ToLower(strings.TrimSpace(info.AppID))
+	if id == "cloud.lazycat.app.netwatch" || id == "netwatch" {
 		return true
 	}
-	return strings.Contains(strings.ToLower(info.Project), "netwatch")
+	proj := strings.ToLower(strings.TrimSpace(info.Project))
+	// compose project drops dots: cloudlazycatappnetwatch
+	compact := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, proj)
+	return compact == "cloudlazycatappnetwatch" || compact == "netwatch"
 }
 
 // whitelistedApps contains app IDs whose network cannot be blocked.

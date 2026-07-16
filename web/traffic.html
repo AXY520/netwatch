@@ -20,16 +20,21 @@
 <body>
     <div id="toast" class="toast"></div>
     <div class="container traffic-page">
-        <header>
+        <header class="traffic-topbar">
             <div class="traffic-header-copy">
                 <div class="logo">NET<span>WATCH</span></div>
+                <div class="note traffic-page-subtitle" data-i18n="traffic_page_subtitle">应用流量分析</div>
             </div>
             <div class="controls">
-                <a class="button-link" href="/" data-i18n="back_to_dashboard">返回仪表盘</a>
-                        <button id="traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                <a class="button-link btn-with-icon" href="/"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span data-i18n="back_to_dashboard">返回仪表盘</span></a>
+                <button id="traffic-refresh-btn" class="icon-button" type="button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
             </div>
         </header>
 
+        <div id="traffic-disabled-banner" class="traffic-disabled-banner" hidden>
+            <span data-i18n="traffic_open_settings_hint">请在设置中启用流量分析后再查看</span>
+            <a class="button-link btn-with-icon" href="/#settings"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></a>
+        </div>
         <main class="traffic-layout">
             <section class="card traffic-sidebar">
                 <div class="card-title">

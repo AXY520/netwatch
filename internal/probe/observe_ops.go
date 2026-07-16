@@ -2,9 +2,71 @@ package probe
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
+
+	"netwatch/internal/lzcsdk"
 )
+
+// RefreshNetworkInfo re-collects NIC detail (interfaces/routes) without website
+// probes and without re-querying public egress IP. Used after host bridge
+// create/dissolve so the NIC detail card updates immediately — must stay fast
+// while the host route is still settling (public IP lookups can hang).
+func (s *Service) RefreshNetworkInfo(ctx context.Context) NetworkInfo {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	// Local-only collection: interfaces + default routes + SDK status.
+	// Do NOT call getPublicIPWithCache here.
+	hostname, _ := os.Hostname()
+	hostname = sanitizeHostname(hostname)
+
+	var (
+		sdkStatus lzcsdk.NetStatus
+		sdkOK     bool
+	)
+	if lzcsdk.Available() {
+		if ns, err := lzcsdk.FetchNetworkStatus(ctx); err == nil {
+			sdkStatus = ns
+			sdkOK = true
+		}
+	}
+	interfaces := collectInterfaces(sdkStatus, sdkOK)
+
+	s.mu.Lock()
+	prev := s.summary.NetworkInfo
+	info := NetworkInfo{
+		GeneratedAt: localTimestamp(),
+		Hostname:    hostname,
+		Interfaces:  interfaces,
+		DefaultIPv4: readDefaultIPv4Route(),
+		DefaultIPv6: readDefaultIPv6Route(),
+		// Keep last known egress snapshot; full probe/run refreshes these later.
+		EgressIPv4:           prev.EgressIPv4,
+		EgressIPv6:           prev.EgressIPv6,
+		EgressIPv4Region:     prev.EgressIPv4Region,
+		EgressIPv6Region:     prev.EgressIPv6Region,
+		NAT:                  prev.NAT,
+		DetectionNotes:       prev.DetectionNotes,
+		PlatformConnectivity: prev.PlatformConnectivity,
+		HasInternet:          prev.HasInternet,
+		WifiSSID:             prev.WifiSSID,
+		WifiSignal:           prev.WifiSignal,
+	}
+	if sdkOK {
+		info.PlatformConnectivity = sdkStatus.Connectivity
+		info.HasInternet = sdkStatus.HasInternet
+		info.WifiSSID = sdkStatus.Wifi.SSID
+		info.WifiSignal = sdkStatus.Wifi.Signal
+	}
+	s.summary.NetworkInfo = info
+	s.summary.GeneratedAt = info.GeneratedAt
+	snap := s.summary
+	s.mu.Unlock()
+	s.broadcast(snap)
+	return info
+}
 
 func (s *Service) Refresh(ctx context.Context) Summary {
 	// 手动刷新时清除公网 IP 缓存，强制重新查询
@@ -28,8 +90,11 @@ func (s *Service) RefreshWebsiteConnectivity(ctx context.Context) WebsiteConnect
 	s.mu.RLock()
 	timeout := s.cfg.HTTPTimeout
 	s.mu.RUnlock()
-
-	ctx, cancel := context.WithTimeout(ctx, timeout*2)
+	if timeout <= 0 {
+		timeout = websiteProbeTimeoutFallback
+	}
+	// Slightly above per-target budget so we never cancel a still-valid last hop.
+	ctx, cancel := context.WithTimeout(ctx, timeout+500*time.Millisecond)
 	defer cancel()
 
 	website := s.ProbeWebsiteConnectivity(ctx)

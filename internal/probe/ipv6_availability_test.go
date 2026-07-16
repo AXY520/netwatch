@@ -15,8 +15,9 @@ func TestSummarizeIPv6(t *testing.T) {
 		{"no global address", IPv6Availability{HasGlobalAddress: false}, ipv6SummaryNoGlobal},
 		{"address but no outbound", IPv6Availability{HasGlobalAddress: true, OutboundReachable: false}, ipv6SummaryAddressOnly},
 		{"outbound but no https/dns", IPv6Availability{HasGlobalAddress: true, OutboundReachable: true}, ipv6SummaryOutboundOnly},
-		{"outbound + https but no dns", IPv6Availability{HasGlobalAddress: true, OutboundReachable: true, HTTPSReachable: true}, ipv6SummaryOutboundOnly},
+		{"outbound + https (dns optional)", IPv6Availability{HasGlobalAddress: true, OutboundReachable: true, HTTPSReachable: true}, ipv6SummaryFullyUsable},
 		{"fully usable", IPv6Availability{HasGlobalAddress: true, OutboundReachable: true, HTTPSReachable: true, DNSResolvable: true}, ipv6SummaryFullyUsable},
+		{"outbound + dns no https", IPv6Availability{HasGlobalAddress: true, OutboundReachable: true, DNSResolvable: true}, ipv6SummaryOutboundOnly},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

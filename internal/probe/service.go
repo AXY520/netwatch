@@ -117,6 +117,11 @@ func (s *Service) Start(baseCtx context.Context) {
 		s.Refresh(startCtx)
 	}()
 
+	// Rebuild unconfirmed bridge pending/timer from disk (survives process restart).
+	go func() {
+		s.ensureHostBridgeRollbackRestored()
+	}()
+
 	go func() {
 		<-baseCtx.Done()
 		cancelStart()

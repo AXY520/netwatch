@@ -18,3 +18,9 @@ test.html
 
 # editor / system
 .DS_Store
+
+# local full Lucide dump (runtime icons live in web/icons/ui/)
+/icons/
+lucide-icons-*.zip
+设置.svg
+刷新.svg

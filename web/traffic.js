@@ -34,7 +34,9 @@ const state = {
         liveIntervalSec: Number.parseInt(localStorage.getItem('trafficLiveIntervalSec') || '2', 10) || 2,
         topLoadedAt: 0,
         liveTimer: null,
-        resizeTimer: null
+        resizeTimer: null,
+        prevCounters: null,
+        prevCountersAt: 0
     };
 
     const validRanges = new Set(['1m', '5m', '15m', '1h', '6h', '24h', 'all']);
@@ -45,6 +47,7 @@ const state = {
     const els = {
         themeToggle: document.getElementById('theme-toggle'),
         refreshBtn: document.getElementById('traffic-refresh-btn'),
+        disabledBanner: document.getElementById('traffic-disabled-banner'),
         note: document.getElementById('traffic-page-note'),
         listStatus: document.getElementById('traffic-list-status'),
         appList: document.getElementById('traffic-app-list'),
@@ -67,6 +70,19 @@ const state = {
     };
 
     const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
+
+    function setPageNote(text) {
+        // #traffic-page-note was removed from header; keep optional for future restore.
+        if (els.note) els.note.textContent = text || '';
+    }
+
+    function setText(el, text) {
+        if (el) el.textContent = text ?? '';
+    }
+
+    function setHTML(el, html) {
+        if (el) el.innerHTML = html ?? '';
+    }
 
     function initTheme() {
         NetwatchShared.initTheme(state, els.themeToggle);
@@ -250,6 +266,7 @@ const state = {
     }
 
     function renderSummary(summary) {
+        if (!els.summary) return;
         els.summary.innerHTML = [
             [i18n('current_rate'), formatSpeed(summary.latestRate)],
             [i18n('interval_avg'), formatSpeed(summary.avgRate)],
@@ -264,6 +281,7 @@ const state = {
     }
 
     function renderSingleLegend() {
+        if (!els.legend) return;
         els.legend.innerHTML = `
             <span><span class="legend-rx"></span>${i18n('rx')}</span>
             <span><span class="legend-tx"></span>${i18n('tx')}</span>
@@ -273,6 +291,7 @@ const state = {
 
     function renderChart(scopedIn, summaryIn) {
         renderSingleLegend();
+        if (!els.chart) return;
         const scoped = scopedIn || filteredHistory(state.selectedHistory);
         const rates = computeRates(scoped);
         if (rates.length === 0) {
@@ -344,7 +363,7 @@ const state = {
 
     function renderTables(current, scoped, summary) {
         const f = (n) => (Number(n) || 0).toLocaleString();
-        els.counterTable.innerHTML = `
+        if (els.counterTable) els.counterTable.innerHTML = `
             <tbody>
                 <tr><th>${i18n('rx_total')}</th><td>${formatBytes(current?.rx_bytes || 0)}</td></tr>
                 <tr><th>${i18n('tx_total')}</th><td>${formatBytes(current?.tx_bytes || 0)}</td></tr>
@@ -361,7 +380,7 @@ const state = {
         const avgInterval = summary.rates.length > 0
             ? formatSeconds(Math.round((summary.sampleSeconds || summary.seconds) / summary.rates.length))
             : '-';
-        els.sampleTable.innerHTML = `
+        if (els.sampleTable) els.sampleTable.innerHTML = `
             <tbody>
                 <tr><th>${i18n('samples')}</th><td>${scoped.length}</td></tr>
                 <tr><th>${i18n('avg_interval')}</th><td>${avgInterval}</td></tr>
@@ -417,10 +436,11 @@ const state = {
                 delta: item.total_delta || 0,
                 peak: item.peak_bps || 0
             };
-        });
+        }).slice(0, 5);
     }
 
     function renderTopTable() {
+        if (!els.topTable) return;
         const rows = topRows();
         if (rows.length === 0) {
             els.topTable.innerHTML = `<tbody><tr><td class="placeholder">${i18n('no_ranking_data')}</td><td></td></tr></tbody>`;
@@ -458,23 +478,57 @@ const state = {
         return list;
     }
 
+    function liveRateForBridge(bridge, item) {
+        const prev = state.prevCounters && state.prevCounters[bridge];
+        if (!prev || !state.prevCountersAt || !item) return '';
+        const dt = (Date.now() - state.prevCountersAt) / 1000;
+        if (!(dt > 0.4)) return '';
+        const rx = Math.max(0, (item.rx_bytes || 0) - (prev.rx || 0));
+        const tx = Math.max(0, (item.tx_bytes || 0) - (prev.tx || 0));
+        const bps = (rx + tx) / dt;
+        if (!(bps > 0)) return '0 B/s';
+        return formatSpeed(bps);
+    }
+
+    function commitSnapshot(next) {
+        // Promote current counters to "previous" so list can show live rate.
+        if (state.snapshot && Array.isArray(state.snapshot.bridges)) {
+            const map = {};
+            state.snapshot.bridges.forEach((b) => {
+                if (!b || !b.bridge) return;
+                map[b.bridge] = { rx: b.rx_bytes || 0, tx: b.tx_bytes || 0 };
+            });
+            state.prevCounters = map;
+            state.prevCountersAt = state._snapshotAt || Date.now();
+        }
+        state.snapshot = next || null;
+        state._snapshotAt = Date.now();
+    }
+
+    function setSamplingBanner(enabled) {
+        if (!els.disabledBanner) return;
+        els.disabledBanner.hidden = !!enabled;
+    }
+
     function renderAppList() {
         const samplingEnabled = state.settings.traffic_sampling_enabled !== false;
         const sidebar = document.querySelector('.traffic-sidebar');
         if (sidebar) {
             sidebar.classList.toggle('sampling-disabled', !samplingEnabled);
         }
+        setSamplingBanner(samplingEnabled);
         // When sampling is disabled, hide the app list section
         if (!samplingEnabled) {
-            els.appList.innerHTML = `<div class="placeholder">${i18n('traffic_sampling_disabled')}</div>`;
-            els.listStatus.textContent = '';
+            if (els.appList) els.appList.innerHTML = `<div class="placeholder">${i18n('traffic_sampling_disabled')}<br><small>${i18n('traffic_open_settings_hint')}</small></div>`;
+            setText(els.listStatus, '');
             return;
         }
         const list = filteredApps();
-        els.listStatus.textContent = state.snapshot?.generated_at || '';
+        setText(els.listStatus, state.snapshot?.generated_at || '');
         if (!state.selectedBridge && list.length > 0) {
             state.selectedBridge = list[0].bridge;
         }
+        if (!els.appList) return;
         if (list.length === 0) {
             els.appList.innerHTML = `<div class="placeholder">${i18n('no_app_data')}</div>`;
             return;
@@ -483,17 +537,20 @@ const state = {
             const title = appTitle(item);
             const sub = appSubtitle(item);
             const total = (item.rx_bytes || 0) + (item.tx_bytes || 0);
+            const rate = liveRateForBridge(item.bridge, item);
             const icon = item.icon ? `<img class="app-icon" src="${escapeHtml(item.icon)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
             const subHtml = sub ? `<div class="traffic-app-sub">${escapeHtml(sub)}</div>` : '';
+            const rateHtml = rate ? `<div class="traffic-app-rate">${escapeHtml(i18n('traffic_live_rate') + ' ' + rate)}</div>` : '';
             return `
                 <div class="traffic-app-item ${item.bridge === state.selectedBridge ? 'active' : ''}" data-bridge="${escapeHtml(item.bridge)}" role="button" tabindex="0">
                     <div class="traffic-app-icon-wrap">${icon}</div>
-                    <div class="traffic-app-title"><strong>${escapeHtml(title)}</strong>${subHtml}</div>
+                    <div class="traffic-app-title"><strong>${escapeHtml(title)}</strong>${subHtml}${rateHtml}</div>
                     <div class="traffic-app-total">${formatBytes(total)}</div>
                 </div>
             `;
         }).join('');
     }
+
 
     async function loadSettings() {
         try {
@@ -516,13 +573,14 @@ const state = {
     }
 
     async function loadSnapshot() {
-        state.snapshot = await trafficGet('/api/v1/network/app-traffic');
+        const next = await trafficGet('/api/v1/network/app-traffic');
+        commitSnapshot(next);
         if (state.snapshot?.note) {
-            els.note.textContent = state.snapshot.note;
+            setPageNote(state.snapshot.note);
         } else if (!state.settings.traffic_sampling_enabled) {
-            els.note.textContent = i18n('traffic_sampling_disabled');
+            setPageNote(i18n('traffic_sampling_disabled'));
         } else {
-            els.note.textContent = `${i18n('sampled_at')} ${state.snapshot?.generated_at || '-'}`;
+            setPageNote(`${i18n('sampled_at')} ${state.snapshot?.generated_at || '-'}`);
         }
     }
 
@@ -572,29 +630,34 @@ const state = {
     function renderSelected() {
         const current = selectedApp();
         if (!current) {
-            els.title.textContent = i18n('app_traffic');
-            els.sub.textContent = i18n('no_data');
-            els.summary.innerHTML = '';
-            els.chart.innerHTML = '<div class="placeholder" style="padding:2rem">' + i18n('no_app_data') + '</div>';
-            els.legend.innerHTML = '';
-            els.topTable.innerHTML = '';
-            els.counterTable.innerHTML = '';
-            els.sampleTable.innerHTML = '';
+            setText(els.title, i18n('app_traffic'));
+            setText(els.sub, i18n('no_data'));
+            setHTML(els.summary, '');
+            setHTML(els.chart, '<div class="placeholder" style="padding:2rem">' + i18n('no_app_data') + '</div>');
+            setHTML(els.legend, '');
+            setHTML(els.topTable, '');
+            setHTML(els.counterTable, '');
+            setHTML(els.sampleTable, '');
+            setPageNote('');
             return;
         }
 
         const scoped = filteredHistory(state.selectedHistory);
         const summary = summarize(scoped, current);
         const firstSample = scoped.length > 0 ? scoped[0].timestamp || '' : '';
-        els.title.textContent = appTitle(current);
-        els.sub.textContent = appSubtitle(current) || i18n('app_traffic_title');
+        setText(els.title, appTitle(current));
+        // Primary subtitle is app meta; sampling status rides on the same line as secondary note.
+        let sub = appSubtitle(current) || i18n('app_traffic_title');
         if (firstSample) {
-            els.note.textContent = `${i18n('sampling_since')} ${firstSample}`;
+            setPageNote(`${i18n('sampling_since')} ${firstSample}`);
         } else if (!state.settings.traffic_sampling_enabled) {
-            els.note.textContent = i18n('traffic_sampling_disabled');
+            setPageNote(i18n('traffic_sampling_disabled'));
+            sub = i18n('traffic_sampling_disabled');
         } else {
-            els.note.textContent = i18n('waiting_for_first_sample');
+            setPageNote(i18n('waiting_for_first_sample'));
+            if (!scoped.length) sub = i18n('waiting_for_first_sample');
         }
+        setText(els.sub, sub);
         renderSummary(summary);
         renderChart(scoped, summary);
         renderTopTable();
@@ -603,13 +666,17 @@ const state = {
     }
 
     async function refreshAll() {
-        els.refreshBtn.disabled = true;
-        els.listStatus.textContent = i18n('loading');
+        if (els.refreshBtn) els.refreshBtn.disabled = true;
+        setText(els.listStatus, i18n('loading'));
         try {
             await loadSettings();
             await loadSnapshot();
             const apps = (state.snapshot?.bridges || []).filter(item => !isNetwatchBridge(item));
             if (!state.selectedBridge && apps.length > 0) {
+                state.selectedBridge = apps[0].bridge;
+            }
+            // If URL/query bridge is gone, fall back to first app
+            if (state.selectedBridge && !apps.some(a => a.bridge === state.selectedBridge) && apps.length > 0) {
                 state.selectedBridge = apps[0].bridge;
             }
             await Promise.all([
@@ -619,10 +686,11 @@ const state = {
             renderAppList();
             renderSelected();
         } catch (e) {
-            els.listStatus.textContent = i18n('load_failed');
-            showToast(i18n('load_failed') + ': ' + e.message, 'error');
+            console.error('[traffic] refreshAll failed', e);
+            setText(els.listStatus, i18n('load_failed'));
+            showToast(i18n('load_failed') + ': ' + (e && e.message ? e.message : e), 'error');
         } finally {
-            els.refreshBtn.disabled = false;
+            if (els.refreshBtn) els.refreshBtn.disabled = false;
         }
     }
 

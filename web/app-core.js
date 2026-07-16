@@ -443,8 +443,26 @@ function updateConnectivityTable(tbody, items) {
         return;
     }
     tbody.innerHTML = items.map(function (item) {
+        var status = item.status || 'unknown';
+        var isDown = status === 'down' || status === 'unknown';
+        var latencyMs = Number(item.latency_ms) || 0;
+        // Only show a number when the probe actually got HTTP headers.
+        // Timeouts used to report budget-as-latency (e.g. 2003 ms + 故障).
+        var latencyText;
+        var latencyClass;
+        if (isDown) {
+            latencyText = i18n('connection_failed');
+            latencyClass = 'down';
+        } else if (latencyMs > 0) {
+            latencyText = latencyMs + ' ms';
+            // Soft thresholds: domestic-feeling slow >300ms, very slow >1000ms still just "high".
+            latencyClass = latencyMs >= 400 ? 'high' : '';
+        } else {
+            latencyText = '-';
+            latencyClass = '';
+        }
         var errorTitle = item.error ? ' title="' + NetwatchShared.escapeHtml(item.error) + '"' : '';
-        return '<tr><td><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td><td data-label="' + i18n('status_col') + '"><span class="nat-badge ' + getStatusClass(item.status) + '">' + (statusMap[item.status] || i18n('unknown')) + '</span></td><td data-label="' + i18n('latency_col') + '" class="latency ' + (item.latency_ms > 200 ? 'high' : (item.latency_ms === 0 ? 'down' : '')) + '"' + errorTitle + '>' + (item.latency_ms > 0 ? item.latency_ms + ' ms' : i18n('connection_failed')) + '</td></tr>';
+        return '<tr><td><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td><td data-label="' + i18n('status_col') + '"><span class="nat-badge ' + getStatusClass(status) + '">' + (statusMap[status] || i18n('unknown')) + '</span></td><td data-label="' + i18n('latency_col') + '" class="latency ' + latencyClass + '"' + errorTitle + '>' + latencyText + '</td></tr>';
     }).join('');
 }
 window.__app.updateConnectivityTable = updateConnectivityTable;
@@ -452,6 +470,8 @@ window.__app.updateConnectivityTable = updateConnectivityTable;
 function ifaceFallbackLabel(linkType) {
     if (linkType === 'wired') return i18n('wired');
     if (linkType === 'wifi') return 'Wi-Fi';
+    if (linkType === 'bridge') return i18n('host_bridge_title') || '网桥';
+    if (linkType === 'tun') return i18n('proxy_tun_title') || '代理';
     return '';
 }
 window.__app.ifaceFallbackLabel = ifaceFallbackLabel;
@@ -496,15 +516,6 @@ function formatBitsPerSec(bytesPerSec) {
 }
 window.__app.formatBitsPerSec = formatBitsPerSec;
 
-function formatLinkSpeedBps(value) {
-    var bps = Number(value) || 0;
-    if (bps <= 0) return '';
-    if (bps >= 1000000000) return (bps / 1000000000).toFixed(bps % 1000000000 ? 1 : 0) + ' Gbps';
-    if (bps >= 1000000) return (bps / 1000000).toFixed(bps % 1000000 ? 0 : 0) + ' Mbps';
-    if (bps >= 1000) return (bps / 1000).toFixed(0) + ' Kbps';
-    return bps.toFixed(0) + ' bps';
-}
-window.__app.formatLinkSpeedBps = formatLinkSpeedBps;
 
 function shortAppName(appid) {
     if (!appid) return '';
@@ -531,10 +542,6 @@ function renderNetworkInfo(networkInfo) {
         }
         var subtitle = iface.name && iface.name !== mainLabel ? '<br><small style="color:var(--text-muted)">' + escapeHtml(iface.name) + '</small>' : '';
         var statusCell = formatDeviceStatus(iface.device_status);
-        var linkSpeed = formatLinkSpeedBps(iface.link_speed_bps);
-        if (linkSpeed) {
-            statusCell += '<small class="interface-link-speed">' + escapeHtml(i18n('negotiated_rate')) + ' ' + escapeHtml(linkSpeed) + '</small>';
-        }
         var ipv4List = (iface.ipv4 || []).filter(function (s) { return s; });
         var ipv6List = (iface.ipv6 || []).filter(function (s) { return !/^fe80:/i.test(s); });
         return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + mainLabel + subtitle + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';

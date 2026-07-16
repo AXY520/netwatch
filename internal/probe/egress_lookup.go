@@ -91,36 +91,69 @@ func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 }
 
 func pickInternationalEgress(candidates []EgressLookup) EgressLookup {
-	var firstValid EgressLookup
-	var firstUnknownCountry EgressLookup
+	// Prefer majority agreement on the observed public IP. A single flaky
+	// overseas source (wrong anycast / middlebox) must not override the rest.
+	type bucket struct {
+		sample EgressLookup
+		count  int
+		overseas int
+		mainland int
+	}
+	byIP := map[string]*bucket{}
+	var order []string
 	var firstError EgressLookup
 	for _, item := range candidates {
-		if item.IP == "" {
+		ip := strings.TrimSpace(item.IP)
+		if ip == "" || net.ParseIP(ip) == nil {
 			if firstError.Provider == "" && item.Error != "" {
 				firstError = item
 			}
 			continue
 		}
-		if firstValid.Provider == "" {
-			firstValid = item
+		b := byIP[ip]
+		if b == nil {
+			b = &bucket{sample: item, count: 0}
+			byIP[ip] = b
+			order = append(order, ip)
+		}
+		b.count++
+		// Keep the sample that carries the richest geo metadata.
+		if strings.TrimSpace(item.Country) != "" && strings.TrimSpace(b.sample.Country) == "" {
+			b.sample = item
 		}
 		if strings.TrimSpace(item.Country) == "" {
-			if firstUnknownCountry.Provider == "" {
-				firstUnknownCountry = item
-			}
 			continue
 		}
-		if !isMainlandChina(item.Country) {
-			return item
+		if isMainlandChina(item.Country) {
+			b.mainland++
+		} else {
+			b.overseas++
 		}
 	}
-	if firstUnknownCountry.Provider != "" {
-		return firstUnknownCountry
+	if len(order) == 0 {
+		return firstError
 	}
-	if firstValid.Provider != "" {
-		return firstValid
+
+	// Score: count (agreement) first; when tied, prefer overseas only if that
+	// IP itself has overseas geo evidence (split-route / proxy case).
+	bestIP := order[0]
+	bestScore := -1
+	for _, ip := range order {
+		b := byIP[ip]
+		score := b.count * 10
+		if b.overseas > 0 && b.overseas >= b.mainland {
+			score += 3
+		}
+		// Prefer entries that actually have country metadata.
+		if strings.TrimSpace(b.sample.Country) != "" {
+			score += 1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIP = ip
+		}
 	}
-	return firstError
+	return byIP[bestIP].sample
 }
 
 func httpGetJSON(ctx context.Context, client *http.Client, url string, target any) error {
@@ -232,7 +265,9 @@ func fetchCipCC(ctx context.Context) (EgressLookup, error) {
 	if err != nil {
 		return EgressLookup{}, err
 	}
-	req.Header.Set("User-Agent", "netwatch/1.0")
+	// cip.cc only returns CLI text for curl-like UAs; generic/custom UAs get HTML or hang.
+	req.Header.Set("User-Agent", "curl/8.5.0 (netwatch/1.0)")
+	req.Header.Set("Accept", "text/plain")
 
 	resp, err := domesticHTTPClient.Do(req)
 	if err != nil {

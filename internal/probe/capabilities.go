@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"netwatch/internal/dockerlzc"
+	"netwatch/internal/lzcsdk"
 )
 
 // CapabilityReport describes runtime features available in the current environment.
@@ -19,6 +20,7 @@ type CapabilityReport struct {
 	LazycatBridgeTraffic bool     `json:"lazycat_bridge_traffic"`
 	ContainerControl     bool     `json:"container_control"`
 	NetworkConfig        bool     `json:"network_config"`
+	HostBridge           bool     `json:"host_bridge"`
 	Trace                bool     `json:"trace"`
 	AppTraffic           bool     `json:"app_traffic"`
 	LANDiscovery         bool     `json:"lan_discovery"`
@@ -30,10 +32,20 @@ func binaryAvailable(name string) bool {
 	return err == nil
 }
 
+// nmcliTransportAvailable reports whether network_config / host bridge can run
+// nmcli commands. On Lazycat this is true via lzcsdk even when no nmcli binary
+// exists inside the app image.
+func nmcliTransportAvailable() bool {
+	if lzcsdk.Available() {
+		return true
+	}
+	return binaryAvailable("nmcli")
+}
+
 func (s *Service) Capabilities() CapabilityReport {
 	findBinPaths()
 	mtrOK := binaryAvailable("mtr")
-	nmcliOK := binaryAvailable("nmcli")
+	nmcliOK := nmcliTransportAvailable()
 	iptOK := iptablesAvailable()
 	nsenterOK := nsenterAvailable()
 	dockerOK := dockerlzc.Available()
@@ -54,6 +66,7 @@ func (s *Service) Capabilities() CapabilityReport {
 		LazycatBridgeTraffic: appTrafficOK && dockerOK,
 		ContainerControl:     dockerOK && (iptOK || nsenterOK),
 		NetworkConfig:        nmcliOK,
+		HostBridge:           nmcliOK,
 		Trace:                mtrOK,
 		AppTraffic:           appTrafficOK,
 		LANDiscovery:         true,
@@ -62,7 +75,7 @@ func (s *Service) Capabilities() CapabilityReport {
 		report.Notes = append(report.Notes, "mtr unavailable: route tracing disabled")
 	}
 	if !nmcliOK {
-		report.Notes = append(report.Notes, "nmcli unavailable: host network config UI will degrade")
+		report.Notes = append(report.Notes, "nmcli transport unavailable: need lzc-apis (Lazycat) or local nmcli binary")
 	}
 	if !dockerOK {
 		report.Notes = append(report.Notes, "docker socket unavailable: app titles and container control limited")

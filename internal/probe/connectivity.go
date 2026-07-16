@@ -4,15 +4,31 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
-
-	"netwatch/internal/logger"
 )
 
+// Website latency follows the zashboard model, adapted for host-side probes:
+//   hit a tiny asset (favicon / generate_204), time until response headers,
+//   success → latency_ms, failure → 0 + down.
+// No HEAD→GET fallback, no 5xx "degraded", no response-header-timeout maze.
+//
+// Must stay server-side: netwatch diagnoses the *host* egress path. Browser
+// <img> timing would measure the user's phone/PC instead of the Lazycat box.
+
+const websiteProbeTimeoutFallback = 5 * time.Second
+
+// Max body we will discard after headers — favicons are tiny; never wait on a full page.
+const websiteProbeDrainLimit = 64 << 10
+
 func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectivity {
-	batchCtx, batchCancel := context.WithTimeout(ctx, 4*time.Second)
+	timeout := s.cfg.HTTPTimeout
+	if timeout <= 0 {
+		timeout = websiteProbeTimeoutFallback
+	}
+	batchCtx, batchCancel := context.WithTimeout(ctx, timeout+300*time.Millisecond)
 	defer batchCancel()
 
 	var domestic, global []TargetResult
@@ -20,11 +36,11 @@ func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectiv
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		domestic = probeTargets(batchCtx, s.cfg.DomesticSites, s.cfg.HTTPTimeout)
+		domestic = probeTargets(batchCtx, s.cfg.DomesticSites, timeout)
 	}()
 	go func() {
 		defer wg.Done()
-		global = probeTargets(batchCtx, s.cfg.GlobalSites, s.cfg.HTTPTimeout)
+		global = probeTargets(batchCtx, s.cfg.GlobalSites, timeout)
 	}()
 	wg.Wait()
 
@@ -37,44 +53,56 @@ func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectiv
 	}
 }
 
-// probeClient 共享 Transport 开启 keep-alive，后续探测复用连接，
-// 这样我们测到的 HEAD 耗时约等于 1 个真实往返 RTT（TLS 握手只在第一次付代价）。
+// Shared keep-alive client; per-request deadline comes only from context.
 var probeClient = &http.Client{
-	Timeout: 4 * time.Second,
+	Timeout: 0,
 	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		MaxIdleConns:          20,
-		MaxIdleConnsPerHost:   4,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   2 * time.Second,
-		ResponseHeaderTimeout: 2 * time.Second,
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   2 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   2,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 0,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+	},
+	// Favicon CDNs sometimes redirect once; a couple hops is enough.
+	CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return http.ErrUseLastResponse
+		}
+		return nil
 	},
 }
 
 func probeTargets(ctx context.Context, targets []SiteTarget, timeout time.Duration) []TargetResult {
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = websiteProbeTimeoutFallback
 	}
 	results := make([]TargetResult, len(targets))
+	if len(targets) == 0 {
+		return results
+	}
 	var wg sync.WaitGroup
 	wg.Add(len(targets))
-
 	for i, target := range targets {
 		go func(index int, target SiteTarget) {
 			defer wg.Done()
 			results[index] = probeHTTPTarget(ctx, target, timeout)
 		}(i, target)
 	}
-
 	wg.Wait()
 	return results
 }
 
-// probeHTTPTarget 真实端到端延迟：HEAD 请求走 HTTP_PROXY，测量从请求发出到收到首字节的总时间。
-// - 首次探测：含 DNS + TCP + TLS 握手，数字偏高（100-300ms 正常）
-// - 后续探测：复用 keep-alive 连接，只含 1 个 RTT（20-50ms）
-// 不再用 TCP 纯握手 —— 在透明代理/TUN 环境下 TCP 会被本地代理瞬间接受，数字假。
+// probeHTTPTarget is one GET of a small URL. Mirrors zashboard's img.onload / onerror:
+//   got headers → ok + latency_ms
+//   error/timeout → down + latency_ms=0
 func probeHTTPTarget(ctx context.Context, target SiteTarget, timeout time.Duration) TargetResult {
 	result := TargetResult{
 		Name:      target.Name,
@@ -82,61 +110,55 @@ func probeHTTPTarget(ctx context.Context, target SiteTarget, timeout time.Durati
 		Status:    StatusUnknown,
 		CheckedAt: localTimestamp(),
 	}
+	if timeout <= 0 {
+		timeout = websiteProbeTimeoutFallback
+	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target.URL, nil)
+	if err != nil {
+		result.Status = StatusDown
+		result.Error = err.Error()
+		return result
+	}
+	req.Header.Set("User-Agent", "netwatch/0.9")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Cache-Control", "no-cache")
+
 	start := time.Now()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, target.URL, nil)
-	if err != nil {
-		result.Status = StatusDown
-		result.Error = err.Error()
-		return result
-	}
-	req.Header.Set("User-Agent", "netwatch/0.5")
-
 	resp, err := probeClient.Do(req)
-	elapsed := time.Since(start)
 	if err != nil {
-		result.LatencyMS = elapsed.Milliseconds()
 		result.Status = StatusDown
+		result.LatencyMS = 0
 		result.Error = err.Error()
-		logger.Warn("probe %s: %v", target.Name, err)
 		return result
 	}
-	defer resp.Body.Close()
+	// Latency = time-to-headers (Do returns after headers). Body drain is free of the clock.
+	ms := latencyMS(time.Since(start))
+	code := resp.StatusCode
+	_, _ = io.CopyN(io.Discard, resp.Body, websiteProbeDrainLimit)
+	_ = resp.Body.Close()
 
-	// HEAD 返回 405：回退到 GET
-	if resp.StatusCode == http.StatusMethodNotAllowed {
-		_ = resp.Body.Close()
-		newCtx, newCancel := context.WithTimeout(reqCtx, 3*time.Second)
-		defer newCancel()
-		start := time.Now()
-		req2, err := http.NewRequestWithContext(newCtx, http.MethodGet, target.URL, nil)
-		if err == nil {
-			req2.Header.Set("User-Agent", "netwatch/0.5")
-			resp2, err := probeClient.Do(req2)
-			if err == nil {
-				_, _ = io.Copy(io.Discard, resp2.Body)
-				resp2.Body.Close()
-				result.LatencyMS = time.Since(start).Milliseconds()
-				return result
-			}
-		}
-		result.Status = StatusDown
-		result.LatencyMS = time.Since(start).Milliseconds()
-		return result
+	result.LatencyMS = ms
+	result.TTFBMs = ms
+	// Any HTTP answer means the path is up — same spirit as img.onload.
+	if code > 0 {
+		result.Status = StatusOK
+	} else {
+		result.Status = StatusUnknown
 	}
-
-	result.LatencyMS = elapsed.Milliseconds()
-	result.Status = statusFromHTTP(resp.StatusCode)
 	return result
 }
 
-func statusFromHTTP(code int) ProbeStatus {
-	// 只要有 HTTP 响应就算正常，延迟才是前端关心的
-	if code > 0 {
-		return StatusOK
+func latencyMS(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
 	}
-	return StatusUnknown
+	ms := d.Milliseconds()
+	if ms <= 0 {
+		return 1
+	}
+	return ms
 }

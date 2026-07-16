@@ -386,15 +386,130 @@
             font-size: 1.1rem;
             border-radius: 50%;
         }
+        
+/* Lucide UI icons (mask + currentColor for theme) */
+.ui-icon {
+    width: 1.05em;
+    height: 1.05em;
+    display: inline-block;
+    flex-shrink: 0;
+    background-color: currentColor;
+    -webkit-mask: var(--ui-icon) center / contain no-repeat;
+    mask: var(--ui-icon) center / contain no-repeat;
+    vertical-align: middle;
+}
+.ui-icon--refresh { --ui-icon: url('/icons/ui/refresh.svg'); }
+.ui-icon--settings { --ui-icon: url('/icons/ui/settings.svg'); }
+.ui-icon--close { --ui-icon: url('/icons/ui/close.svg'); }
+.ui-icon--sun { --ui-icon: url('/icons/ui/sun.svg'); }
+.ui-icon--moon { --ui-icon: url('/icons/ui/moon.svg'); }
+.ui-icon--back { --ui-icon: url('/icons/ui/arrow-left.svg'); }
+.ui-icon--scan { --ui-icon: url('/icons/ui/radar.svg'); }
+.ui-icon--save { --ui-icon: url('/icons/ui/save.svg'); }
+.ui-icon--check { --ui-icon: url('/icons/ui/check.svg'); }
+.ui-icon--gauge { --ui-icon: url('/icons/ui/gauge.svg'); }
+.ui-icon--transfer { --ui-icon: url('/icons/ui/arrow-up-down.svg'); }
+.ui-icon--lan { --ui-icon: url('/icons/ui/monitor-smartphone.svg'); }
+.ui-icon--traffic { --ui-icon: url('/icons/ui/activity.svg'); }
+.ui-icon--netcfg { --ui-icon: url('/icons/ui/cable.svg'); }
+.ui-icon--trace { --ui-icon: url('/icons/ui/route.svg'); }
+.ui-icon--help { --ui-icon: url('/icons/ui/info.svg'); }
+.ui-icon--bell { --ui-icon: url('/icons/ui/bell.svg'); }
+
+.btn-with-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4em;
+}
+button.icon-button .ui-icon,
+.icon-button .ui-icon,
+.window-close-btn .ui-icon {
+    display: block !important;
+    width: 18px !important;
+    height: 18px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    vertical-align: 0;
+    flex: 0 0 auto !important;
+}
+.lan-help-dot.ui-icon {
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+    opacity: 0.75;
+    border: none;
+    vertical-align: -0.1em;
+}
+.lan-setting-label:hover .lan-help-dot.ui-icon {
+    opacity: 1;
+}
+button.icon-button,
         .icon-button {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
             width: 38px;
             min-width: 38px;
             height: 38px;
             min-height: 38px;
-            padding: 0;
+            padding: 0 !important;
+            gap: 0;
             font-size: 1.05rem;
-            line-height: 1;
+            line-height: 0;
             flex: 0 0 auto;
+            border-radius: var(--radius-control, 8px) !important;
+            box-sizing: border-box;
+        }
+        button.icon-button .ui-icon,
+        .icon-button .ui-icon,
+        .window-close-btn .ui-icon,
+        #theme-toggle .ui-icon {
+            display: block !important;
+            width: 18px !important;
+            height: 18px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            vertical-align: 0;
+            position: static !important;
+            left: auto !important;
+            right: auto !important;
+            top: auto !important;
+            bottom: auto !important;
+            flex: 0 0 auto !important;
+            -webkit-mask-size: 18px 18px !important;
+            mask-size: 18px 18px !important;
+            -webkit-mask-position: center !important;
+            mask-position: center !important;
+            -webkit-mask-repeat: no-repeat !important;
+            mask-repeat: no-repeat !important;
+        }
+        /* Card title tool row: keep status text + icon button vertically centered */
+        .card-title .title-tools {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+        .card-title .title-tools .icon-button {
+            align-self: center;
+        }
+        /* compact + icon: keep square, drop compact padding */
+        button.icon-button.compact-btn,
+        .icon-button.compact-btn {
+            padding: 0 !important;
+            width: 34px;
+            min-width: 34px;
+            height: 34px;
+            min-height: 34px;
+        }
+        button.icon-button.compact-btn .ui-icon,
+        .icon-button.compact-btn .ui-icon {
+            width: 16px !important;
+            height: 16px !important;
+            -webkit-mask-size: 16px 16px !important;
+            mask-size: 16px 16px !important;
         }
 
         .dashboard-grid {
@@ -425,8 +540,11 @@
             letter-spacing: 0.05em;
         }
 
-        .card-title span:last-child {
-            margin-left: auto;
+        /* Only the title label itself — NOT icon spans nested in buttons
+           (previously matched .card-title span:last-child and pushed icons right). */
+        .card-title > span:first-child {
+            flex: 1 1 auto;
+            min-width: 0;
         }
 
         .card-title .title-tools {
@@ -767,8 +885,20 @@
 
         .nic-realtime-list {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            grid-template-columns: repeat(1, minmax(0, 1fr));
             gap: 1rem;
+        }
+        /* JS sets precise column count on PC to avoid empty columns.
+           Narrow screens force fewer columns. */
+        @media (max-width: 1100px) {
+            .nic-realtime-list[data-cols="3"] {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            }
+        }
+        @media (max-width: 720px) {
+            .nic-realtime-list {
+                grid-template-columns: 1fr !important;
+            }
         }
 
         .nic-realtime-item {
@@ -1382,11 +1512,29 @@
             transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s ease;
         }
 
+        /*
+         * Closed windows must hard-disable ALL descendants.
+         * Children (e.g. .network-config-panel.active) re-set visibility/pointer-events,
+         * which would otherwise escape and leave invisible interactive controls on the homepage.
+         */
+        .floating-window:not(.active),
+        .floating-window:not(.active) * {
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+
         .floating-window.active {
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
             transform: translate(-50%, -50%) scale(1);
+        }
+
+        /* Stacked network-config panels: only the active tab is interactive */
+        .floating-window.active .network-config-panel:not(.active),
+        .floating-window.active .network-config-panel:not(.active) * {
+            visibility: hidden !important;
+            pointer-events: none !important;
         }
 
         #broadband-window,
@@ -1446,9 +1594,99 @@
             justify-content: flex-end;
         }
 
+        /* Network config window — match global theme tokens */
+        #network-config-window {
+            width: min(760px, calc(100vw - 2rem));
+        }
+
         .network-config-body {
             display: grid;
             gap: 1rem;
+        }
+
+        .network-config-shared {
+            display: grid;
+            gap: 0.5rem;
+        }
+        .network-config-device-label {
+            display: grid;
+            gap: 0.35rem;
+            color: var(--text-muted);
+            font-size: 0.78rem;
+            font-family: var(--font-ui);
+        }
+        .network-config-tabs {
+            display: flex;
+            gap: 0.25rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0;
+        }
+        .network-config-tab {
+            appearance: none;
+            position: relative;
+            border: none !important;
+            background: transparent !important;
+            color: var(--text-muted) !important;
+            padding: 0.55rem 1rem;
+            border-radius: var(--radius-control) var(--radius-control) 0 0;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            min-height: auto;
+            transition: color 0.15s ease, background 0.15s ease;
+        }
+        .network-config-tab:hover {
+            color: var(--text-main) !important;
+            background: var(--glass-bg) !important;
+        }
+        .network-config-tab.active,
+        .network-config-tab.active:hover {
+            color: var(--accent-cyan) !important;
+            background: color-mix(in srgb, var(--accent-cyan) 10%, transparent) !important;
+            font-weight: 600;
+            box-shadow: none;
+        }
+        /* 1px underline flush with tablist bottom border — avoid thicker bottom edge */
+        .network-config-tab.active::after {
+            content: '';
+            position: absolute;
+            left: 0.65rem;
+            right: 0.65rem;
+            bottom: -1px;
+            height: 1px;
+            background: var(--accent-cyan);
+            pointer-events: none;
+        }
+
+        /* Stack panels: stable height; opacity only (no translate — less dizzy) */
+        .network-config-panels-stage {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            min-height: 17.5rem;
+        }
+        .network-config-panel {
+            grid-area: 1 / 1;
+            display: grid;
+            gap: 0.85rem;
+            align-content: start;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.14s ease, visibility 0.14s ease;
+            z-index: 0;
+        }
+        .network-config-panel.active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            z-index: 1;
+        }
+        /* No NIC: grey out IP panel + bridge create grid; dissolve row stays usable. */
+        .network-config-body.is-empty #network-config-panel-ip,
+        .network-config-body.is-empty .host-bridge-grid,
+        .network-config-body.is-empty .host-bridge-actions {
+            opacity: 0.55;
+            pointer-events: none;
         }
 
         .network-config-grid {
@@ -2233,6 +2471,18 @@
                 padding: .42rem .58rem;
                 font-size: .76rem;
             }
+            .card-title .title-tools .icon-button {
+                width: 34px;
+                min-width: 34px;
+                height: 34px;
+                min-height: 34px;
+                padding: 0;
+                border-radius: var(--radius-control, 8px);
+            }
+            .card-title .title-tools .icon-button .ui-icon {
+                width: 16px;
+                height: 16px;
+            }
             .connectivity-split { gap: 1rem; }
             .table-subtitle { margin-bottom: .55rem; }
             .data-table, .data-table thead, .data-table tbody, .data-table tr, .data-table th, .data-table td { display: block; width: 100%; }
@@ -2518,12 +2768,12 @@
 
         /* App icon in traffic table */
         .app-icon {
-            width: 22px;
-            height: 22px;
-            border-radius: 4px;
+            width: 28px;
+            height: 28px;
+            border-radius: 5px;
             object-fit: cover;
             vertical-align: middle;
-            margin-right: 6px;
+            margin-right: 8px;
             flex-shrink: 0;
         }
         .app-cell {
@@ -2550,13 +2800,33 @@
         }
 
         /* Traffic analysis page */
+        /* Flat topbar: no card frame (avoids amber-tinted “yellow box” under body radial). */
+        .traffic-page > header.traffic-topbar,
+        .traffic-page > header {
+            border: none;
+            background: transparent;
+            box-shadow: none;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            border-radius: 0;
+            padding: 0.2rem 0 0.95rem;
+            margin-bottom: 1.15rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
         .traffic-header-copy {
             display: flex;
             flex-direction: column;
-            gap: 0.35rem;
+            gap: 0.2rem;
+            min-width: 0;
+            justify-content: center;
         }
-        .traffic-header-copy .note {
+        .traffic-header-copy .note,
+        .traffic-page-subtitle {
             max-width: 760px;
+            margin-bottom: 0;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
         }
         .traffic-layout {
             display: grid;
@@ -2686,27 +2956,19 @@
             font-feature-settings: "tnum";
         }
         .traffic-app-icon-wrap {
-            width: clamp(3rem, 5vw, 3.8rem);
-            height: clamp(3rem, 5vw, 3.8rem);
+            width: 28px;
+            height: 28px;
             display: flex;
             align-items: center;
             justify-content: center;
             flex: 0 0 auto;
         }
         .traffic-app-icon-wrap .app-icon {
-            width: 100%;
-            height: 100%;
+            width: 28px;
+            height: 28px;
             margin-right: 0;
-            border-radius: 0.55rem;
+            border-radius: 5px;
             object-fit: cover;
-        }
-        .interface-link-speed {
-            display: block;
-            margin-top: 0.16rem;
-            color: var(--text-muted);
-            font-size: 0.7rem;
-            line-height: 1.2;
-            white-space: nowrap;
         }
         .traffic-summary-grid {
             display: grid;
@@ -2872,11 +3134,133 @@
             font-size: 0.7rem;
             line-height: 1.35;
         }
+        
+        .host-bridge-section {
+            display: grid;
+            gap: 0.75rem;
+        }
+        .host-bridge-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 14px;
+            margin: 0;
+        }
+        .host-bridge-grid label {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 0.78rem;
+            font-family: var(--font-ui);
+            color: var(--text-muted);
+        }
+        .host-bridge-grid input,
+        .host-bridge-grid select {
+            width: 100%;
+        }
+        .host-bridge-name-input {
+            display: flex;
+            align-items: stretch;
+            width: 100%;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-control);
+            overflow: hidden;
+            background: var(--input-bg);
+        }
+        .host-bridge-prefix {
+            flex: 0 0 auto;
+            display: inline-flex;
+            align-items: center;
+            padding: 0 0.65rem;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent-cyan);
+            background: color-mix(in srgb, var(--accent-cyan) 10%, var(--input-bg));
+            border-right: 1px solid var(--border-color);
+            user-select: none;
+        }
+        .host-bridge-name-input input {
+            border: none !important;
+            border-radius: 0 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            min-width: 0;
+            color: var(--text-main);
+        }
+        .host-bridge-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+        .host-bridge-dissolve-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: end;
+            padding-top: 0.35rem;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .host-bridge-dissolve-label {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 0.78rem;
+            font-family: var(--font-ui);
+            color: var(--text-muted);
+            min-width: 0;
+        }
+        .host-bridge-status-line {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            min-height: 1.2em;
+        }
+        .host-bridge-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .host-bridge-card {
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 0.85rem;
+            background: var(--glass-bg);
+            color: var(--text-main);
+            transition: var(--transition);
+        }
+        .host-bridge-card strong {
+            font-family: var(--font-mono);
+            color: var(--accent-cyan);
+        }
+        .host-bridge-card .meta {
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .host-bridge-card.active-select {
+            border-color: color-mix(in srgb, var(--accent-cyan) 45%, var(--border-color));
+            background: color-mix(in srgb, var(--accent-cyan) 10%, transparent);
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+        }
+        @media (max-width: 720px) {
+            .host-bridge-grid {
+                grid-template-columns: 1fr;
+            }
+            .host-bridge-dissolve-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Keep NIC realtime card DOM order stable; only values re-render. */
+        .nic-realtime-item[data-nic] {
+            order: var(--nic-order, 0);
+        }
+
         .network-config-preview {
-            margin-top: 0.7rem;
+            margin-top: 0.15rem;
             padding: 0.55rem 0.7rem;
-            border: 1px solid var(--border-subtle);
-            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-control);
+            color: var(--text-muted);
+            background: var(--glass-bg);
             font-size: 0.78rem;
             font-family: var(--font-mono);
             overflow-wrap: anywhere;
@@ -3325,8 +3709,8 @@
                 align-content: center;
             }
             .traffic-app-icon-wrap {
-                width: 3.2rem;
-                height: 3.2rem;
+                width: 28px;
+                height: 28px;
             }
             .traffic-app-title strong {
                 font-size: .86rem;
@@ -3388,6 +3772,12 @@ select,
 .custom-select-trigger {
     border-radius: var(--radius-control, 8px) !important;
 }
+button.icon-button,
+.icon-button,
+.window-close-btn {
+    border-radius: var(--radius-control, 8px) !important;
+}
+
 
 .window-panel {
     border-radius: calc(var(--radius-card, 14px) + 2px) !important;
@@ -3477,4 +3867,137 @@ select,
 .lan-scan-btn:disabled {
     opacity: 0.55;
     cursor: wait;
+}
+
+
+/* === mobile/layout hardening (post host-bridge) === */
+#ipv6-detail-window,
+#ipv6-renew-window {
+    z-index: 1300;
+}
+#ipv6-detail-window-backdrop,
+#ipv6-renew-window-backdrop {
+    z-index: 1290;
+}
+
+/* Inactive stacked network-config panel must not steal taps on mobile */
+.network-config-panel:not(.active) {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+@media (max-width: 900px) {
+    .network-config-panels-stage {
+        min-height: 0;
+    }
+    .network-config-grid {
+        grid-template-columns: 1fr;
+    }
+    .network-config-tabs {
+        width: 100%;
+    }
+    .network-config-tab {
+        flex: 1 1 auto;
+        text-align: center;
+        padding: 0.5rem 0.65rem;
+        font-size: 0.82rem;
+    }
+    #network-config-window {
+        width: calc(100vw - 1rem);
+        max-height: calc(100dvh - 1rem);
+        padding: 0.9rem;
+    }
+    .network-config-actions,
+    .host-bridge-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+    }
+    .network-config-actions button,
+    .host-bridge-actions button {
+        width: 100%;
+        min-width: 0;
+    }
+    .host-bridge-name-input {
+        flex-wrap: wrap;
+    }
+    .identity-ip-card-head {
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .ipv6-detail-btn {
+        min-height: 32px;
+        padding: 0.3rem 0.75rem;
+        font-size: 0.72rem;
+    }
+    .nic-realtime-list {
+        grid-template-columns: 1fr !important;
+    }
+    .dashboard-grid {
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+    .connectivity-card,
+    .network-identity-card,
+    .nat-card,
+    .interfaces-card,
+    .identity-egress-card,
+    .trace-card {
+        grid-column: span 12 !important;
+    }
+}
+
+@media (max-width: 640px) {
+    .connectivity-split {
+        grid-template-columns: 1fr !important;
+    }
+    .identity-ip-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .host-bridge-grid {
+        grid-template-columns: 1fr !important;
+    }
+    .floating-window {
+        width: calc(100vw - 0.75rem) !important;
+        max-height: calc(100dvh - 0.75rem) !important;
+        padding: 0.85rem !important;
+        border-radius: 12px !important;
+    }
+    .card {
+        overflow: visible; /* avoid clipping buttons/badges on small screens */
+    }
+}
+
+
+/* LAN settings: description shown on hover via title + subtle marker */
+.lan-setting-label {
+    cursor: help;
+}
+.lan-help-dot.ui-icon {
+    /* icon-based help marker; base .ui-icon handles paint */
+    margin-left: 6px;
+    opacity: 0.75;
+}
+.lan-setting-label:hover .lan-help-dot.ui-icon {
+    opacity: 1;
+}
+
+
+.traffic-disabled-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    background: color-mix(in srgb, var(--card) 92%, var(--accent, #6c8cff) 8%);
+    color: var(--text-muted);
+    font-size: 0.92rem;
+}
+.traffic-disabled-banner[hidden] { display: none !important; }
+.traffic-app-rate {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    white-space: nowrap;
 }

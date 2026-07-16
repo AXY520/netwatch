@@ -233,6 +233,79 @@ type NetworkConfigPendingResult struct {
 	RemainingSec  int    `json:"remaining_sec,omitempty"`
 }
 
+// Host bridge (VM internet / L2 bridge) types.
+
+type HostBridgeRecord struct {
+	Bridge           string `json:"bridge"`
+	Device           string `json:"device"`
+	Backend          string `json:"backend,omitempty"` // nmcli | ip
+	BridgeConnection string `json:"bridge_connection,omitempty"`
+	PortConnection   string `json:"port_connection,omitempty"`
+	OriginalConn     string `json:"original_connection,omitempty"`
+	Method           string `json:"method,omitempty"`
+	Address          string `json:"address,omitempty"`
+	Gateway          string `json:"gateway,omitempty"`
+	DNS              string `json:"dns,omitempty"`
+	IPv6Method       string `json:"ipv6_method,omitempty"` // ignore | auto | manual
+	IPv6Address      string `json:"ipv6_address,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	RollbackID       string `json:"rollback_id,omitempty"`
+	RollbackUntil    string `json:"rollback_until,omitempty"`
+	Confirmed        bool   `json:"confirmed"`
+	Note             string `json:"note,omitempty"`
+}
+
+type HostBridgeCreateRequest struct {
+	Device      string `json:"device"`
+	Bridge      string `json:"bridge,omitempty"` // full name or suffix; always forced to nw-*
+	Method      string `json:"method,omitempty"` // inherit | auto | manual
+	Address     string `json:"address,omitempty"`
+	Gateway     string `json:"gateway,omitempty"`
+	DNS         string `json:"dns,omitempty"`
+	IPv6Method  string `json:"ipv6_method,omitempty"`  // ignore | auto | manual
+	IPv6Address string `json:"ipv6_address,omitempty"` // e.g. 2001:db8::10/64
+}
+
+type HostBridgeActionRequest struct {
+	ID     string `json:"id,omitempty"`
+	Bridge string `json:"bridge,omitempty"`
+	Device string `json:"device,omitempty"`
+}
+
+type HostBridgeOpResult struct {
+	OK            bool   `json:"ok"`
+	Bridge        string `json:"bridge,omitempty"`
+	Device        string `json:"device,omitempty"`
+	RollbackID    string `json:"rollback_id,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	Output        string `json:"output,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Note          string `json:"note,omitempty"`
+}
+
+type HostBridgeListResult struct {
+	Enabled    bool                  `json:"enabled"`
+	Backend    string                `json:"backend,omitempty"`
+	Bridges    []HostBridgeRecord    `json:"bridges"`
+	Candidates []NetworkConfigDevice `json:"candidates,omitempty"`
+	Pending    *HostBridgePending    `json:"pending,omitempty"`
+	Error      string                `json:"error,omitempty"`
+	Note       string                `json:"note,omitempty"`
+}
+
+type HostBridgePending struct {
+	Pending       bool   `json:"pending"`
+	ID            string `json:"id,omitempty"`
+	Bridge        string `json:"bridge,omitempty"`
+	Device        string `json:"device,omitempty"`
+	Method        string `json:"method,omitempty"`
+	Address       string `json:"address,omitempty"`
+	Gateway       string `json:"gateway,omitempty"`
+	DNS           string `json:"dns,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	RemainingSec  int    `json:"remaining_sec,omitempty"`
+}
+
 type HostPortProcess struct {
 	PID     int    `json:"pid,omitempty"`
 	PPID    int    `json:"ppid,omitempty"`
@@ -415,7 +488,7 @@ type DefaultRoute struct {
 type InterfaceInfo struct {
 	Name         string   `json:"name"`
 	Label        string   `json:"label,omitempty"`
-	LinkType     string   `json:"link_type,omitempty"` // "wired" / "wifi"
+	LinkType     string   `json:"link_type,omitempty"` // "wired" / "wifi" / "bridge" / "tun"
 	Present      bool     `json:"present"`
 	OperState    string   `json:"oper_state,omitempty"` // "up", "down", "unknown" from kernel
 	MTU          int      `json:"mtu"`
@@ -424,7 +497,6 @@ type InterfaceInfo struct {
 	IPv4         []string `json:"ipv4,omitempty"`
 	IPv6         []string `json:"ipv6,omitempty"`
 	DeviceStatus string   `json:"device_status,omitempty"`  // connected/disconnected/disabled/...
-	LinkSpeedBps int64    `json:"link_speed_bps,omitempty"` // 协商速率 (bit/s)
 	WifiSSID     string   `json:"wifi_ssid,omitempty"`
 	WifiSignal   int32    `json:"wifi_signal,omitempty"` // 0..100
 }

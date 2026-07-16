@@ -352,9 +352,26 @@ window.NetwatchShared = (function () {
     }
 
     function isNetwatchBridge(b) {
-        var id = (b.app_id || '').toLowerCase();
-        var proj = (b.project || '').toLowerCase();
-        return id === 'cloud.lazycat.app.netwatch' || id === 'netwatch' || proj.indexOf('netwatch') !== -1;
+        if (!b || typeof b !== 'object') return false;
+        // Only hide netwatch's own lzc app bridge — never host nw-* bridges (not in app-traffic).
+        var id = String(b.app_id || '').toLowerCase();
+        if (id === 'cloud.lazycat.app.netwatch' || id === 'netwatch') return true;
+        // Docker compose project is dots stripped: cloudlazycatappnetwatch
+        var proj = String(b.project || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (proj === 'cloudlazycatappnetwatch' || proj === 'netwatch') return true;
+        // Avoid false positives from loose substring matches on unrelated projects.
+        return false;
+    }
+
+    function themeToggleIconHTML(theme) {
+        // Dark UI → show sun (switch to light); light UI → show moon.
+        var name = theme === 'dark' ? 'sun' : 'moon';
+        return '<span class="ui-icon ui-icon--' + name + '" aria-hidden="true"></span>';
+    }
+
+    function applyThemeToggleIcon(themeToggleEl, theme) {
+        if (!themeToggleEl) return;
+        themeToggleEl.innerHTML = themeToggleIconHTML(theme || document.documentElement.getAttribute('data-theme') || 'dark');
     }
 
     function initTheme(state, themeToggleEl) {
@@ -366,20 +383,24 @@ window.NetwatchShared = (function () {
         document.documentElement.setAttribute('data-theme', theme);
         var meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = theme === 'dark' ? '#0a0a0b' : '#f0f2f5';
-        if (themeToggleEl) {
+        applyThemeToggleIcon(themeToggleEl, theme);
+        if (themeToggleEl && !themeToggleEl.dataset.themeBound) {
+            themeToggleEl.dataset.themeBound = '1';
             themeToggleEl.addEventListener('click', function () {
                 var newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', newTheme);
                 localStorage.setItem('theme', newTheme);
                 if (state) state.theme = newTheme;
-                var meta = document.querySelector('meta[name="theme-color"]');
-                if (meta) meta.content = newTheme === 'dark' ? '#0a0a0b' : '#f0f2f5';
+                var m = document.querySelector('meta[name="theme-color"]');
+                if (m) m.content = newTheme === 'dark' ? '#0a0a0b' : '#f0f2f5';
+                applyThemeToggleIcon(themeToggleEl, newTheme);
             });
         }
     }
 
     return {
         escapeHtml: escapeHtml,
+        applyThemeToggleIcon: applyThemeToggleIcon,
         showToast: showToast,
         lockModalScroll: lockModalScroll,
         unlockModalScroll: unlockModalScroll,

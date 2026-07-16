@@ -14,3 +14,4 @@ services:
       - /sys/fs/bpf:/sys/fs/bpf
       - /lzcsys/run/lzc-docker/docker.sock:/var/run/docker.sock:ro
       - /lzcsys/data/system/pkgm/run:/lzcapp/run/pkgm:ro
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket

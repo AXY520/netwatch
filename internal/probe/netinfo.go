@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,7 +91,7 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		EgressIPv6Region: egressIPv6Region,
 		DetectionNotes: []string{
 			"结果以当前容器网络命名空间为准，建议使用 host 网络模式。",
-			"界面自动展示当前宿主的物理有线和 Wi-Fi 网卡。",
+			"界面自动展示物理有线/Wi-Fi、netwatch 网桥，以及 mihomo 等代理 TUN（如 Meta）。",
 			"出口地区主要用于判断代理是否启用以及流量分流是否符合预期。",
 		},
 	}
@@ -198,7 +200,7 @@ func collectInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 			Label:        meta.Label,
 			LinkType:     meta.LinkType,
 			Present:      true,
-			OperState:    readOperState(name),
+			OperState:    effectiveOperState(name),
 			MTU:          iface.MTU,
 			HardwareAddr: mac,
 			Flags:        interfaceFlags(iface.Flags),
@@ -242,29 +244,81 @@ func placeholderInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceIn
 }
 
 func autoMonitoredNICs(ifaces []net.Interface) []string {
-	var wired, wifi string
+	var wired, wifi []string
+	seen := map[string]struct{}{}
 	for _, iface := range ifaces {
 		name := iface.Name
 		if shouldIgnoreInterface(name) {
 			continue
 		}
-		linkType := inferLinkType(name)
-		if linkType == "wifi" && wifi == "" {
-			wifi = name
+		// Managed bridges handled separately (stable suffix group).
+		if isManagedHostBridgeName(name) {
 			continue
 		}
-		if linkType == "wired" && wired == "" {
-			wired = name
+		switch inferLinkType(name) {
+		case "wifi":
+			wifi = append(wifi, name)
+		case "wired":
+			wired = append(wired, name)
 		}
 	}
-	out := make([]string, 0, 2)
-	if wired != "" {
-		out = append(out, wired)
+	sort.Strings(wired)
+	sort.Strings(wifi)
+	out := make([]string, 0, len(wired)+len(wifi)+4)
+	for _, name := range wired {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		out = append(out, name)
+		seen[name] = struct{}{}
 	}
-	if wifi != "" {
-		out = append(out, wifi)
+	for _, name := range wifi {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		out = append(out, name)
+		seen[name] = struct{}{}
+	}
+	// Managed host bridges (nw-*) appear after physical NICs; sorted by name.
+	for _, name := range discoverHostBridgeIfaces(ifaces) {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		out = append(out, name)
+		seen[name] = struct{}{}
+	}
+	// Proxy TUN (mihomo Meta, etc.) after bridges — read-only monitoring.
+	for _, name := range discoverProxyTunIfaces(ifaces) {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		out = append(out, name)
+		seen[name] = struct{}{}
 	}
 	return out
+}
+
+// discoverHostBridgeIfaces returns present netwatch-managed bridge ifaces (prefix nw-).
+func discoverHostBridgeIfaces(ifaces []net.Interface) []string {
+	var out []string
+	for _, iface := range ifaces {
+		name := iface.Name
+		if !isManagedHostBridgeName(name) {
+			continue
+		}
+		if !isKernelBridgeIface(name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	// Stable order for UI grids.
+	sort.Strings(out)
+	return out
+}
+
+func isKernelBridgeIface(name string) bool {
+	st, err := os.Stat(filepath.Join("/sys/class/net", name, "bridge"))
+	return err == nil && st.IsDir()
 }
 
 func autoMonitoredNICNames() []string {
@@ -281,16 +335,27 @@ func nicMetaForName(name string) nicMetaEntry {
 		return nicMetaEntry{Label: "Wi-Fi", LinkType: "wifi"}
 	case "wired":
 		return nicMetaEntry{Label: "有线", LinkType: "wired"}
+	case "bridge":
+		return nicMetaEntry{Label: "网桥", LinkType: "bridge"}
+	case "tun":
+		return nicMetaEntry{Label: "代理", LinkType: "tun"}
 	default:
 		return nicMetaEntry{Label: name, LinkType: ""}
 	}
 }
 
 func inferLinkType(name string) string {
+	if isProxyTunIface(name) {
+		return "tun"
+	}
+	if isManagedHostBridgeName(name) || isKernelBridgeIface(name) {
+		return "bridge"
+	}
 	if strings.HasPrefix(name, "wl") {
 		return "wifi"
 	}
-	if strings.HasPrefix(name, "en") || strings.HasPrefix(name, "eth") {
+	// en* / eth* cover PCI + USB (enxMAC) predictable names; usbN is legacy CDC-ECM.
+	if strings.HasPrefix(name, "en") || strings.HasPrefix(name, "eth") || strings.HasPrefix(name, "usb") {
 		return "wired"
 	}
 	return ""
@@ -299,6 +364,10 @@ func inferLinkType(name string) string {
 func shouldIgnoreInterface(name string) bool {
 	if name == "lo" || name == "" {
 		return true
+	}
+	// Known proxy TUN names (Meta) must stay visible even if they look "virtual".
+	if isKnownProxyTunName(name) {
+		return false
 	}
 	prefixes := []string{
 		"br-", "docker", "veth", "lzc-br-", "lzu-", "virbr", "tun", "tap", "heiyu-",
@@ -311,39 +380,129 @@ func shouldIgnoreInterface(name string) bool {
 	return false
 }
 
-// applySDKToInterface overlays SDK device-status / link-speed / wifi info
-// onto an InterfaceInfo based on its LinkType. The SDK exposes only one
-// link_speed field — assign it to whichever device is currently connected;
-// if both are connected, prefer wired.
-//
+// discoverProxyTunIfaces returns mihomo/Clash-style proxy TUN ifaces present on the host.
+func discoverProxyTunIfaces(ifaces []net.Interface) []string {
+	var out []string
+	for _, iface := range ifaces {
+		name := iface.Name
+		if !isProxyTunIface(name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isProxyTunIface reports whether name is a user-facing proxy TUN worth monitoring
+// (e.g. mihomo Meta). Generic tun0/tap0 stay hidden.
+func isProxyTunIface(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "lo" {
+		return false
+	}
+	return isKnownProxyTunName(name)
+}
+
+// isKnownProxyTunName is a name whitelist for common proxy stacks.
+// Mihomo/Clash Meta default TUN device is typically "Meta".
+func isKnownProxyTunName(name string) bool {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return false
+	}
+	lower := strings.ToLower(n)
+	switch lower {
+	case "meta", "mihomo", "clash", "utun", "metacore", "singbox", "sb":
+		return true
+	}
+	for _, p := range []string{"meta", "mihomo", "clash"} {
+		if !strings.HasPrefix(lower, p) {
+			continue
+		}
+		rest := lower[len(p):]
+		if rest == "" {
+			return true
+		}
+		// Allow Meta0 / mihomo1 style renames only (digits suffix).
+		allDigits := true
+		for _, c := range rest {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return true
+		}
+	}
+	return false
+}
+
+// applySDKToInterface overlays SDK device-status / wifi info onto an InterfaceInfo.
 // When the SDK says "connected" but the kernel operstate is "down" or the
 // interface has no IP addresses, the SDK status is overridden to "disconnected"
 // to avoid showing a stale or misleading state.
 func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK bool) InterfaceInfo {
+	kernelOperState := effectiveOperState(info.Name)
+	hasAddrs := len(info.IPv4) > 0 || len(info.IPv6) > 0
+
 	if !sdkOK {
+		// Still derive status from kernel when SDK is unavailable.
+		switch info.LinkType {
+		case "bridge", "tun":
+			info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
+		case "wired", "wifi":
+			if info.Present && kernelOperState == "up" && hasAddrs {
+				info.DeviceStatus = "connected"
+			} else if info.Present && (kernelOperState == "down" || kernelOperState == "lowerlayerdown") {
+				info.DeviceStatus = "disconnected"
+			}
+		}
 		return info
 	}
-
-	kernelOperState := readOperState(info.Name)
-	hasAddrs := len(info.IPv4) > 0 || len(info.IPv6) > 0
 
 	switch info.LinkType {
 	case "wired":
 		info.DeviceStatus = reconcileStatus(sdkStatus.WiredStatus, kernelOperState, hasAddrs)
-		if info.DeviceStatus == "connected" {
-			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
-		}
 	case "wifi":
 		info.DeviceStatus = reconcileStatus(sdkStatus.WirelessStatus, kernelOperState, hasAddrs)
-		if info.DeviceStatus == "connected" && reconcileStatus(sdkStatus.WiredStatus, "", false) != "connected" {
-			info.LinkSpeedBps = sdkStatus.LinkSpeedBps
-		}
 		if sdkStatus.Wifi.SSID != "" {
 			info.WifiSSID = sdkStatus.Wifi.SSID
 			info.WifiSignal = sdkStatus.Wifi.Signal
 		}
+	case "bridge":
+		info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
+	case "tun":
+		info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
 	}
 	return info
+}
+
+// bridgeDeviceStatus maps kernel bridge operstate into the same device_status vocabulary
+// used by the NIC detail table (connected/disconnected/unavailable/unknown).
+func bridgeDeviceStatus(present bool, kernelOperState string, hasAddrs bool) string {
+	if !present {
+		return "unavailable"
+	}
+	switch kernelOperState {
+	case "up":
+		// L2 bridge may host VMs even without a host IP; still treat as connected when up.
+		_ = hasAddrs
+		return "connected"
+	case "down", "lowerlayerdown", "notpresent":
+		return "disconnected"
+	case "dormant", "unknown", "":
+		if hasAddrs {
+			return "connected"
+		}
+		return "unknown"
+	default:
+		if hasAddrs {
+			return "connected"
+		}
+		return "unknown"
+	}
 }
 
 // reconcileStatus cross-checks the SDK-reported status against kernel state.

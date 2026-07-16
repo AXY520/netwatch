@@ -26,15 +26,31 @@ func sortedNICNames(items map[string]NICThroughput) []string {
 	for name := range items {
 		names = append(names, name)
 	}
+	// Stable visual order: wired → wifi → bridge → other; name ASC within group.
+	// Positions must not jump just because sample rates change.
 	sort.SliceStable(names, func(i, j int) bool {
-		left := inferLinkType(names[i])
-		right := inferLinkType(names[j])
-		if left != right {
-			return left == "wired"
+		ri, rj := nicDisplayRank(names[i]), nicDisplayRank(names[j])
+		if ri != rj {
+			return ri < rj
 		}
 		return names[i] < names[j]
 	})
 	return names
+}
+
+func nicDisplayRank(name string) int {
+	switch inferLinkType(name) {
+	case "wired":
+		return 0
+	case "wifi":
+		return 1
+	case "bridge":
+		return 2
+	case "tun":
+		return 3
+	default:
+		return 4
+	}
 }
 
 type RealtimeNetStats struct {
@@ -135,7 +151,7 @@ func (t *nicStatsTracker) sample() {
 		out := NICThroughput{
 			Name:      name,
 			Present:   ok,
-			OperState: readOperState(name),
+			OperState: effectiveOperState(name),
 			Timestamp: now.Format(time.DateTime),
 		}
 		if !ok {
@@ -223,6 +239,45 @@ func readOperState(name string) string {
 		return "unknown"
 	}
 	return strings.ToLower(strings.TrimSpace(string(data)))
+}
+
+// effectiveOperState normalizes operstate for UI badges.
+// Proxy TUN (mihomo Meta) and some virtual ifaces report "unknown" while IFF_UP is set.
+func effectiveOperState(name string) string {
+	st := readOperState(name)
+	switch st {
+	case "up", "down", "lowerlayerdown", "notpresent":
+		return st
+	}
+	// unknown / dormant / empty — refine with admin flags for virtual stacks.
+	if isProxyTunIface(name) || isManagedHostBridgeName(name) {
+		if ifaceAdminUp(name) {
+			return "up"
+		}
+		if st == "" {
+			return "unknown"
+		}
+		return st
+	}
+	if st == "" {
+		return "unknown"
+	}
+	return st
+}
+
+// ifaceAdminUp reports IFF_UP from /sys/class/net/<name>/flags (hex, bit0).
+func ifaceAdminUp(name string) bool {
+	data, err := os.ReadFile("/sys/class/net/" + name + "/flags")
+	if err != nil {
+		return false
+	}
+	s := strings.TrimSpace(string(data))
+	s = strings.TrimPrefix(strings.ToLower(s), "0x")
+	v, err := strconv.ParseUint(s, 16, 64)
+	if err != nil {
+		return false
+	}
+	return v&0x1 != 0 // IFF_UP
 }
 
 func readProcNetDev() (map[string]nicCounters, error) {

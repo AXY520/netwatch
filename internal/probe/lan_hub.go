@@ -146,7 +146,6 @@ func (h *lanHub) withLock(fn func()) {
 	fn()
 }
 
-
 func (h *lanHub) beginScan(scanID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

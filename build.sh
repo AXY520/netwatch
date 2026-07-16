@@ -3,7 +3,9 @@ set -eu
 
 GOARCH="${GOARCH:-amd64}"
 
-go test ./...
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+  go test ./...
+fi
 rm -rf dist
 mkdir -p dist
 CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -trimpath -ldflags="-s -w" -o dist/netwatch ./cmd/server
@@ -87,6 +89,33 @@ if [ -n "${IP_BIN}" ]; then
   copy_binary_with_libs "${IP_BIN}" dist/rootfs
 fi
 
+
+# nmcli is NOT packed into the LPK rootfs by default.
+# On Lazycat, network_config / host bridge call nmcli via lzcsdk (host NetworkManager),
+# not a container-local binary. Shipping nmcli + libnm/glib/nss/systemd ~+12MB rootfs
+# (~+6MB compressed LPK) with no benefit on the primary target.
+# Opt-in for plain Docker/dev hosts that lack lzcsdk: INCLUDE_NMCLI=1 sh build.sh
+if [ "${INCLUDE_NMCLI:-0}" = "1" ]; then
+  NMCLI_BIN="$(command -v nmcli || true)"
+  if [ -z "${NMCLI_BIN}" ] || [ ! -x "${NMCLI_BIN}" ]; then
+    for p in /usr/bin/nmcli /usr/sbin/nmcli /bin/nmcli; do
+      if [ -x "$p" ]; then
+        NMCLI_BIN="$p"
+        break
+      fi
+    done
+  fi
+  if [ -n "${NMCLI_BIN}" ]; then
+    echo "INCLUDE_NMCLI=1: packing ${NMCLI_BIN} + shared libs into rootfs"
+    copy_binary_with_libs "${NMCLI_BIN}" dist/rootfs
+  else
+    echo "warning: INCLUDE_NMCLI=1 but nmcli not found in build environment" >&2
+  fi
+else
+  echo "skip packing nmcli (Lazycat uses lzcsdk; set INCLUDE_NMCLI=1 for local-binary fallback)"
+fi
+
+
 ARPING_BIN="$(command -v arping || true)"
 if [ -n "${ARPING_BIN}" ]; then
   copy_binary_with_libs "${ARPING_BIN}" dist/rootfs
@@ -131,8 +160,15 @@ for d in /usr/lib/x86_64-linux-gnu/xtables /usr/lib/xtables /usr/lib64/xtables; 
   fi
 done
 if [ -n "${XTABLES_DIR}" ]; then
+  # Only modules needed by container internet block/unblock:
+  #   -I FORWARD -i <bridge> -j DROP|ACCEPT  (+ optional multiport later)
+  # Shipping the full xtables set (~80 modules / ~1.5MB) is pure ballast.
   mkdir -p "dist/rootfs${XTABLES_DIR}"
-  for mod in "${XTABLES_DIR}"/libxt_*.so; do
-    [ -f "$mod" ] && cp -L "$mod" "dist/rootfs${XTABLES_DIR}/" && chmod 0755 "dist/rootfs${XTABLES_DIR}/$(basename "$mod")"
+  for name in standard tcp udp icmp multiport conntrack state comment; do
+    mod="${XTABLES_DIR}/libxt_${name}.so"
+    if [ -f "$mod" ]; then
+      cp -L "$mod" "dist/rootfs${XTABLES_DIR}/"
+      chmod 0755 "dist/rootfs${XTABLES_DIR}/$(basename "$mod")"
+    fi
   done
 fi

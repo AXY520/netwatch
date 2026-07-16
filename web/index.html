@@ -31,8 +31,8 @@
             </div>
         </div>
         <div class="window-actions app-confirm-actions">
-            <button type="button" id="app-confirm-cancel" data-i18n="close_btn">取消</button>
-            <button type="button" id="app-confirm-ok" class="app-confirm-ok">确定</button>
+            <button type="button" id="app-confirm-cancel" class="btn-with-icon"><span data-i18n="close_btn">取消</span></button>
+            <button type="button" id="app-confirm-ok" class="app-confirm-ok btn-with-icon"><span class="ui-icon ui-icon--check" aria-hidden="true"></span><span>确定</span></button>
         </div>
     </section>
 
@@ -42,12 +42,12 @@
                 <div class="logo">NET<span>WATCH</span></div>
             </div>
             <div class="controls">
-                <button id="theme-toggle" title="切换深浅模式" data-i18n-title="toggle_theme_title">🌓</button>
-                <button id="open-settings-window" data-i18n="settings_btn">设置</button>
-                <button id="open-broadband-window" data-i18n="broadband_btn">宽带测速</button>
-                <button id="open-transfer-window" data-i18n="transfer_btn">传输测速</button>
-                <a class="button-link" href="/lan.html" data-i18n="lan_devices_btn">局域网设备</a>
-                <button id="refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                <button id="theme-toggle" class="icon-button" type="button" title="切换深浅模式" data-i18n-title="toggle_theme_title" aria-label="切换深浅模式"><span class="ui-icon ui-icon--moon" aria-hidden="true"></span></button>
+                <button id="open-settings-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
+                <button id="open-broadband-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span data-i18n="broadband_btn">宽带测速</span></button>
+                <button id="open-transfer-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--transfer" aria-hidden="true"></span><span data-i18n="transfer_btn">传输测速</span></button>
+                <a class="button-link btn-with-icon" href="/lan.html"><span class="ui-icon ui-icon--lan" aria-hidden="true"></span><span data-i18n="lan_devices_btn">局域网设备</span></a>
+                <button id="refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
             </div>
         </header>
 
@@ -57,7 +57,7 @@
                     <span data-i18n="website_latency_chk">网站延迟检测</span>
                     <div class="title-tools">
                         <span id="website-status" class="placeholder"></span>
-                        <button id="website-refresh-btn" class="icon-button" title="手动检测" aria-label="手动检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn">↻</button>
+                        <button id="website-refresh-btn" class="icon-button" title="手动检测" aria-label="手动检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
                 <div class="connectivity-split">
@@ -83,7 +83,7 @@
                     <span data-i18n="identity_egress_title">网络身份与出口 IP</span>
                     <div class="title-tools">
                         <span id="egress-status" class="placeholder" data-i18n="waiting">等待查询</span>
-                        <button id="egress-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                        <button id="egress-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
 
@@ -137,7 +137,7 @@
                 </div>
                 <div class="trace-toolbar">
                     <input id="trace-host" placeholder="如 github.com" data-i18n-placeholder="trace_placeholder" />
-                    <button id="trace-run" data-i18n="trace_btn">追踪</button>
+                    <button id="trace-run" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span><span data-i18n="trace_btn">追踪</span></button>
                 </div>
                 <div id="trace-summary" class="trace-summary">
                     <span class="placeholder" data-i18n="trace_initial_hint">输入目标后开始路径诊断</span>
@@ -149,7 +149,7 @@
                         <span data-i18n="nat_title">NAT 类型</span>
                         <div class="title-tools">
                             <span id="nat-status" class="placeholder" data-i18n="waiting">等待检测</span>
-                            <button id="nat-refresh-btn" class="icon-button" title="检测" aria-label="检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn">↻</button>
+                            <button id="nat-refresh-btn" class="icon-button" title="检测" aria-label="检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                         </div>
                     </div>
                     <div class="nat-type" id="nat-type">---</div>
@@ -163,7 +163,7 @@
                     <span data-i18n="nic_realtime_title">网卡实时速率</span>
                     <div class="title-tools">
                         <span class="placeholder" id="nic-realtime-status" data-i18n="waiting_for_sample">等待采样</span>
-                        <button type="button" id="nic-realtime-refresh-btn" class="compact-btn icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                        <button type="button" id="nic-realtime-refresh-btn" class="compact-btn icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
                 <div id="nic-realtime-list" class="nic-realtime-list"></div>
@@ -173,8 +173,8 @@
                 <div class="card-title">
                     <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
                     <div class="title-tools">
-                        <button type="button" id="interfaces-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
-                        <button id="open-network-config-window" data-i18n="network_config_btn">修改配置</button>
+                        <button id="open-network-config-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--netcfg" aria-hidden="true"></span><span data-i18n="network_config_btn">修改配置</span></button>
+                        <button type="button" id="interfaces-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
                 <table class="data-table interfaces-table-fixed" id="interfaces-table">
@@ -188,9 +188,9 @@
                     <span data-i18n="app_traffic_title">应用流量</span>
                     <div class="title-tools">
                         <span id="app-traffic-status" class="placeholder" data-i18n="waiting_for_sample">等待采样</span>
-                        <a class="button-link" id="traffic-analysis-link" href="/traffic.html" hidden data-i18n="traffic_analysis_btn">流量分析</a>
-                        <button id="traffic-settings-btn" data-i18n="settings_btn">设置</button>
-                        <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                        <a class="button-link btn-with-icon" id="traffic-analysis-link" href="/traffic.html" hidden><span class="ui-icon ui-icon--traffic" aria-hidden="true"></span><span data-i18n="traffic_analysis_btn">流量分析</span></a>
+                        <button id="traffic-settings-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
+                        <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
                 <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
@@ -206,7 +206,7 @@
                     <div class="title-tools">
                         <label class="host-port-search"><span class="sr-only" data-i18n="port_search_label">搜索端口</span><input id="host-ports-search" type="search" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="端口号" data-i18n-placeholder="port_search_placeholder" autocomplete="off"></label>
                         <span id="host-ports-status" class="placeholder" data-i18n="waiting">等待查询</span>
-                        <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn">↻</button>
+                        <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
                 <div class="host-ports-grid" id="host-ports-list"></div>
@@ -222,7 +222,7 @@
                 <div class="note" id="host-port-detail-note"></div>
             </div>
             <div class="window-actions">
-                <button id="close-host-port-detail-window" data-i18n="close_btn">关闭</button>
+                <button type="button" class="icon-button window-close-btn" id="close-host-port-detail-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div id="host-port-detail-body" class="host-port-detail-body"></div>
@@ -236,7 +236,7 @@
             </div>
             <div class="window-actions">
                 <button id="run-broadband-test" data-i18n="start_test_btn">开始测速</button>
-                <button id="close-broadband-window" data-i18n="close_btn">关闭</button>
+                <button type="button" class="icon-button window-close-btn" id="close-broadband-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="speedtest-layout">
@@ -306,7 +306,7 @@
             </div>
             <div class="window-actions">
                 <button id="run-transfer-test" data-i18n="start_test_btn">开始测速</button>
-                <button id="close-transfer-window" data-i18n="close_btn">关闭</button>
+                <button type="button" class="icon-button window-close-btn" id="close-transfer-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="speedtest-layout">
@@ -364,7 +364,7 @@
                 <div class="note" id="trace-window-note" data-i18n="trace_window_note">显示完整跳点列表与时延信息。</div>
             </div>
             <div class="window-actions">
-                <button id="close-trace-window" data-i18n="close_btn">关闭</button>
+                <button type="button" class="icon-button window-close-btn" id="close-trace-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div id="trace-output" class="trace-results">
@@ -379,7 +379,7 @@
                 <div class="note" data-i18n="ipv6_detail_note">分层检测本机 IPv6 的真实可用性，全部使用国内目标。</div>
             </div>
             <div class="window-actions">
-                <button id="close-ipv6-detail-window" data-i18n="close_btn">关闭</button>
+                <button type="button" class="icon-button window-close-btn" id="close-ipv6-detail-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="ipv6-detail-body">
@@ -418,8 +418,8 @@
                 <div class="note" data-i18n="ipv6_renew_note">当 IPv6 租约过期、地址未自动更新时，可让系统重新获取。选择网卡后执行，过程平滑不中断现有连接。</div>
             </div>
             <div class="window-actions">
-                <button id="ipv6-renew-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh">↻</button>
-                <button id="close-ipv6-renew-window" data-i18n="close_btn">关闭</button>
+                <button id="ipv6-renew-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-ipv6-renew-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="ipv6-renew-body">
@@ -438,32 +438,83 @@
     <section class="floating-window" id="network-config-window">
         <div class="window-head">
             <div>
-                <div class="window-title" data-i18n="network_config_title">网卡配置</div>
-                <div class="note" data-i18n="network_config_note">修改 IPv4、网关与 DNS。应用后 60 秒内必须确认，否则自动回滚。</div>
+                <div class="window-title" data-i18n="network_config_title">网络配置</div>
+                <div class="note" data-i18n="network_config_note">网卡 IP 与网桥在同一窗口；应用后 3 分钟内需确认，否则自动回滚。</div>
             </div>
             <div class="window-actions">
-                <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh">↻</button>
-                <button id="close-network-config-window" data-i18n="close_btn">关闭</button>
+                <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-network-config-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="network-config-body">
-            <div class="network-config-grid">
-                <label><span data-i18n="network_config_device">网卡</span><select id="network-config-device"></select></label>
-                <label><span data-i18n="network_config_method">配置方式</span><select id="network-config-method"><option value="auto" data-i18n="network_config_method_auto">自动获取</option><option value="manual" data-i18n="network_config_method_manual">手动配置</option></select></label>
-                <label><span data-i18n="network_config_address">IPv4/CIDR</span><input id="network-config-address" placeholder="192.168.1.10/24"></label>
-                <label><span data-i18n="network_config_gateway">网关</span><input id="network-config-gateway" placeholder="192.168.1.1"></label>
-                <label><span data-i18n="network_config_dns">DNS</span><input id="network-config-dns" placeholder="223.5.5.5,119.29.29.29"></label>
+            <div class="network-config-shared">
+                <label class="network-config-device-label"><span data-i18n="network_config_device">网卡</span><select id="network-config-device"></select></label>
             </div>
-            <div id="network-config-preview" class="network-config-preview"></div>
-            <div class="network-config-actions">
-                <button id="network-config-check-ip-btn" data-i18n="network_config_check_ip">检测 IP 占用</button>
-                <button id="network-config-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
-                <button id="network-config-apply-btn" data-i18n="network_config_apply">应用配置</button>
-                <button id="network-config-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
-                <button id="network-config-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>
+            <div class="network-config-tabs" role="tablist" aria-label="network config tabs">
+                <button type="button" class="network-config-tab active" data-tab="ip" role="tab" aria-selected="true" id="network-config-tab-ip" data-i18n="network_config_tab_ip">网卡配置</button>
+                <button type="button" class="network-config-tab" data-tab="bridge" role="tab" aria-selected="false" id="network-config-tab-bridge" data-i18n="network_config_tab_bridge">网桥</button>
             </div>
-            <div class="ipv6-renew-status" id="network-config-status"></div>
-            <pre class="ipv6-renew-output" id="network-config-output" hidden></pre>
+
+            <div class="network-config-panels-stage">
+            <div class="network-config-panel active" id="network-config-panel-ip" data-panel="ip" role="tabpanel">
+                <div class="network-config-grid">
+                    <label><span data-i18n="network_config_method">配置方式</span><select id="network-config-method"><option value="auto" data-i18n="network_config_method_auto">自动获取</option><option value="manual" data-i18n="network_config_method_manual">手动配置</option></select></label>
+                    <label><span data-i18n="network_config_address">IPv4/CIDR</span><input id="network-config-address" placeholder="192.168.1.10/24"></label>
+                    <label><span data-i18n="network_config_gateway">网关</span><input id="network-config-gateway" placeholder="192.168.1.1"></label>
+                    <label><span data-i18n="network_config_dns">DNS</span><input id="network-config-dns" placeholder="223.5.5.5,119.29.29.29"></label>
+                </div>
+                <div id="network-config-preview" class="network-config-preview"></div>
+                <div class="network-config-actions">
+                    <button id="network-config-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
+                    <button id="network-config-apply-btn" data-i18n="network_config_apply">应用配置</button>
+                    <button id="network-config-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
+                    <button id="network-config-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>
+                </div>
+                <div class="ipv6-renew-status" id="network-config-status"></div>
+                <pre class="ipv6-renew-output" id="network-config-output" hidden></pre>
+            </div>
+
+            <div class="network-config-panel" id="network-config-panel-bridge" data-panel="bridge" role="tabpanel" aria-hidden="true">
+                <div class="host-bridge-section" id="host-bridge-section">
+                    <div class="host-bridge-grid">
+                        <label class="host-bridge-name-field">
+                            <span data-i18n="host_bridge_name">网桥名</span>
+                            <div class="host-bridge-name-input">
+                                <span class="host-bridge-prefix" id="host-bridge-prefix" title="固定前缀">nw-</span>
+                                <input id="host-bridge-name-suffix" placeholder="eth0" maxlength="12" autocomplete="off" spellcheck="false">
+                            </div>
+                            <input type="hidden" id="host-bridge-name" value="">
+                        </label>
+                        <label><span data-i18n="host_bridge_method">IPv4 地址方式</span>
+                            <select id="host-bridge-method">
+                                <option value="inherit" data-i18n="host_bridge_method_inherit">继承当前网卡</option>
+                                <option value="auto" data-i18n="host_bridge_method_auto">自动获取</option>
+                                <option value="manual" data-i18n="host_bridge_method_manual">手动配置</option>
+                            </select>
+                        </label>
+                        <label class="host-bridge-manual-field" hidden><span data-i18n="network_config_address">IPv4/CIDR</span><input id="host-bridge-address" placeholder="192.168.1.10/24"></label>
+                        <label class="host-bridge-manual-field" hidden><span data-i18n="network_config_gateway">网关</span><input id="host-bridge-gateway" placeholder="192.168.1.1"></label>
+                        <label class="host-bridge-manual-field" hidden><span data-i18n="network_config_dns">DNS</span><input id="host-bridge-dns" placeholder="223.5.5.5,119.29.29.29"></label>
+                    </div>
+                    <div id="host-bridge-status-line" class="host-bridge-status-line"></div>
+                    <div class="host-bridge-actions">
+                        <button id="host-bridge-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
+                        <button id="host-bridge-create-btn" data-i18n="host_bridge_create">创建网桥</button>
+                        <button id="host-bridge-confirm-btn" hidden data-i18n="host_bridge_confirm">确认网桥可用</button>
+                        <button id="host-bridge-rollback-btn" hidden data-i18n="host_bridge_rollback">立即回滚</button>
+                    </div>
+                    <div class="host-bridge-dissolve-row">
+                        <label class="host-bridge-dissolve-label">
+                            <span data-i18n="host_bridge_select">选择网桥</span>
+                            <select id="host-bridge-select"></select>
+                        </label>
+                        <button id="host-bridge-dissolve-btn" data-i18n="host_bridge_dissolve">拆除网桥</button>
+                    </div>
+                    <div id="host-bridge-list" class="host-bridge-list"></div>
+                    <pre class="ipv6-renew-output" id="host-bridge-output" hidden></pre>
+                </div>
+            </div>
+            </div>
         </div>
     </section>
 
@@ -474,8 +525,8 @@
                 <div class="note" id="settings-note" data-i18n="settings_note">统一调整网卡实时监测和后续可配置项。</div>
             </div>
             <div class="window-actions">
-                <button id="save-settings" data-i18n="save_btn">保存</button>
-                <button id="close-settings-window" data-i18n="close_btn">关闭</button>
+                <button id="save-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-settings-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="settings-layout settings-compact">
@@ -513,7 +564,7 @@
                         <option value="120" data-i18n="sec_120">120 秒</option>
                         <option value="300" data-i18n="sec_300">300 秒</option>
                     </select>
-                    <button id="open-notification-settings" data-i18n="notification_settings_btn">通知设置</button>
+                    <button id="open-notification-settings" class="btn-with-icon"><span class="ui-icon ui-icon--bell" aria-hidden="true"></span><span data-i18n="notification_settings_btn">通知设置</span></button>
                 </div>
             </div>
         </div>
@@ -525,8 +576,8 @@
                 <div class="note" data-i18n="notification_settings_desc">配置通知触发条件、通知渠道、设备选择和免打扰时段。</div>
             </div>
             <div class="window-actions">
-                <button id="save-notification-settings" data-i18n="save_btn">保存</button>
-                <button id="close-notification-settings" data-i18n="close_btn">关闭</button>
+                <button id="save-notification-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-notification-settings" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="settings-layout settings-compact notify-settings-compact">
@@ -640,8 +691,8 @@
                 <div class="window-title" data-i18n="traffic_analysis_settings">流量分析设置</div>
             </div>
             <div class="window-actions">
-                <button id="ts-save-btn" data-i18n="save_btn">保存</button>
-                <button id="close-traffic-settings-window" data-i18n="close_btn">关闭</button>
+                <button id="ts-save-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-traffic-settings-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
         <div class="settings-layout settings-compact" style="padding: 0.2rem 1rem">
