@@ -41,26 +41,68 @@ window.NetwatchShared = (function () {
 
     /**
      * In-app confirm dialog. Resolves true/false.
-     * options: { title, message, okText, cancelText }
+     * Never uses window.confirm — always an in-page modal.
+     * options: { title, message, okText, cancelText, danger }
      */
+    function ensureConfirmMarkup() {
+        var win = document.getElementById('app-confirm-window');
+        var backdrop = document.getElementById('app-confirm-backdrop');
+        if (win && backdrop) return { win: win, backdrop: backdrop };
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.id = 'app-confirm-backdrop';
+            backdrop.className = 'window-backdrop app-confirm-backdrop';
+            document.body.appendChild(backdrop);
+        }
+        if (!win) {
+            win = document.createElement('section');
+            win.id = 'app-confirm-window';
+            win.className = 'floating-window app-confirm-window';
+            win.setAttribute('role', 'dialog');
+            win.setAttribute('aria-modal', 'true');
+            win.setAttribute('aria-labelledby', 'app-confirm-title');
+            win.innerHTML =
+                '<div class="window-head"><div>' +
+                '<div class="window-title" id="app-confirm-title">确认</div>' +
+                '<div class="note" id="app-confirm-message"></div>' +
+                '</div></div>' +
+                '<div class="window-actions app-confirm-actions">' +
+                '<button type="button" id="app-confirm-cancel" class="btn-with-icon"><span>取消</span></button>' +
+                '<button type="button" id="app-confirm-ok" class="app-confirm-ok btn-with-icon">' +
+                '<span class="ui-icon ui-icon--check" aria-hidden="true"></span><span>确定</span></button>' +
+                '</div>';
+            document.body.appendChild(win);
+        }
+        return { win: win, backdrop: backdrop };
+    }
+
+    function setButtonLabel(btn, text) {
+        if (!btn || text == null || text === '') return;
+        var label = btn.querySelector('span:not(.ui-icon)');
+        if (label) label.textContent = text;
+        else btn.textContent = text;
+    }
+
     function confirmDialog(options) {
         options = options || {};
         return new Promise(function (resolve) {
-            var win = document.getElementById('app-confirm-window');
-            var backdrop = document.getElementById('app-confirm-backdrop');
+            var nodes = ensureConfirmMarkup();
+            var win = nodes.win;
+            var backdrop = nodes.backdrop;
             var titleEl = document.getElementById('app-confirm-title');
             var msgEl = document.getElementById('app-confirm-message');
             var okBtn = document.getElementById('app-confirm-ok');
             var cancelBtn = document.getElementById('app-confirm-cancel');
             if (!win || !okBtn || !cancelBtn) {
-                // Fallback only if markup missing
-                resolve(window.confirm(options.message || options.title || ''));
+                // Absolute last resort: never call window.confirm.
+                resolve(false);
                 return;
             }
             if (titleEl) titleEl.textContent = options.title || '确认';
             if (msgEl) msgEl.textContent = options.message || '';
-            if (options.okText) okBtn.textContent = options.okText;
-            if (options.cancelText) cancelBtn.textContent = options.cancelText;
+            setButtonLabel(okBtn, options.okText);
+            setButtonLabel(cancelBtn, options.cancelText);
+            win.classList.toggle('is-danger', !!options.danger);
 
             var prevActive = document.activeElement;
             var settled = false;
@@ -68,32 +110,44 @@ window.NetwatchShared = (function () {
                 if (settled) return;
                 settled = true;
                 win.classList.remove('active');
+                win.classList.remove('is-danger');
                 if (backdrop) backdrop.classList.remove('active');
-                document.removeEventListener('keydown', onKey);
+                document.removeEventListener('keydown', onKey, true);
                 okBtn.removeEventListener('click', onOk);
                 cancelBtn.removeEventListener('click', onCancel);
                 if (backdrop) backdrop.removeEventListener('click', onCancel);
                 if (prevActive && typeof prevActive.focus === 'function') {
                     try { prevActive.focus(); } catch (_) {}
                 }
-                resolve(result);
+                resolve(!!result);
             }
             function onOk(e) {
-                if (e) e.preventDefault();
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 cleanup(true);
             }
             function onCancel(e) {
-                if (e) e.preventDefault();
+                if (e) { e.preventDefault(); e.stopPropagation(); }
                 cleanup(false);
             }
             function onKey(e) {
-                if (e.key === 'Escape') onCancel(e);
-                if (e.key === 'Enter') onOk(e);
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onCancel(e);
+                } else if (e.key === 'Enter') {
+                    // Only accept Enter when focus is inside the confirm dialog
+                    // (avoid hijacking Enter in parent forms).
+                    if (win.contains(document.activeElement) || document.activeElement === document.body) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onOk(e);
+                    }
+                }
             }
             okBtn.addEventListener('click', onOk);
             cancelBtn.addEventListener('click', onCancel);
             if (backdrop) backdrop.addEventListener('click', onCancel);
-            document.addEventListener('keydown', onKey);
+            document.addEventListener('keydown', onKey, true);
             if (backdrop) backdrop.classList.add('active');
             win.classList.add('active');
             try { okBtn.focus(); } catch (_) {}

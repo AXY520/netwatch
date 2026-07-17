@@ -3920,14 +3920,22 @@ button.icon-button,
 }
 
 
-/* In-app confirm dialog */
+/* In-app confirm dialog — above other floating windows (network-config etc.) */
 .app-confirm-backdrop {
-    z-index: 1200;
+    z-index: 1400 !important;
 }
 .app-confirm-window {
-    z-index: 1201;
+    z-index: 1401 !important;
     width: min(420px, calc(100vw - 2rem));
     max-width: 420px;
+}
+.app-confirm-window.is-danger .app-confirm-ok {
+    border-color: var(--accent-rose, #ff5c7a) !important;
+    color: var(--accent-rose, #ff5c7a) !important;
+}
+.app-confirm-window.is-danger .app-confirm-ok:hover {
+    background: var(--accent-rose, #ff5c7a) !important;
+    color: var(--bg-color) !important;
 }
 .app-confirm-window .note {
     margin-top: 0.35rem;

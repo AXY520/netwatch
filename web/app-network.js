@@ -885,7 +885,13 @@ async function applyNetworkConfig() {
         if (e.status) e.status.textContent = i18n('network_config_required');
         return;
     }
-    if (!confirm(i18n('network_config_apply_confirm'))) return;
+    if (!(await NetwatchShared.confirmDialog({
+        title: i18n('network_config_title') || '网络配置',
+        message: i18n('network_config_apply_confirm'),
+        okText: i18n('network_config_apply') || '应用配置',
+        cancelText: i18n('close_btn') || '取消',
+        danger: true
+    }))) return;
     if (e.apply) e.apply.disabled = true;
     if (e.status) e.status.textContent = i18n('network_config_applying');
     if (e.output) e.output.hidden = true;
@@ -1912,7 +1918,13 @@ async function createHostBridge() {
             return;
         }
     }
-    if (!window.confirm(i18n('host_bridge_create_confirm'))) return;
+    if (!(await NetwatchShared.confirmDialog({
+        title: i18n('host_bridge_create') || '创建网桥',
+        message: i18n('host_bridge_create_confirm'),
+        okText: i18n('host_bridge_create') || '创建网桥',
+        cancelText: i18n('close_btn') || '取消',
+        danger: true
+    }))) return;
     if (e.status) e.status.textContent = i18n('host_bridge_creating');
     setHostBridgeOutput('');
     if (e.create) e.create.disabled = true;
@@ -1959,7 +1971,13 @@ async function dissolveHostBridge() {
         if (e.status) e.status.textContent = i18n('host_bridge_select_need') || '请先选择要拆除的网桥';
         return;
     }
-    if (!window.confirm(i18n('host_bridge_dissolve_confirm'))) return;
+    if (!(await NetwatchShared.confirmDialog({
+        title: i18n('host_bridge_dissolve') || '拆除网桥',
+        message: i18n('host_bridge_dissolve_confirm'),
+        okText: i18n('host_bridge_dissolve') || '拆除网桥',
+        cancelText: i18n('close_btn') || '取消',
+        danger: true
+    }))) return;
     try {
         var result = await netwatchPost('/api/v1/network/bridges/dissolve', { bridge: bridge });
         setHostBridgeOutput(result.output || result.note || '');
