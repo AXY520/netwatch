@@ -1386,35 +1386,38 @@ button.icon-button,
         .latency.high { color: var(--accent-amber); }
         .latency.down { color: var(--accent-red); }
 
-        /* 网站延迟检测：三列位置固定，数值变化不挤状态列 */
+        /* 网站延迟检测：三栏水平等分，内容居中，列位不随数值长短漂移 */
         .connectivity-table-fixed {
             table-layout: fixed;
             width: 100%;
+            border-collapse: collapse;
         }
         .connectivity-table-fixed th,
         .connectivity-table-fixed td {
-            overflow: hidden;
+            width: 33.333%;
+            text-align: center;
             vertical-align: middle;
+            overflow: hidden;
         }
-        .connectivity-table-fixed .col-target,
-        .connectivity-table-fixed td.col-target {
-            width: auto;
-        }
-        .connectivity-table-fixed .col-status,
-        .connectivity-table-fixed td.col-status {
-            width: 5.6rem;
+        .connectivity-table-fixed thead th {
             text-align: center;
         }
+        .connectivity-table-fixed .col-target,
+        .connectivity-table-fixed td.col-target,
+        .connectivity-table-fixed .col-status,
+        .connectivity-table-fixed td.col-status,
         .connectivity-table-fixed .col-latency,
         .connectivity-table-fixed td.col-latency {
-            width: 7.2rem;
-            text-align: right;
+            width: 33.333%;
+            text-align: center;
+        }
+        .connectivity-table-fixed td.col-latency {
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
             font-feature-settings: "tnum";
         }
         .connectivity-table-fixed .connectivity-status.nat-badge {
-            margin: 0;
+            margin: 0 auto;
             min-width: 3.4rem;
             text-align: center;
             box-sizing: border-box;
@@ -1422,18 +1425,24 @@ button.icon-button,
         }
         .connectivity-table-fixed .latency-value {
             display: inline-block;
-            min-width: 5.6rem;
-            text-align: right;
+            min-width: 4.5rem;
+            text-align: center;
             font-variant-numeric: tabular-nums;
             font-feature-settings: "tnum";
         }
         .connectivity-table-fixed .target-info {
             min-width: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.55rem;
+            max-width: 100%;
         }
         .connectivity-table-fixed .target-info span {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            max-width: 12rem;
         }
 
         .identity-row {
@@ -1542,10 +1551,10 @@ button.icon-button,
 
         .floating-window {
             position: fixed;
-            /* 顶部锚定：内容变化向下伸长，避免垂直重居中跳动 */
-            top: max(1.25rem, 5vh);
+            /* 水平+垂直居中；高度变化时仍以视口中心为锚点对称伸缩，避免顶锚式「往下砸」 */
+            top: 50%;
             left: 50%;
-            transform: translateX(-50%) scale(0.98);
+            transform: translate(-50%, -50%);
             width: min(820px, calc(100vw - 2rem));
             max-height: calc(100vh - 2.5rem);
             max-height: calc(100dvh - 2.5rem);
@@ -1561,7 +1570,9 @@ button.icon-button,
             opacity: 0;
             visibility: hidden;
             pointer-events: none;
-            transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s ease;
+            /* 只过渡透明度，不 transition transform，减少选项更新时的视觉跳动 */
+            transition: opacity 0.18s ease, visibility 0.18s ease;
+            contain: layout style;
         }
 
         /*
@@ -1579,7 +1590,7 @@ button.icon-button,
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
-            transform: translateX(-50%) scale(1);
+            transform: translate(-50%, -50%);
         }
 
         /* Stacked network-config panels: only the active tab is interactive */
@@ -1654,7 +1665,13 @@ button.icon-button,
         .network-config-body {
             display: grid;
             gap: 1rem;
+            min-height: 26rem; /* 防切换 tab / 选项时高度骤变导致居中窗跳动 */
         }
+        #network-config-status,
+        #host-bridge-status-line {
+            min-height: 1.25rem;
+        }
+
 
         .network-config-shared {
             display: grid;
@@ -1897,13 +1914,12 @@ button.icon-button,
 
         .sub-window {
             z-index: 1201;
-            /* 与主悬浮窗一致：水平居中、顶部锚定，避免内容变化时上下跳 */
-            transform: translateX(calc(-50% + 12px)) scale(0.98);
+            transform: translate(-50%, -50%);
             opacity: 0;
-            transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+            transition: opacity 0.18s ease, visibility 0.18s ease;
         }
         .sub-window.active {
-            transform: translateX(-50%) scale(1);
+            transform: translate(-50%, -50%);
             opacity: 1;
         }
         .settings-textarea {
@@ -2421,7 +2437,7 @@ button.icon-button,
                 max-height: calc(100dvh - 1rem);
                 padding: 1rem;
                 border-radius: 14px;
-                top: max(0.5rem, 2vh);
+                top: 50%;
                 left: 50%;
             }
             #broadband-window,
