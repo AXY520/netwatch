@@ -120,67 +120,294 @@ func selectDomesticViaOoklaLocation(ctx context.Context, preferredISP string) *s
 }
 
 // selectDomesticViaCSV 从 spiritLHLS 的 CSV 列表获取候选节点。
+// 远程列表近年大幅缩水，始终与内置兜底合并，保证有 host 可直连。
 func selectDomesticViaCSV(ctx context.Context, stClient *speedtest.Speedtest, preferredISP string) *speedtest.Server {
-	candidates := fetchDomesticSpeedtestCandidates(ctx)
+	candidates := mergeDomesticSpeedtestCandidates(fetchDomesticSpeedtestCandidates(ctx), fallbackDomesticSpeedtestCandidates)
 	if len(candidates) == 0 {
 		logger.Warn("broadband: remote CN speedtest CSV unavailable")
 		return nil
 	}
-	logger.Info("broadband: CSV fetched %d domestic candidates", len(candidates))
+	logger.Info("broadband: CSV+fallback candidates=%d", len(candidates))
 	return selectDomesticFromCandidates(ctx, stClient, candidates, preferredISP)
 }
 
 // selectDomesticFromCandidates 从候选列表中选最优节点：先按 ISP 筛选，再按延迟排序。
+// 候选已是国内列表时，优先用 host 构造 Server（不依赖 Ookla API）；API 仅作补全。
 func selectDomesticFromCandidates(ctx context.Context, stClient *speedtest.Speedtest, candidates []domesticSpeedtestCandidate, preferredISP string) *speedtest.Server {
+	if len(candidates) == 0 {
+		return nil
+	}
+	pool := candidates
 	if preferredISP != "" {
 		preferred := filterDomesticSpeedtestCandidatesByISP(candidates, preferredISP)
 		if len(preferred) > 0 {
 			logger.Info("broadband: ISP-filtered candidates isp=%s count=%d", preferredISP, len(preferred))
-			candidates = preferred
+			pool = preferred
 		} else {
 			logger.Warn("broadband: no ISP-matched candidates for isp=%s, using all %d", preferredISP, len(candidates))
 		}
 	}
 
-	candidateList := nearestDomesticSpeedtestCandidates(ctx, candidates, 3)
+	best := pickBestFromDomesticCandidates(ctx, stClient, pool)
+	// 同运营商全挂时，跨网兜底，避免「有节点却硬失败」。
+	if best == nil && preferredISP != "" && len(pool) != len(candidates) {
+		logger.Warn("broadband: preferred ISP=%s candidates all failed, retrying all carriers", preferredISP)
+		emitStep(ctx, "node_selection", "info", "同运营商节点不可用，尝试其他运营商节点")
+		best = pickBestFromDomesticCandidates(ctx, stClient, candidates)
+	}
+	return best
+}
+
+func pickBestFromDomesticCandidates(ctx context.Context, stClient *speedtest.Speedtest, candidates []domesticSpeedtestCandidate) *speedtest.Server {
+	// 有 host 的优先，且多测几个；TCP 预筛后再 HTTP ping。
+	candidateList := nearestDomesticSpeedtestCandidates(ctx, candidates, 4)
+	// 确保带 host 的条目不会被 TCP 失败排序挤掉后完全不测：补进最多 6 个有 host 的
+	candidateList = ensureHostCandidates(candidateList, candidates, 6)
 	emitStep(ctx, "node_selection", "info", fmt.Sprintf("逐一测试 %d 个候选节点延迟", len(candidateList)))
 
 	var best *speedtest.Server
 	for _, candidate := range candidateList {
 		if ctx.Err() != nil {
-			return nil
+			return best
 		}
-		serverCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		s, err := stClient.FetchServerByIDContext(serverCtx, candidate.id)
-		if err != nil || s == nil || !isChinaSpeedtestServer(s) {
+		// 单节点 ping 预算收紧：串行测多个节点时避免整体卡死。
+		serverCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		s, err := serverFromDomesticCandidate(serverCtx, stClient, candidate)
+		if err != nil || s == nil {
 			if err != nil && !isCanceledErr(err) {
-				logger.Warn("broadband: fetch server by id failed id=%s isp=%s city=%s err=%v", candidate.id, candidate.isp, candidate.city, err)
+				logger.Warn("broadband: build server failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
 			}
 			cancel()
 			continue
 		}
 		if err := s.PingTestContext(serverCtx, nil); err != nil {
 			if !isCanceledErr(err) {
-				logger.Warn("broadband: ping candidate failed id=%s isp=%s city=%s sponsor=%s err=%v", candidate.id, candidate.isp, candidate.city, s.Sponsor, err)
+				logger.Warn("broadband: ping candidate failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
 			}
 			cancel()
 			continue
 		}
 		cancel()
 		if s.Latency <= 0 {
-			logger.Warn("broadband: candidate latency invalid id=%s isp=%s city=%s sponsor=%s", candidate.id, candidate.isp, candidate.city, s.Sponsor)
+			logger.Warn("broadband: candidate latency invalid id=%s isp=%s city=%s", candidate.id, candidate.isp, candidate.city)
 			continue
 		}
-		logger.Info("broadband: candidate ok id=%s isp=%s city=%s sponsor=%s latency=%s", candidate.id, candidate.isp, candidate.city, s.Sponsor, s.Latency.Round(time.Millisecond))
+		logger.Info("broadband: candidate ok id=%s isp=%s city=%s sponsor=%s latency=%s host=%s", candidate.id, candidate.isp, candidate.city, s.Sponsor, s.Latency.Round(time.Millisecond), s.Host)
 		emitStep(ctx, "node_selection", "ok", fmt.Sprintf("候选 %s%s 延迟 %d ms", candidate.city, candidate.isp, s.Latency.Milliseconds()))
 		if best == nil || s.Latency < best.Latency {
 			best = s
+		}
+		// 已有足够好的节点就收工，不必把列表里的死节点全测完。
+		if best.Latency > 0 && best.Latency <= 80*time.Millisecond {
+			break
 		}
 	}
 	if best != nil {
 		logger.Info("broadband: selected server id=%s sponsor=%s name=%s latency=%s", best.ID, best.Sponsor, best.Name, best.Latency.Round(time.Millisecond))
 	}
 	return best
+}
+
+// serverFromDomesticCandidate 优先 host 直连构造，避免依赖 Ookla ios-config API。
+// 国内列表本身已校验为中国节点，不再用 isChinaSpeedtestServer 二次误杀（API 常返回空 Country）。
+func serverFromDomesticCandidate(ctx context.Context, stClient *speedtest.Speedtest, candidate domesticSpeedtestCandidate) (*speedtest.Server, error) {
+	if candidate.host != "" {
+		if s, err := customServerFromHost(stClient, candidate); err == nil && s != nil {
+			return s, nil
+		} else if err != nil && !isCanceledErr(err) {
+			logger.Warn("broadband: custom server from host failed id=%s host=%s err=%v", candidate.id, candidate.host, err)
+		}
+	}
+
+	s, err := stClient.FetchServerByIDContext(ctx, candidate.id)
+	if err != nil {
+		// API 挂了但有 host：再试一次 host 构造（上面已试过则这里也无 host）
+		if candidate.host != "" {
+			return customServerFromHost(stClient, candidate)
+		}
+		return nil, err
+	}
+	if s == nil {
+		if candidate.host != "" {
+			return customServerFromHost(stClient, candidate)
+		}
+		return nil, fmt.Errorf("server id %s not found", candidate.id)
+	}
+	// 补全元数据：ios-config 经常缺 Country/Host
+	if s.Country == "" {
+		s.Country = "China"
+	}
+	if s.Sponsor == "" && candidate.supplier != "" {
+		s.Sponsor = candidate.supplier
+	}
+	if s.Name == "" && candidate.city != "" {
+		s.Name = candidate.city
+	}
+	if s.Host == "" {
+		if candidate.host != "" {
+			port := candidate.port
+			if port == "" {
+				port = "8080"
+			}
+			if strings.Contains(candidate.host, ":") {
+				s.Host = candidate.host
+			} else {
+				s.Host = net.JoinHostPort(candidate.host, port)
+			}
+		} else if s.URL != "" {
+			if u, uerr := parseHTTPHost(s.URL); uerr == nil {
+				s.Host = u
+			}
+		}
+	}
+	if s.Context == nil {
+		s.Context = stClient
+	}
+	return s, nil
+}
+
+func customServerFromHost(stClient *speedtest.Speedtest, candidate domesticSpeedtestCandidate) (*speedtest.Server, error) {
+	baseURL := candidateHTTPBase(candidate)
+	if baseURL == "" {
+		return nil, fmt.Errorf("empty host for id=%s", candidate.id)
+	}
+	s, err := stClient.CustomServer(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	if candidate.id != "" {
+		s.ID = candidate.id
+	}
+	s.Country = "China"
+	if candidate.city != "" {
+		s.Name = candidate.city
+	}
+	if candidate.supplier != "" {
+		s.Sponsor = candidate.supplier
+	}
+	s.Context = stClient
+	return s, nil
+}
+
+func candidateHTTPBase(candidate domesticSpeedtestCandidate) string {
+	host := strings.TrimSpace(candidate.host)
+	if host == "" {
+		return ""
+	}
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return host
+	}
+	port := strings.TrimSpace(candidate.port)
+	if port == "" {
+		port = "8080"
+	}
+	if strings.Contains(host, ":") {
+		// already host:port
+		return "http://" + host
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func parseHTTPHost(raw string) (string, error) {
+	// local tiny helper without importing net/url at call sites repeatedly
+	if raw == "" {
+		return "", fmt.Errorf("empty url")
+	}
+	// speedtest URL like http://host:8080/speedtest/upload.php
+	rest := raw
+	for _, p := range []string{"https://", "http://"} {
+		if strings.HasPrefix(rest, p) {
+			rest = rest[len(p):]
+			break
+		}
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	if rest == "" {
+		return "", fmt.Errorf("no host in %q", raw)
+	}
+	return rest, nil
+}
+
+func mergeDomesticSpeedtestCandidates(lists ...[]domesticSpeedtestCandidate) []domesticSpeedtestCandidate {
+	seen := make(map[string]struct{})
+	var out []domesticSpeedtestCandidate
+	for _, list := range lists {
+		for _, item := range list {
+			key := item.id
+			if key == "" {
+				key = item.host + "|" + item.port
+			}
+			if key == "" || key == "|" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				// 后写不覆盖；但若已有条目无 host、新条目有 host，则升级
+				if item.host == "" {
+					continue
+				}
+				for i := range out {
+					idKey := out[i].id
+					if idKey == "" {
+						idKey = out[i].host + "|" + out[i].port
+					}
+					if idKey == key && out[i].host == "" && item.host != "" {
+						out[i] = item
+					}
+				}
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// ensureHostCandidates 保证最终探测列表里有足够带 host 的节点（可脱离 Ookla API）。
+func ensureHostCandidates(selected, all []domesticSpeedtestCandidate, maxN int) []domesticSpeedtestCandidate {
+	if maxN <= 0 {
+		maxN = 6
+	}
+	seen := make(map[string]struct{}, len(selected))
+	out := make([]domesticSpeedtestCandidate, 0, maxN)
+	for _, c := range selected {
+		key := c.id
+		if key == "" {
+			key = c.host
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, c)
+	}
+	if len(out) >= maxN {
+		return out[:maxN]
+	}
+	// 补齐有 host 的
+	for _, c := range all {
+		if c.host == "" {
+			continue
+		}
+		key := c.id
+		if key == "" {
+			key = c.host
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, c)
+		if len(out) >= maxN {
+			break
+		}
+	}
+	return out
 }
 
 // filterChinaServers 从 speedtest.Server 列表中筛选中国节点。
@@ -492,7 +719,29 @@ func nearestDomesticSpeedtestCandidates(ctx context.Context, candidates []domest
 		if len(items) > perISP {
 			items = items[:perISP]
 		}
-		selected = append(selected, items...)
+		// 丢掉 TCP 完全不可达的（探测返回 24h 哨兵值）
+		for _, item := range items {
+			if latencies[item.id] >= 24*time.Hour {
+				continue
+			}
+			selected = append(selected, item)
+		}
+	}
+	// 若 TCP 预筛后为空（host 缺失导致全员 24h），回退原 perISP 截断结果，交给后续 host/API 再试。
+	if len(selected) == 0 {
+		for _, source := range domesticSpeedtestSources {
+			items := grouped[source.isp]
+			if len(items) > maxDomesticTCPProbeCandidates {
+				items = items[:maxDomesticTCPProbeCandidates]
+			}
+			sort.SliceStable(items, func(i, j int) bool {
+				return latencies[items[i].id] < latencies[items[j].id]
+			})
+			if len(items) > perISP {
+				items = items[:perISP]
+			}
+			selected = append(selected, items...)
+		}
 	}
 	return selected
 }

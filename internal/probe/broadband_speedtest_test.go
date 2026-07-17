@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -195,5 +196,91 @@ func TestMatchServerISP(t *testing.T) {
 		if got := matchServerISP(s, tt.isp); got != tt.want {
 			t.Errorf("matchServerISP(%q, %q) = %v, want %v", tt.sponsor, tt.isp, got, tt.want)
 		}
+	}
+}
+
+func TestCandidateHTTPBase(t *testing.T) {
+	tests := []struct {
+		name string
+		c    domesticSpeedtestCandidate
+		want string
+	}{
+		{name: "host+port", c: domesticSpeedtestCandidate{host: "example.com", port: "8080"}, want: "http://example.com:8080"},
+		{name: "host only", c: domesticSpeedtestCandidate{host: "example.com"}, want: "http://example.com:8080"},
+		{name: "host:port", c: domesticSpeedtestCandidate{host: "example.com:9090"}, want: "http://example.com:9090"},
+		{name: "full url", c: domesticSpeedtestCandidate{host: "http://example.com:8080"}, want: "http://example.com:8080"},
+		{name: "empty", c: domesticSpeedtestCandidate{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := candidateHTTPBase(tt.c); got != tt.want {
+				t.Fatalf("candidateHTTPBase()=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeDomesticSpeedtestCandidatesPrefersHost(t *testing.T) {
+	a := []domesticSpeedtestCandidate{{id: "1", isp: "联通", city: "上海"}}
+	b := []domesticSpeedtestCandidate{{id: "1", isp: "联通", city: "上海", host: "a.example", port: "8080"}}
+	out := mergeDomesticSpeedtestCandidates(a, b)
+	if len(out) != 1 {
+		t.Fatalf("len=%d want 1", len(out))
+	}
+	if out[0].host != "a.example" {
+		t.Fatalf("host not upgraded: %+v", out[0])
+	}
+}
+
+func TestEnsureHostCandidates(t *testing.T) {
+	selected := []domesticSpeedtestCandidate{{id: "1", host: ""}}
+	all := []domesticSpeedtestCandidate{
+		{id: "1"},
+		{id: "2", host: "h2.example", port: "8080"},
+		{id: "3", host: "h3.example", port: "8080"},
+	}
+	out := ensureHostCandidates(selected, all, 3)
+	if len(out) < 2 {
+		t.Fatalf("expected host candidates filled, got %+v", out)
+	}
+	hasHost := false
+	for _, c := range out {
+		if c.host != "" {
+			hasHost = true
+		}
+	}
+	if !hasHost {
+		t.Fatalf("no host in result: %+v", out)
+	}
+}
+
+func TestParseHTTPHost(t *testing.T) {
+	got, err := parseHTTPHost("http://mobile.shunicomtest.com:8080/speedtest/upload.php")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "mobile.shunicomtest.com:8080" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestServerFromDomesticCandidateUsesHost(t *testing.T) {
+	st := speedtest.New()
+	c := domesticSpeedtestCandidate{
+		id: "24447", isp: "联通", city: "上海", supplier: "China Unicom 5G",
+		host: "mobile.shunicomtest.com.prod.hosts.ooklaserver.net", port: "8080",
+	}
+	s, err := serverFromDomesticCandidate(context.Background(), st, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s == nil || s.Country != "China" {
+		t.Fatalf("bad server: %+v", s)
+	}
+	if s.ID != "24447" {
+		t.Fatalf("id=%s", s.ID)
+	}
+	if s.Host == "" {
+		t.Fatal("host empty")
 	}
 }

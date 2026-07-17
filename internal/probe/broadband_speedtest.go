@@ -18,7 +18,7 @@ const (
 	maxConcurrentCandidatePings   = 8
 	// remoteNodeStrategyTimeout 限制单个远程发现策略(Ookla 列表拉取)的耗时,
 	// 避免某个源卡死拖累整体。三个远程策略并发跑,任一先返回可用节点即采用。
-	remoteNodeStrategyTimeout = 8 * time.Second
+	remoteNodeStrategyTimeout = 12 * time.Second
 )
 
 // 镜像按国内可达性排序：cdn0/cdn2 较稳定，cdn1/cdn3 经常超时放后面。
@@ -37,28 +37,20 @@ var domesticSpeedtestSources = []domesticSpeedtestSource{
 	{file: "CN_Mobile.csv", isp: "移动"},
 }
 
-// 兜底列表：来自 Ookla API + spiritLHLS CSV 的国内节点，覆盖三网主要城市。
+// 兜底列表：优先带 host，可在 Ookla API 不可用时用 CustomServer 直连。
+// 来源：Ookla JS API + spiritLHLS speedtest.net-CN-ID（列表会变动，host 是主路径）。
 var fallbackDomesticSpeedtestCandidates = []domesticSpeedtestCandidate{
 	// 联通
 	{id: "24447", isp: "联通", city: "上海", supplier: "China Unicom 5G", host: "mobile.shunicomtest.com.prod.hosts.ooklaserver.net", port: "8080"},
-	{id: "43752", isp: "联通", city: "北京", supplier: "BJ Unicom"},
-	{id: "51413", isp: "联通", city: "广州", supplier: "China Unicom Guangzhou"},
-	{id: "48832", isp: "联通", city: "成都", supplier: "China Unicom Chengdu"},
-	{id: "57477", isp: "联通", city: "南京", supplier: "China Unicom Nanjing"},
+	{id: "43752", isp: "联通", city: "北京", supplier: "BJ Unicom", host: "beijing.unicomtest.com", port: "8080"},
 	// 电信
 	{id: "5396", isp: "电信", city: "苏州", supplier: "China Telecom JiangSu 5G", host: "4gsuzhou1.speedtest.jsinfo.net.prod.hosts.ooklaserver.net", port: "8080"},
 	{id: "36663", isp: "电信", city: "镇江", supplier: "China Telecom JiangSu 5G", host: "5gzhenjiang.speedtest.jsinfo.net.prod.hosts.ooklaserver.net", port: "8080"},
 	{id: "59386", isp: "电信", city: "杭州", supplier: "浙江电信", host: "cesu-hz.zjtelecom.com.cn", port: "8080"},
-	{id: "59387", isp: "电信", city: "浙江", supplier: "浙江电信"},
+	{id: "59387", isp: "电信", city: "宁波", supplier: "浙江电信", host: "cesu-nb.zjtelecom.com.cn", port: "8080"},
 	{id: "30852", isp: "电信", city: "昆山", supplier: "Duke Kunshan University", host: "speedtest.dukekunshan.edu.cn", port: "8080"},
-	{id: "54156", isp: "电信", city: "上海", supplier: "China Telecom Shanghai"},
-	{id: "29026", isp: "电信", city: "南京", supplier: "China Telecom JiangSu"},
 	// 移动
 	{id: "16204", isp: "移动", city: "苏州", supplier: "JSQY", host: "speedtest.jsqiuying.com", port: "8080"},
-	{id: "41906", isp: "移动", city: "上海", supplier: "China Mobile Shanghai"},
-	{id: "26970", isp: "移动", city: "北京", supplier: "China Mobile Beijing"},
-	{id: "55075", isp: "移动", city: "广州", supplier: "China Mobile Guangzhou"},
-	{id: "27249", isp: "移动", city: "杭州", supplier: "China Mobile Hangzhou"},
 }
 
 var domesticSpeedtestHTTPClient = &http.Client{Timeout: 8 * time.Second}
