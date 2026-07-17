@@ -1665,7 +1665,6 @@ button.icon-button,
         .network-config-body {
             display: grid;
             gap: 1rem;
-            min-height: 26rem; /* 防切换 tab / 选项时高度骤变导致居中窗跳动 */
         }
         #network-config-status,
         #host-bridge-status-line {
@@ -1727,11 +1726,10 @@ button.icon-button,
             pointer-events: none;
         }
 
-        /* Stack panels: stable height; opacity only (no translate — less dizzy) */
+        /* 只让当前 tab 参与高度计算；隐藏面板不得撑出大片空白 */
         .network-config-panels-stage {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr);
-            min-height: 22rem;
+            display: block;
+            min-height: 0;
         }
         .network-config-grid .custom-select,
         .host-bridge-grid .custom-select,
@@ -1741,25 +1739,16 @@ button.icon-button,
             min-width: 0;
             max-width: 100%;
         }
-        .host-bridge-grid {
-            min-height: 12.5rem;
-        }
         .network-config-panel {
-            grid-area: 1 / 1;
-            display: grid;
+            display: none;
             gap: 0.85rem;
             align-content: start;
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-            transition: opacity 0.14s ease, visibility 0.14s ease;
-            z-index: 0;
         }
         .network-config-panel.active {
-            opacity: 1;
+            display: grid;
             visibility: visible;
             pointer-events: auto;
-            z-index: 1;
+            opacity: 1;
         }
         /* No NIC: grey out IP panel + bridge create grid; dissolve row stays usable. */
         .network-config-body.is-empty #network-config-panel-ip,
@@ -1773,6 +1762,17 @@ button.icon-button,
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 0.85rem;
+        }
+        .network-config-grid.is-auto {
+            grid-template-columns: 1fr;
+        }
+        .network-config-method-field {
+            /* 自动获取时通常是唯一控件，占满一行更紧凑 */
+            min-width: 0;
+        }
+        .network-config-manual-field[hidden],
+        .host-bridge-manual-field[hidden] {
+            display: none !important;
         }
 
         .network-config-grid label {
@@ -3224,7 +3224,6 @@ button.icon-button,
             grid-template-columns: 1fr 1fr;
             gap: 10px 14px;
             margin: 0;
-            min-height: 12.5rem;
         }
         .host-bridge-grid label {
             display: flex;
@@ -3963,15 +3962,16 @@ button.icon-button,
     z-index: 1290;
 }
 
-/* Inactive stacked network-config panel must not steal taps on mobile */
+/* Inactive network-config panel: fully out of layout (no blank gap) */
 .network-config-panel:not(.active) {
+    display: none !important;
     visibility: hidden;
     pointer-events: none;
 }
 
 @media (max-width: 900px) {
     .network-config-panels-stage {
-        min-height: 18rem;
+        min-height: 0;
     }
     .network-config-grid {
         grid-template-columns: 1fr;

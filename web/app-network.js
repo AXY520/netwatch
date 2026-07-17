@@ -725,8 +725,13 @@ function updateNetworkConfigMethodState() {
     var e = networkConfigEls();
     var manual = !e.method || e.method.value !== 'auto';
     [e.address, e.gateway, e.dns].forEach(function (el) {
-        if (el) el.disabled = !manual;
+        if (!el) return;
+        el.disabled = !manual;
+        var label = el.closest('label');
+        if (label) label.hidden = !manual;
     });
+    var grid = document.querySelector('#network-config-panel-ip .network-config-grid');
+    if (grid) grid.classList.toggle('is-auto', !manual);
     if (e.preflight) e.preflight.disabled = false;
     updateNetworkConfigApplyState();
 }
