@@ -138,6 +138,7 @@
                 <div class="trace-toolbar">
                     <input id="trace-host" placeholder="如 github.com" data-i18n-placeholder="trace_placeholder" />
                     <button id="trace-run" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span><span data-i18n="trace_btn">追踪</span></button>
+                    <button id="trace-stop" type="button" class="btn-with-icon trace-stop-btn" hidden><span data-i18n="trace_stop">停止</span></button>
                 </div>
                 <div id="trace-summary" class="trace-summary">
                     <span class="placeholder" data-i18n="trace_initial_hint">输入目标后开始路径诊断</span>
@@ -364,6 +365,7 @@
                 <div class="note" id="trace-window-note" data-i18n="trace_window_note">显示完整跳点列表与时延信息。</div>
             </div>
             <div class="window-actions">
+                <button type="button" id="trace-window-stop" class="btn-with-icon trace-stop-btn" hidden><span data-i18n="trace_stop">停止</span></button>
                 <button type="button" class="icon-button window-close-btn" id="close-trace-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>

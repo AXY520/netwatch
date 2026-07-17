@@ -208,10 +208,22 @@ func (s *Service) StartTraceTask(host string, maxHops int) TraceResult {
 	go func() {
 		result := RunTrace(ctx, host, maxHops, func(update TraceResult) {
 			s.tasks.traceMu.Lock()
+			// Do not clobber an already-cancelled snapshot with intermediate updates.
+			if s.tasks.traceTask.Error == "cancelled" && !s.tasks.traceTask.Running {
+				s.tasks.traceMu.Unlock()
+				return
+			}
 			s.tasks.traceTask = update
 			s.tasks.traceMu.Unlock()
 		})
 		s.tasks.traceMu.Lock()
+		if ctx.Err() != nil || s.tasks.traceTask.Error == "cancelled" {
+			// Keep partial hops from the last progress snapshot when available.
+			if len(result.Hops) == 0 && len(s.tasks.traceTask.Hops) > 0 {
+				result.Hops = s.tasks.traceTask.Hops
+			}
+			result.Error = "cancelled"
+		}
 		result.Running = false
 		result.Finished = true
 		s.tasks.traceTask = result
@@ -225,5 +237,25 @@ func (s *Service) StartTraceTask(host string, maxHops int) TraceResult {
 func (s *Service) GetTraceTask() TraceResult {
 	s.tasks.traceMu.Lock()
 	defer s.tasks.traceMu.Unlock()
+	return s.tasks.traceTask
+}
+
+// CancelTraceTask aborts an in-flight traceroute and marks the task finished.
+func (s *Service) CancelTraceTask() TraceResult {
+	s.tasks.traceMu.Lock()
+	defer s.tasks.traceMu.Unlock()
+	if s.tasks.traceCancel != nil {
+		s.tasks.traceCancel()
+		s.tasks.traceCancel = nil
+	}
+	task := s.tasks.traceTask
+	if task.Running || !task.Finished {
+		task.Running = false
+		task.Finished = true
+		if task.Error == "" {
+			task.Error = "cancelled"
+		}
+		s.tasks.traceTask = task
+	}
 	return s.tasks.traceTask
 }

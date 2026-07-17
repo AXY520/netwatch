@@ -1366,21 +1366,71 @@ function initTrace() {
     if (state.traceInitialized) return;
     state.traceInitialized = true;
     var btn = document.getElementById('trace-run');
+    var stopBtn = document.getElementById('trace-stop');
+    var winStopBtn = document.getElementById('trace-window-stop');
     var input = document.getElementById('trace-host');
     var out = document.getElementById('trace-output');
     var summary = document.getElementById('trace-summary');
     var detailsBtn = document.getElementById('trace-details-btn');
     if (!btn) return;
+
+    var setStopVisible = function (visible) {
+        [stopBtn, winStopBtn].forEach(function (el) {
+            if (!el) return;
+            el.hidden = !visible;
+            el.disabled = false;
+        });
+        btn.disabled = !!visible;
+    };
+
     var renderTraceSummary = function (items) {
         if (!summary) return;
         summary.innerHTML = items.map(function (item) {
             return '<div class="trace-summary-item"><span class="trace-summary-label">' + item.label + '</span><span class="trace-summary-value">' + item.value + '</span></div>';
         }).join('');
     };
+
+    var statusLabelFor = function (data, host) {
+        if (!data) return i18n('trace_not_started');
+        if (data.error === 'cancelled') return i18n('trace_stopped');
+        if (data.error) return i18n('failed');
+        if (data.running) return i18n('tracing');
+        var hops = (data.hops || []).length;
+        if (hops > 0) return i18n('trace_done') + ' · ' + hops + ' ' + i18n('hops');
+        return i18n('trace_done');
+    };
+
+    var applyTraceUI = function (data, host) {
+        host = host || (data && data.target) || (input && input.value) || '';
+        state.traceResult = data || null;
+        renderTraceSummary([
+            { label: i18n('target'), value: (data && data.target) || host || '—' },
+            { label: i18n('status_col'), value: statusLabelFor(data, host) },
+            { label: i18n('tool'), value: (data && data.tool) || 'mtr' }
+        ]);
+        if (out) {
+            if (!data) {
+                out.innerHTML = '<div class="trace-empty">' + i18n('trace_not_started') + '</div>';
+            } else if (data.error && data.error !== 'cancelled' && !(data.hops || []).length) {
+                out.innerHTML = '<div class="trace-empty">' + i18n('error') + ': ' + NetwatchShared.escapeHtml(data.error) + '</div>';
+            } else {
+                renderTraceRows(data);
+            }
+        }
+        if (detailsBtn) {
+            var hasHops = !!(data && (data.hops || []).length);
+            detailsBtn.disabled = !hasHops && !(data && data.running);
+        }
+        setStopVisible(!!(data && data.running));
+    };
+
     var renderTraceRows = function (data) {
+        if (!out) return;
         var hops = Array.isArray(data.hops) ? data.hops : [];
         if (hops.length === 0) {
-            out.innerHTML = '<div class="trace-empty">' + i18n('trace_no_hops') + '</div>';
+            out.innerHTML = '<div class="trace-empty">' +
+                (data.running ? i18n('collecting_trace') : (data.error === 'cancelled' ? i18n('trace_stopped') : i18n('trace_no_hops'))) +
+                '</div>';
             return;
         }
         out.innerHTML = hops.map(function (h) {
@@ -1392,19 +1442,40 @@ function initTrace() {
             return '<div class="trace-hop"><div class="trace-hop-host">' + NetwatchShared.escapeHtml(primary) + '</div><div class="trace-hop-ip">' + NetwatchShared.escapeHtml(secondary) + '</div><div class="trace-hop-latency ' + latencyClass + '">' + latency + '</div></div>';
         }).join('');
     };
+
+    var stopPoller = function () {
+        if (state.tracePoller) {
+            clearInterval(state.tracePoller);
+            state.tracePoller = null;
+        }
+    };
+
+    var stopTrace = async function () {
+        stopPoller();
+        try {
+            if (window.NetwatchAPI) {
+                await window.NetwatchAPI.post('/api/v1/diagnostics/trace/cancel');
+            } else {
+                await fetch('/api/v1/diagnostics/trace/cancel', { method: 'POST', cache: 'no-store' });
+            }
+        } catch (_) {}
+        var data = state.traceResult || {};
+        data = Object.assign({}, data, { running: false, finished: true, error: data.error || 'cancelled' });
+        applyTraceUI(data, data.target || (input && input.value) || '');
+        setStopVisible(false);
+        if (btn) btn.disabled = false;
+    };
+
     var run = async function () {
-        var host = (input.value || '').trim();
+        var host = (input && input.value || '').trim();
         if (!host) return;
-        btn.disabled = true;
-        if (detailsBtn) detailsBtn.disabled = true;
+        stopPoller();
         state.traceResult = null;
+        setStopVisible(true);
+        if (detailsBtn) detailsBtn.disabled = true;
         window.__app.openTraceWindow();
-        renderTraceSummary([
-            { label: i18n('target'), value: host },
-            { label: i18n('status_col'), value: i18n('tracing') },
-            { label: i18n('tool'), value: 'mtr' }
-        ]);
-        out.innerHTML = '<div class="trace-empty">' + i18n('collecting_trace') + '</div>';
+        applyTraceUI({ target: host, tool: 'mtr', running: true, hops: [] }, host);
+        if (out) out.innerHTML = '<div class="trace-empty">' + i18n('collecting_trace') + '</div>';
         try {
             if (window.NetwatchAPI) {
                 await window.NetwatchAPI.post('/api/v1/diagnostics/trace?host=' + encodeURIComponent(host));
@@ -1412,57 +1483,55 @@ function initTrace() {
                 await fetch('/api/v1/diagnostics/trace?host=' + encodeURIComponent(host), { method: 'POST', cache: 'no-store' });
             }
             var poll = async function () {
-                var data = await netwatchGet('/api/v1/diagnostics/trace/task');
-                if (data.error) {
-                    renderTraceSummary([
-                        { label: i18n('target'), value: data.target || host },
-                        { label: i18n('status_col'), value: i18n('failed') },
-                        { label: i18n('tool'), value: data.tool || 'mtr' }
-                    ]);
-                    out.innerHTML = '<div class="trace-empty">' + i18n('error') + ': ' + data.error + '</div>';
-                    if (state.tracePoller) {
-                        clearInterval(state.tracePoller);
-                        state.tracePoller = null;
+                try {
+                    var data = await netwatchGet('/api/v1/diagnostics/trace/task');
+                    applyTraceUI(data, host);
+                    if (!data.running) {
+                        stopPoller();
+                        setStopVisible(false);
+                        if (btn) btn.disabled = false;
                     }
-                    return;
-                }
-                state.traceResult = data;
-                renderTraceSummary([
-                    { label: i18n('target'), value: data.target || host },
-                    { label: i18n('status_col'), value: data.running ? i18n('tracing') : ((data.hops || []).length + ' ' + i18n('hops')) },
-                    { label: i18n('tool'), value: data.tool || 'mtr' }
-                ]);
-                renderTraceRows(data);
-                if (detailsBtn) detailsBtn.disabled = false;
-                if (!data.running && state.tracePoller) {
-                    clearInterval(state.tracePoller);
-                    state.tracePoller = null;
+                } catch (err) {
+                    stopPoller();
+                    setStopVisible(false);
+                    if (btn) btn.disabled = false;
+                    renderTraceSummary([
+                        { label: i18n('target'), value: host },
+                        { label: i18n('status_col'), value: i18n('request_failed') },
+                        { label: i18n('tool'), value: 'mtr' }
+                    ]);
                 }
             };
             await poll();
-            if (state.tracePoller) clearInterval(state.tracePoller);
-            state.tracePoller = setInterval(poll, 1000);
+            if (state.traceResult && state.traceResult.running) {
+                stopPoller();
+                state.tracePoller = setInterval(poll, 1000);
+            }
         } catch (e) {
+            setStopVisible(false);
+            if (btn) btn.disabled = false;
             renderTraceSummary([
                 { label: i18n('target'), value: host },
                 { label: i18n('status_col'), value: i18n('request_failed') },
                 { label: i18n('tool'), value: 'mtr' }
             ]);
-            out.innerHTML = '<div class="trace-empty">' + i18n('request_failed') + ': ' + e.message + '</div>';
-        } finally {
-            btn.disabled = false;
+            if (out) out.innerHTML = '<div class="trace-empty">' + i18n('request_failed') + ': ' + NetwatchShared.escapeHtml(e.message || '') + '</div>';
         }
     };
-    btn.addEventListener('click', async function () {
-        await run();
-    });
+
+    btn.addEventListener('click', function () { run(); });
+    if (stopBtn) stopBtn.addEventListener('click', function () { stopTrace(); });
+    if (winStopBtn) winStopBtn.addEventListener('click', function () { stopTrace(); });
     if (detailsBtn) detailsBtn.addEventListener('click', function () { window.__app.openTraceWindow(); });
-    if (input) input.addEventListener('keydown', async function (event) {
+    if (input) input.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
             event.preventDefault();
-            await run();
+            run();
         }
     });
+
+    window.__app.stopTrace = stopTrace;
+    window.__app.applyTraceUI = applyTraceUI;
 }
 
 function updateNICRealtimeRefreshButton() {
@@ -1552,6 +1621,25 @@ function hostBridgeEls() {
         output: document.getElementById('host-bridge-output'),
         device: document.getElementById('network-config-device')
     };
+}
+
+function clearNetworkConfigLogs() {
+    // Drop create/dissolve/apply logs when the window is closed so they don't linger.
+    setHostBridgeOutput('');
+    var ne = typeof networkConfigEls === 'function' ? networkConfigEls() : {};
+    if (ne.output) {
+        ne.output.hidden = true;
+        ne.output.textContent = '';
+    }
+    // Keep pending countdown text; only clear one-shot status notes.
+    var be = typeof hostBridgeEls === 'function' ? hostBridgeEls() : {};
+    if (be.status && be.status.dataset.kind !== 'pending') {
+        be.status.textContent = '';
+        be.status.dataset.kind = '';
+    }
+    if (ne.status && !(state.networkConfigPendingData && state.networkConfigPendingData.pending)) {
+        ne.status.textContent = '';
+    }
 }
 
 function setHostBridgeOutput(text) {
@@ -2144,6 +2232,7 @@ window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadHostBridges = loadHostBridges;
 window.__app.loadHostBridgePending = loadHostBridgePending;
 window.__app.bindHostBridgeUI = bindHostBridgeUI;
+window.__app.clearNetworkConfigLogs = clearNetworkConfigLogs;
 window.__app.switchNetworkConfigTab = switchNetworkConfigTab;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;

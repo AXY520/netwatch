@@ -93,6 +93,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/settings", h.handleSettings)
 	mux.HandleFunc("/api/v1/diagnostics/trace", h.handleTrace)
 	mux.HandleFunc("/api/v1/diagnostics/trace/task", h.handleTraceTask)
+	mux.HandleFunc("/api/v1/diagnostics/trace/cancel", h.handleTraceCancel)
 	mux.HandleFunc("/api/v1/events", h.handleSSE)
 	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
 	mux.HandleFunc("/api/v1/network/ports", h.handleHostPorts)
@@ -693,6 +694,14 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleTraceTask(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetTraceTask())
+}
+
+func (h *Handler) handleTraceCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.CancelTraceTask())
 }
 
 func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, r *http.Request) {

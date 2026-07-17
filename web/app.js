@@ -59,6 +59,7 @@ window.__app.openWindow = openWindow;
 
 async function closeCurrentWindow() {
     if (window.closeCustomSelects) window.closeCustomSelects();
+    var closingNetworkConfig = !!(els.networkConfigWindow && els.networkConfigWindow.classList.contains('active'));
     if ((state.runningTest === 'broadband' && els.broadbandWindow.classList.contains('active')) ||
         (state.runningTest === 'transfer' && els.transferWindow.classList.contains('active'))) {
         var ok = await NetwatchShared.confirmDialog({
@@ -87,6 +88,9 @@ async function closeCurrentWindow() {
     NetwatchShared.unlockModalScroll();
     state.activeWindow = null;
     window.__app.updateWindowControls();
+    if (closingNetworkConfig && window.__app.clearNetworkConfigLogs) {
+        window.__app.clearNetworkConfigLogs();
+    }
 }
 
 function openTraceWindow() {
@@ -96,12 +100,10 @@ function openTraceWindow() {
 }
 
 function closeTraceWindow() {
+    // Only close the hop details sheet. Keep background polling so the card
+    // status does not freeze on "追踪中". Use the explicit Stop button to cancel.
     if (els.traceWindow) els.traceWindow.classList.remove('active');
     if (els.traceBackdrop) els.traceBackdrop.classList.remove('active');
-    if (state.tracePoller) {
-        clearInterval(state.tracePoller);
-        state.tracePoller = null;
-    }
     NetwatchShared.unlockModalScroll();
 }
 

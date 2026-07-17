@@ -979,6 +979,14 @@ button.icon-button,
             gap: 1.5rem;
         }
 
+        .trace-stop-btn {
+            border-color: var(--accent-rose, #ff5c7a) !important;
+            color: var(--accent-rose, #ff5c7a) !important;
+        }
+        .trace-stop-btn:hover:not(:disabled) {
+            background: var(--accent-rose, #ff5c7a) !important;
+            color: var(--bg-color) !important;
+        }
         .trace-toolbar {
             display: flex;
             gap: .5rem;
