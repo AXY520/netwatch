@@ -276,7 +276,8 @@ const state = {
     function startSSE() {
         if (state.sse) return;
         try {
-            const es = new EventSource('/api/v1/events');
+            const since = Number(state.notificationLastID || 0) || 0;
+            const es = new EventSource('/api/v1/events?since=' + encodeURIComponent(String(since)));
             es.addEventListener('notification', (ev) => {
                 try { handleNotificationEvent(JSON.parse(ev.data)); } catch (_) {}
             });

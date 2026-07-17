@@ -359,11 +359,19 @@ function initSSE() {
         if (window.NetwatchAPI && typeof window.NetwatchAPI.createSSE === 'function') {
             state.sse = window.NetwatchAPI.createSSE('/api/v1/events', {
                 onStatus: setSSEStatus,
+                getSince: function () {
+                    return Number(state.notificationLastID || 0) || 0;
+                },
                 events: {
                     summary: function (summary) {
                         if (!summary) return;
-                        state.summary = summary;
-                        if (window.__app.renderSummary) window.__app.renderSummary(summary);
+                        if (window.__app.applyIncomingSummary) {
+                            window.__app.applyIncomingSummary(summary);
+                        } else if (window.__app.renderSummary) {
+                            window.__app.renderSummary(summary);
+                        } else {
+                            state.summary = summary;
+                        }
                     },
                     notification: function (payload) {
                         if (payload && window.__app.handleNotificationEvent) window.__app.handleNotificationEvent(payload);
@@ -380,12 +388,18 @@ function initSSE() {
                 }
             });
         } else {
-            var es = new EventSource('/api/v1/events');
+            var since = Number(state.notificationLastID || 0) || 0;
+            var es = new EventSource('/api/v1/events?since=' + encodeURIComponent(String(since)));
             es.addEventListener('summary', function (ev) {
                 try {
                     var summary = JSON.parse(ev.data);
-                    state.summary = summary;
-                    if (window.__app.renderSummary) window.__app.renderSummary(summary);
+                    if (window.__app.applyIncomingSummary) {
+                        window.__app.applyIncomingSummary(summary);
+                    } else if (window.__app.renderSummary) {
+                        window.__app.renderSummary(summary);
+                    } else {
+                        state.summary = summary;
+                    }
                 } catch (_) {}
             });
             es.addEventListener('notification', function (ev) {

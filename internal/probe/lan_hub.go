@@ -79,7 +79,12 @@ func (h *lanHub) applyPolicy(in MutableSettings) {
 	if in.LANFlappingWindowSec >= 60 {
 		h.policy.FlappingWindow = time.Duration(in.LANFlappingWindowSec) * time.Second
 	}
-	h.policy.AutoRemoveDays = in.LANDeviceAutoRemoveDays
+	// 0 disables auto-remove; negative values are treated as 0.
+	if in.LANDeviceAutoRemoveDays < 0 {
+		h.policy.AutoRemoveDays = 0
+	} else {
+		h.policy.AutoRemoveDays = in.LANDeviceAutoRemoveDays
+	}
 }
 
 func (h *lanHub) writePolicy(out *MutableSettings) {

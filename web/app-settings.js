@@ -143,6 +143,11 @@ async function loadSettings() {
             lan_device_online_after_sec: settingsData.lan_device_online_after_sec !== undefined ? settingsData.lan_device_online_after_sec : 0,
             lan_device_offline_notify_delay_sec: settingsData.lan_device_offline_notify_delay_sec !== undefined ? settingsData.lan_device_offline_notify_delay_sec : 120,
             lan_device_online_notify_delay_sec: settingsData.lan_device_online_notify_delay_sec !== undefined ? settingsData.lan_device_online_notify_delay_sec : 120,
+            lan_max_check_attempts: settingsData.lan_max_check_attempts !== undefined ? settingsData.lan_max_check_attempts : 3,
+            lan_notify_cooldown_sec: settingsData.lan_notify_cooldown_sec !== undefined ? settingsData.lan_notify_cooldown_sec : 600,
+            lan_flapping_threshold: settingsData.lan_flapping_threshold !== undefined ? settingsData.lan_flapping_threshold : 5,
+            lan_flapping_window_sec: settingsData.lan_flapping_window_sec !== undefined ? settingsData.lan_flapping_window_sec : 600,
+            lan_device_auto_remove_days: settingsData.lan_device_auto_remove_days !== undefined ? settingsData.lan_device_auto_remove_days : 30,
             abnormal_traffic_threshold_mbps: settingsData.abnormal_traffic_threshold_mbps || 100,
             bark_enabled: !!settingsData.bark_enabled,
             bark_server_url: settingsData.bark_server_url || 'https://api.day.app',
@@ -188,9 +193,14 @@ async function saveSettings() {
         notify_connectivity_change: !!(els.settingNotifyConnectivityChange && els.settingNotifyConnectivityChange.checked),
         notify_lan_device_change: state.settings.notify_lan_device_change !== false,
         lan_device_offline_after_sec: state.settings.lan_device_offline_after_sec || 180,
-        lan_device_online_after_sec: state.settings.lan_device_online_after_sec || 0,
+        lan_device_online_after_sec: state.settings.lan_device_online_after_sec !== undefined ? state.settings.lan_device_online_after_sec : 0,
         lan_device_offline_notify_delay_sec: state.settings.lan_device_offline_notify_delay_sec !== undefined ? state.settings.lan_device_offline_notify_delay_sec : 120,
         lan_device_online_notify_delay_sec: state.settings.lan_device_online_notify_delay_sec !== undefined ? state.settings.lan_device_online_notify_delay_sec : 120,
+        lan_max_check_attempts: state.settings.lan_max_check_attempts !== undefined ? state.settings.lan_max_check_attempts : 3,
+        lan_notify_cooldown_sec: state.settings.lan_notify_cooldown_sec !== undefined ? state.settings.lan_notify_cooldown_sec : 600,
+        lan_flapping_threshold: state.settings.lan_flapping_threshold !== undefined ? state.settings.lan_flapping_threshold : 5,
+        lan_flapping_window_sec: state.settings.lan_flapping_window_sec !== undefined ? state.settings.lan_flapping_window_sec : 600,
+        lan_device_auto_remove_days: state.settings.lan_device_auto_remove_days !== undefined ? state.settings.lan_device_auto_remove_days : 30,
         abnormal_traffic_threshold_mbps: parseInt((els.settingAbnormalTrafficThresholdMbps && els.settingAbnormalTrafficThresholdMbps.value) || '100', 10) || 100,
         bark_enabled: !!(els.settingBarkEnabled && els.settingBarkEnabled.checked),
         bark_server_url: (els.settingBarkServerURL && els.settingBarkServerURL.value && els.settingBarkServerURL.value.trim()) || 'https://api.day.app',
@@ -208,8 +218,9 @@ async function saveSettings() {
     };
 
     try {
+        var saved;
         if (window.NetwatchAPI) {
-            await window.NetwatchAPI.post('/api/v1/settings', payload);
+            saved = await window.NetwatchAPI.post('/api/v1/settings', payload);
         } else {
             var settingsResp = await fetch('/api/v1/settings', {
                 method: 'POST',
@@ -217,9 +228,18 @@ async function saveSettings() {
                 body: JSON.stringify(payload)
             });
             if (!settingsResp.ok) throw new Error('settings save failed');
+            saved = await settingsResp.json();
         }
-        state.settings = Object.assign({}, state.settings, payload);
-        state.refreshInterval = payload.refresh_interval_sec;
+        // Always prefer server-normalized settings (clamps, defaults, LAN fields).
+        if (saved && typeof saved === 'object') {
+            state.settings = Object.assign({}, state.settings, saved);
+            if (saved.refresh_interval_sec) {
+                state.refreshInterval = saved.refresh_interval_sec;
+            }
+        } else {
+            state.settings = Object.assign({}, state.settings, payload);
+            state.refreshInterval = payload.refresh_interval_sec;
+        }
         applySettingsToForm();
         state.nicRealtimeInitialized = false;
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();

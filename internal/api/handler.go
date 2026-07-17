@@ -611,6 +611,28 @@ func validLocalTransferResult(result probe.LocalTransferResult) bool {
 		result.DurationMS >= 0
 }
 
+// clampQueryLimit parses ?limit= with a default and hard max so list/history
+// endpoints share the same contract.
+func clampQueryLimit(raw string, def, max int) int {
+	if def <= 0 {
+		def = 1
+	}
+	if max > 0 && def > max {
+		def = max
+	}
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return def
+	}
+	if max > 0 && n > max {
+		return max
+	}
+	return n
+}
+
 func parseMB(value string, fallback int) int {
 	mb, err := strconv.Atoi(value)
 	if err != nil || mb <= 0 {
@@ -629,10 +651,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (h *Handler) handleTimeseries(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = 300
-	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 300, 2000)
 	writeJSON(w, http.StatusOK, h.service.GetTimeseries(limit))
 }
 
@@ -641,7 +660,10 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, http.StatusOK, h.service.GetMutableSettings())
 	case http.MethodPost, http.MethodPut:
-		var in probe.MutableSettings
+		// Partial update: decode onto the current settings so omitted JSON keys
+		// keep their existing values (Go encoding/json leaves missing fields alone).
+		// This prevents main-page saves from zeroing LAN-only knobs like auto-remove.
+		in := h.service.GetMutableSettings()
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256*1024)).Decode(&in); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 			return
@@ -769,12 +791,7 @@ func (h *Handler) handleAppTrafficHistory(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bridge parameter required"})
 		return
 	}
-	limit := 1440
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 1440, 1440)
 	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
 		writeJSON(w, http.StatusOK, h.service.GetAppTrafficHistorySince(bridge, time.Now().Add(-d), limit))
 		return
@@ -802,15 +819,7 @@ func parseTrafficRange(value string) (time.Duration, bool) {
 }
 
 func (h *Handler) handleAppTrafficTop(w http.ResponseWriter, r *http.Request) {
-	limit := 15
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 30 {
-		limit = 30
-	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 15, 30)
 	var since time.Time
 	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
 		since = time.Now().Add(-d)
@@ -828,12 +837,7 @@ func (h *Handler) handleAppTrafficLive(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bridge parameter required"})
 		return
 	}
-	limit := 1440
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 1440, 1440)
 	var since time.Time
 	if d, ok := parseTrafficRange(r.URL.Query().Get("range")); ok {
 		since = time.Now().Add(-d)

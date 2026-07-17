@@ -91,6 +91,20 @@ window.NetwatchAPI = (function () {
             }
         }
 
+        function resolvePath() {
+            var base = String(path || '').split('?')[0];
+            var query = Object.assign({}, handlers.query || {});
+            if (typeof handlers.getSince === 'function') {
+                var since = handlers.getSince();
+                if (Number.isFinite(since) && since >= 0) {
+                    query.since = since;
+                }
+            } else if (handlers.since !== undefined && handlers.since !== null && handlers.since !== '') {
+                query.since = handlers.since;
+            }
+            return buildURL(base, query);
+        }
+
         function bind() {
             if (closed) return;
             clearRetry();
@@ -100,7 +114,7 @@ window.NetwatchAPI = (function () {
                     es = null;
                 }
                 setStatus(attempt === 0 ? 'connecting' : 'reconnecting');
-                es = new EventSource(path);
+                es = new EventSource(resolvePath());
                 es.onopen = function () {
                     attempt = 0;
                     setStatus('live');

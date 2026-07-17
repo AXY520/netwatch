@@ -108,6 +108,46 @@ function refreshProxyDisplay() {
     }
 }
 
+function stampOf(obj) {
+    return (obj && obj.generated_at) ? String(obj.generated_at) : '';
+}
+
+// Merge incoming full summary with any fresher local partials (network_info /
+// website_connectivity refreshed out-of-band). Returns null when the whole
+// payload is strictly older than what the UI already shows.
+function mergeIncomingSummary(incoming) {
+    if (!incoming) return null;
+    if (!state.summary) return incoming;
+    var cur = state.summary;
+    var curAt = stampOf(cur);
+    var inAt = stampOf(incoming);
+    if (curAt && inAt && inAt < curAt) {
+        return null;
+    }
+    var out = Object.assign({}, incoming);
+    var curNetAt = stampOf(cur.network_info);
+    var inNetAt = stampOf(incoming.network_info);
+    if (curNetAt && inNetAt && inNetAt < curNetAt) {
+        out.network_info = cur.network_info;
+    } else if (curNetAt && !inNetAt && cur.network_info) {
+        out.network_info = cur.network_info;
+    }
+    var curWebAt = stampOf(cur.website_connectivity);
+    var inWebAt = stampOf(incoming.website_connectivity);
+    if (curWebAt && inWebAt && inWebAt < curWebAt) {
+        out.website_connectivity = cur.website_connectivity;
+    }
+    return out;
+}
+
+function applyIncomingSummary(summary, opts) {
+    opts = opts || {};
+    var next = opts.force ? summary : mergeIncomingSummary(summary);
+    if (!next) return false;
+    renderSummary(next);
+    return true;
+}
+
 function renderSummary(summary) {
     state.summary = summary;
     state.refreshInterval = summary.refresh_interval_sec || 10;
@@ -127,7 +167,13 @@ async function refreshNetworkDetailCards() {
     try {
         var info = await netwatchPost('/api/v1/network/interfaces/refresh');
         if (info && window.__app && window.__app.renderNetworkInfo) {
-            if (state.summary) state.summary.network_info = info;
+            if (state.summary) {
+                state.summary.network_info = info;
+                // Keep summary clock in step so a concurrent older SSE cannot wipe this.
+                if (info.generated_at && (!state.summary.generated_at || state.summary.generated_at < info.generated_at)) {
+                    state.summary.generated_at = info.generated_at;
+                }
+            }
             window.__app.renderNetworkInfo(info);
         }
     } catch (err) {
@@ -226,6 +272,9 @@ async function runWebsiteRefresh() {
         els.websiteStatus.textContent = '';
         if (state.summary) {
             state.summary.website_connectivity = websiteData;
+            if (websiteData.generated_at && (!state.summary.generated_at || state.summary.generated_at < websiteData.generated_at)) {
+                state.summary.generated_at = websiteData.generated_at;
+            }
         }
     } catch (error) {
         console.error(error);
@@ -1444,6 +1493,8 @@ function refreshAppTrafficSoon() {
 window.__app.loadSummary = loadSummary;
 window.__app.refreshNetworkDetailCards = refreshNetworkDetailCards;
 window.__app.renderSummary = renderSummary;
+window.__app.applyIncomingSummary = applyIncomingSummary;
+window.__app.mergeIncomingSummary = mergeIncomingSummary;
 window.__app.runFastRefresh = runFastRefresh;
 window.__app.refreshInterfacesOnly = refreshInterfacesOnly;
 window.__app.runWebsiteRefresh = runWebsiteRefresh;
