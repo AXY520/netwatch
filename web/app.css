@@ -1386,6 +1386,56 @@ button.icon-button,
         .latency.high { color: var(--accent-amber); }
         .latency.down { color: var(--accent-red); }
 
+        /* 网站延迟检测：三列位置固定，数值变化不挤状态列 */
+        .connectivity-table-fixed {
+            table-layout: fixed;
+            width: 100%;
+        }
+        .connectivity-table-fixed th,
+        .connectivity-table-fixed td {
+            overflow: hidden;
+            vertical-align: middle;
+        }
+        .connectivity-table-fixed .col-target,
+        .connectivity-table-fixed td.col-target {
+            width: auto;
+        }
+        .connectivity-table-fixed .col-status,
+        .connectivity-table-fixed td.col-status {
+            width: 5.6rem;
+            text-align: center;
+        }
+        .connectivity-table-fixed .col-latency,
+        .connectivity-table-fixed td.col-latency {
+            width: 7.2rem;
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum";
+        }
+        .connectivity-table-fixed .connectivity-status.nat-badge {
+            margin: 0;
+            min-width: 3.4rem;
+            text-align: center;
+            box-sizing: border-box;
+            display: inline-block;
+        }
+        .connectivity-table-fixed .latency-value {
+            display: inline-block;
+            min-width: 5.6rem;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum";
+        }
+        .connectivity-table-fixed .target-info {
+            min-width: 0;
+        }
+        .connectivity-table-fixed .target-info span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .identity-row {
             display: flex;
             justify-content: space-between;
@@ -1492,11 +1542,13 @@ button.icon-button,
 
         .floating-window {
             position: fixed;
-            top: 50%;
+            /* 顶部锚定：内容变化向下伸长，避免垂直重居中跳动 */
+            top: max(1.25rem, 5vh);
             left: 50%;
-            transform: translate(-50%, -50%) scale(0.92);
+            transform: translateX(-50%) scale(0.98);
             width: min(820px, calc(100vw - 2rem));
-            max-height: calc(100vh - 3rem);
+            max-height: calc(100vh - 2.5rem);
+            max-height: calc(100dvh - 2.5rem);
             overflow: auto;
             overscroll-behavior: contain;
             -webkit-overflow-scrolling: touch;
@@ -1527,7 +1579,7 @@ button.icon-button,
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
-            transform: translate(-50%, -50%) scale(1);
+            transform: translateX(-50%) scale(1);
         }
 
         /* Stacked network-config panels: only the active tab is interactive */
@@ -1662,7 +1714,18 @@ button.icon-button,
         .network-config-panels-stage {
             display: grid;
             grid-template-columns: minmax(0, 1fr);
-            min-height: 17.5rem;
+            min-height: 22rem;
+        }
+        .network-config-grid .custom-select,
+        .host-bridge-grid .custom-select,
+        .network-config-device-label .custom-select {
+            display: block;
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+        }
+        .host-bridge-grid {
+            min-height: 12.5rem;
         }
         .network-config-panel {
             grid-area: 1 / 1;
@@ -1834,12 +1897,13 @@ button.icon-button,
 
         .sub-window {
             z-index: 1201;
-            transform: translate(-50%, -50%) scale(0.92) translateX(20px);
+            /* 与主悬浮窗一致：水平居中、顶部锚定，避免内容变化时上下跳 */
+            transform: translateX(calc(-50% + 12px)) scale(0.98);
             opacity: 0;
-            transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s ease;
+            transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
         }
         .sub-window.active {
-            transform: translate(-50%, -50%) scale(1) translateX(0);
+            transform: translateX(-50%) scale(1);
             opacity: 1;
         }
         .settings-textarea {
@@ -2357,7 +2421,7 @@ button.icon-button,
                 max-height: calc(100dvh - 1rem);
                 padding: 1rem;
                 border-radius: 14px;
-                top: 50%;
+                top: max(0.5rem, 2vh);
                 left: 50%;
             }
             #broadband-window,
@@ -3144,6 +3208,7 @@ button.icon-button,
             grid-template-columns: 1fr 1fr;
             gap: 10px 14px;
             margin: 0;
+            min-height: 12.5rem;
         }
         .host-bridge-grid label {
             display: flex;
@@ -3255,6 +3320,8 @@ button.icon-button,
         }
 
         .network-config-preview {
+            min-height: 1.35rem;
+
             margin-top: 0.15rem;
             padding: 0.55rem 0.7rem;
             border: 1px solid var(--border-color);
@@ -3888,7 +3955,7 @@ button.icon-button,
 
 @media (max-width: 900px) {
     .network-config-panels-stage {
-        min-height: 0;
+        min-height: 18rem;
     }
     .network-config-grid {
         grid-template-columns: 1fr;

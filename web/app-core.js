@@ -447,22 +447,26 @@ function updateConnectivityTable(tbody, items) {
         var isDown = status === 'down' || status === 'unknown';
         var latencyMs = Number(item.latency_ms) || 0;
         // Only show a number when the probe actually got HTTP headers.
-        // Timeouts used to report budget-as-latency (e.g. 2003 ms + 故障).
+        // 故障文案只放状态列；延迟列保持短文本，避免列宽被「连接失败」撑开抖动。
         var latencyText;
         var latencyClass;
         if (isDown) {
-            latencyText = i18n('connection_failed');
+            latencyText = '—';
             latencyClass = 'down';
         } else if (latencyMs > 0) {
             latencyText = latencyMs + ' ms';
-            // Soft thresholds: domestic-feeling slow >300ms, very slow >1000ms still just "high".
             latencyClass = latencyMs >= 400 ? 'high' : '';
         } else {
-            latencyText = '-';
+            latencyText = '—';
             latencyClass = '';
         }
         var errorTitle = item.error ? ' title="' + NetwatchShared.escapeHtml(item.error) + '"' : '';
-        return '<tr><td><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td><td data-label="' + i18n('status_col') + '"><span class="nat-badge ' + getStatusClass(status) + '">' + (statusMap[status] || i18n('unknown')) + '</span></td><td data-label="' + i18n('latency_col') + '" class="latency ' + latencyClass + '"' + errorTitle + '>' + latencyText + '</td></tr>';
+        var statusLabel = statusMap[status] || i18n('unknown');
+        return '<tr>' +
+            '<td class="col-target"><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td>' +
+            '<td class="col-status" data-label="' + i18n('status_col') + '"><span class="nat-badge connectivity-status ' + getStatusClass(status) + '">' + statusLabel + '</span></td>' +
+            '<td class="col-latency latency ' + latencyClass + '" data-label="' + i18n('latency_col') + '"' + errorTitle + '><span class="latency-value">' + latencyText + '</span></td>' +
+            '</tr>';
     }).join('');
 }
 window.__app.updateConnectivityTable = updateConnectivityTable;
