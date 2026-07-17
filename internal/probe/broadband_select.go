@@ -25,54 +25,127 @@ func selectDomesticSpeedtestServer(ctx context.Context, stClient *speedtest.Spee
 		emitStep(ctx, "node_selection", "info", "本机出口运营商: "+preferredISP)
 	}
 
-	emitStep(ctx, "node_selection", "info", "并发探测国内节点源(Ookla 关键词/坐标 + GitHub 列表)")
+	// 不再「三源竞速先到先得」——同地两台机器会因竞速顺序选到京/沪不同节点。
+	// 统一：汇总候选 → 同运营商优先 → 并发测延迟 → 选最低 RTT。
+	emitStep(ctx, "node_selection", "info", "汇总国内测速节点并按延迟择优")
 
-	// 并发跑三个远程策略,首个返回可用节点即采用,取消其余。
-	raceCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	candidates := mergeDomesticSpeedtestCandidates(
+		fetchDomesticSpeedtestCandidates(ctx),
+		fallbackDomesticSpeedtestCandidates,
+		fetchOoklaDomesticCandidates(ctx, preferredISP),
+	)
+	if len(candidates) == 0 {
+		logger.Warn("broadband: no domestic candidates available")
+		return nil
+	}
+	logger.Info("broadband: candidate pool size=%d (csv+fallback+ookla)", len(candidates))
 
-	type strategyResult struct {
-		server *speedtest.Server
-		source string
+	server := selectDomesticFromCandidates(ctx, stClient, candidates, preferredISP)
+	if server == nil {
+		return nil
 	}
-	results := make(chan strategyResult, 3)
-	strategies := []struct {
-		source string
-		run    func(context.Context) *speedtest.Server
-	}{
-		{"Ookla 关键词", func(c context.Context) *speedtest.Server { return selectDomesticViaOoklaKeyword(c, preferredISP) }},
-		{"Ookla 坐标", func(c context.Context) *speedtest.Server { return selectDomesticViaOoklaLocation(c, preferredISP) }},
-		{"国内节点列表", func(c context.Context) *speedtest.Server { return selectDomesticViaCSV(c, stClient, preferredISP) }},
-	}
-	for _, st := range strategies {
-		st := st
-		go func() {
-			results <- strategyResult{server: st.run(raceCtx), source: st.source}
-		}()
-	}
-
-	for i := 0; i < len(strategies); i++ {
-		r := <-results
-		if r.server != nil {
-			emitStep(ctx, "node_selection", "ok", fmt.Sprintf("命中节点源: %s", r.source))
-			cancel() // 取消其余仍在跑的策略
-			return &selectedSpeedtestServer{server: r.server, source: r.source}
-		}
-	}
-
-	// 策略 4: 内置兜底列表
-	logger.Warn("broadband: all remote sources failed, using embedded fallback list")
-	emitStep(ctx, "node_selection", "info", "远程源不可用,改用内置兜底节点列表")
-	if s := selectDomesticFromCandidates(ctx, stClient, fallbackDomesticSpeedtestCandidates, preferredISP); s != nil {
-		return &selectedSpeedtestServer{server: s, source: "内置兜底"}
-	}
-	return nil
+	return &selectedSpeedtestServer{server: server, source: "延迟择优"}
 }
 
 // isCanceledErr 判断错误是否由 context 取消/超时引起。并发竞速中,
 // 先返回可用节点的策略会取消其余策略,被取消的策略报错属预期,不应记为 WARN。
 func isCanceledErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// fetchOoklaDomesticCandidates 从 Ookla 列表抽取国内节点，只作候选池 enrichment，不直接选定。
+func fetchOoklaDomesticCandidates(ctx context.Context, preferredISP string) []domesticSpeedtestCandidate {
+	type pack struct{ list []domesticSpeedtestCandidate }
+	ch := make(chan pack, 2)
+	go func() {
+		ch <- pack{list: serversToDomesticCandidates(selectOoklaChinaServerList(ctx, "China", 0, 0))}
+	}()
+	go func() {
+		// 上海附近坐标，偏向华东（多数用户在此区域也能拿到更近列表）；不作为唯一来源
+		ch <- pack{list: serversToDomesticCandidates(selectOoklaChinaServerList(ctx, "", 31.2, 121.5))}
+	}()
+	var out []domesticSpeedtestCandidate
+	for i := 0; i < 2; i++ {
+		p := <-ch
+		out = mergeDomesticSpeedtestCandidates(out, p.list)
+	}
+	if preferredISP != "" {
+		// 不在这里强过滤，交给 selectDomesticFromCandidates；这里只记录规模
+		logger.Info("broadband: ookla enrichment candidates=%d preferredISP=%s", len(out), preferredISP)
+	}
+	return out
+}
+
+func selectOoklaChinaServerList(ctx context.Context, keyword string, lat, lon float64) speedtest.Servers {
+	client := speedtest.New()
+	cfg := &speedtest.UserConfig{}
+	if keyword != "" {
+		cfg.Keyword = keyword
+	}
+	if lat != 0 || lon != 0 {
+		cfg.Location = &speedtest.Location{Lat: lat, Lon: lon}
+	}
+	client.NewUserConfig(cfg)
+	fetchCtx, cancel := context.WithTimeout(ctx, remoteNodeStrategyTimeout)
+	defer cancel()
+	list, err := client.FetchServerListContext(fetchCtx)
+	if err != nil {
+		if !isCanceledErr(err) {
+			logger.Warn("broadband: ookla list fetch failed keyword=%q lat=%v lon=%v err=%v", keyword, lat, lon, err)
+		}
+		return nil
+	}
+	return filterChinaServers(list)
+}
+
+func serversToDomesticCandidates(servers speedtest.Servers) []domesticSpeedtestCandidate {
+	out := make([]domesticSpeedtestCandidate, 0, len(servers))
+	for _, s := range servers {
+		if s == nil {
+			continue
+		}
+		host, port := splitHostPortLoose(s.Host)
+		if host == "" && s.URL != "" {
+			if h, err := parseHTTPHost(s.URL); err == nil {
+				host, port = splitHostPortLoose(h)
+			}
+		}
+		if host == "" {
+			continue
+		}
+		isp := ""
+		if matchServerISP(s, "联通") {
+			isp = "联通"
+		} else if matchServerISP(s, "电信") {
+			isp = "电信"
+		} else if matchServerISP(s, "移动") {
+			isp = "移动"
+		}
+		city := s.Name
+		if city == "" {
+			city = s.Sponsor
+		}
+		out = append(out, domesticSpeedtestCandidate{
+			id:       s.ID,
+			isp:      isp,
+			city:     city,
+			host:     normalizeSpeedtestHost(host),
+			port:     port,
+			supplier: s.Sponsor,
+		})
+	}
+	return out
+}
+
+func splitHostPortLoose(hostport string) (string, string) {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return "", ""
+	}
+	if h, p, err := net.SplitHostPort(hostport); err == nil {
+		return h, p
+	}
+	return hostport, ""
 }
 
 // selectDomesticViaOoklaKeyword 用 Ookla API 的 search=China 关键词搜索。
@@ -159,51 +232,62 @@ func selectDomesticFromCandidates(ctx context.Context, stClient *speedtest.Speed
 }
 
 func pickBestFromDomesticCandidates(ctx context.Context, stClient *speedtest.Speedtest, candidates []domesticSpeedtestCandidate) *speedtest.Server {
-	// 有 host 的优先，且多测几个；TCP 预筛后再 HTTP ping。
+	// TCP 预筛 + 补齐 host，最多测 6 个；并发 HTTP ping，选最低 RTT（同地应收敛到同一节点）。
 	candidateList := nearestDomesticSpeedtestCandidates(ctx, candidates, 4)
-	// 确保带 host 的条目不会被 TCP 失败排序挤掉后完全不测：补进最多 6 个有 host 的
 	candidateList = ensureHostCandidates(candidateList, candidates, 6)
-	emitStep(ctx, "node_selection", "info", fmt.Sprintf("逐一测试 %d 个候选节点延迟", len(candidateList)))
+	if len(candidateList) == 0 {
+		return nil
+	}
+	emitStep(ctx, "node_selection", "info", fmt.Sprintf("并发测试 %d 个候选节点延迟", len(candidateList)))
+
+	type pingResult struct {
+		server *speedtest.Server
+		cand   domesticSpeedtestCandidate
+	}
+	results := make(chan pingResult, len(candidateList))
+	var wg sync.WaitGroup
+	for _, candidate := range candidateList {
+		candidate := candidate
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ctx.Err() != nil {
+				return
+			}
+			serverCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			s, err := serverFromDomesticCandidate(serverCtx, stClient, candidate)
+			if err != nil || s == nil {
+				if err != nil && !isCanceledErr(err) {
+					logger.Warn("broadband: build server failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
+				}
+				return
+			}
+			if err := s.PingTestContext(serverCtx, nil); err != nil || s.Latency <= 0 {
+				if err != nil && !isCanceledErr(err) {
+					logger.Warn("broadband: ping candidate failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
+				}
+				return
+			}
+			logger.Info("broadband: candidate ok id=%s isp=%s city=%s sponsor=%s latency=%s host=%s url=%s",
+				candidate.id, candidate.isp, candidate.city, s.Sponsor, s.Latency.Round(time.Millisecond), s.Host, s.URL)
+			emitStep(ctx, "node_selection", "ok", fmt.Sprintf("候选 %s%s 延迟 %d ms", candidate.city, candidate.isp, s.Latency.Milliseconds()))
+			results <- pingResult{server: s, cand: candidate}
+		}()
+	}
+	wg.Wait()
+	close(results)
 
 	var best *speedtest.Server
-	for _, candidate := range candidateList {
-		if ctx.Err() != nil {
-			return best
-		}
-		// 单节点 ping 预算收紧：串行测多个节点时避免整体卡死。
-		serverCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		s, err := serverFromDomesticCandidate(serverCtx, stClient, candidate)
-		if err != nil || s == nil {
-			if err != nil && !isCanceledErr(err) {
-				logger.Warn("broadband: build server failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
-			}
-			cancel()
-			continue
-		}
-		if err := s.PingTestContext(serverCtx, nil); err != nil {
-			if !isCanceledErr(err) {
-				logger.Warn("broadband: ping candidate failed id=%s isp=%s city=%s host=%s err=%v", candidate.id, candidate.isp, candidate.city, candidate.host, err)
-			}
-			cancel()
-			continue
-		}
-		cancel()
-		if s.Latency <= 0 {
-			logger.Warn("broadband: candidate latency invalid id=%s isp=%s city=%s", candidate.id, candidate.isp, candidate.city)
-			continue
-		}
-		logger.Info("broadband: candidate ok id=%s isp=%s city=%s sponsor=%s latency=%s host=%s", candidate.id, candidate.isp, candidate.city, s.Sponsor, s.Latency.Round(time.Millisecond), s.Host)
-		emitStep(ctx, "node_selection", "ok", fmt.Sprintf("候选 %s%s 延迟 %d ms", candidate.city, candidate.isp, s.Latency.Milliseconds()))
-		if best == nil || s.Latency < best.Latency {
-			best = s
-		}
-		// 已有足够好的节点就收工，不必把列表里的死节点全测完。
-		if best.Latency > 0 && best.Latency <= 80*time.Millisecond {
-			break
+	for r := range results {
+		if best == nil || r.server.Latency < best.Latency {
+			best = r.server
 		}
 	}
 	if best != nil {
-		logger.Info("broadband: selected server id=%s sponsor=%s name=%s latency=%s", best.ID, best.Sponsor, best.Name, best.Latency.Round(time.Millisecond))
+		logger.Info("broadband: selected server id=%s sponsor=%s name=%s latency=%s host=%s url=%s",
+			best.ID, best.Sponsor, best.Name, best.Latency.Round(time.Millisecond), best.Host, best.URL)
+		emitStep(ctx, "node_selection", "ok", fmt.Sprintf("择优节点: %s · %s · %d ms", best.Sponsor, best.Name, best.Latency.Milliseconds()))
 	}
 	return best
 }
@@ -289,21 +373,61 @@ func customServerFromHost(stClient *speedtest.Speedtest, candidate domesticSpeed
 	return s, nil
 }
 
+// normalizeSpeedtestHost 将 Ookla 的 *.prod.hosts.ooklaserver.net 还原为真实测速主机。
+// API 返回的 host 常是 CDN 包装名，真正 download/upload URL 用短域名；用错 host 会
+// ping 通但吞吐偏低或不稳。
+func normalizeSpeedtestHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	// strip scheme if present
+	for _, p := range []string{"https://", "http://"} {
+		if strings.HasPrefix(host, p) {
+			host = host[len(p):]
+			break
+		}
+	}
+	// drop path
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	port := ""
+	h := host
+	if strings.Contains(host, ":") {
+		// host:port — but IPv6 unlikely here
+		if hp, p, err := net.SplitHostPort(host); err == nil {
+			h, port = hp, p
+		}
+	}
+	const ooklaSuffix = ".prod.hosts.ooklaserver.net"
+	if strings.HasSuffix(strings.ToLower(h), ooklaSuffix) {
+		h = h[:len(h)-len(ooklaSuffix)]
+	}
+	if port != "" {
+		return net.JoinHostPort(h, port)
+	}
+	return h
+}
+
 func candidateHTTPBase(candidate domesticSpeedtestCandidate) string {
-	host := strings.TrimSpace(candidate.host)
+	host := normalizeSpeedtestHost(candidate.host)
 	if host == "" {
 		return ""
 	}
 	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
 		return host
 	}
+	// host may already include :port after normalize
+	if strings.Contains(host, ":") {
+		// could be host:port
+		if _, _, err := net.SplitHostPort(host); err == nil {
+			return "http://" + host
+		}
+	}
 	port := strings.TrimSpace(candidate.port)
 	if port == "" {
 		port = "8080"
-	}
-	if strings.Contains(host, ":") {
-		// already host:port
-		return "http://" + host
 	}
 	return "http://" + net.JoinHostPort(host, port)
 }

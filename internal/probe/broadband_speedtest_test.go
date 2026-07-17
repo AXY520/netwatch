@@ -284,3 +284,31 @@ func TestServerFromDomesticCandidateUsesHost(t *testing.T) {
 		t.Fatal("host empty")
 	}
 }
+
+func TestNormalizeSpeedtestHost(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"mobile.shunicomtest.com.prod.hosts.ooklaserver.net", "mobile.shunicomtest.com"},
+		{"mobile.shunicomtest.com.prod.hosts.ooklaserver.net:8080", "mobile.shunicomtest.com:8080"},
+		{"beijing.unicomtest.com", "beijing.unicomtest.com"},
+		{"http://speedtest.jsqiuying.com:8080/speedtest/upload.php", "speedtest.jsqiuying.com:8080"},
+		{"", ""},
+	}
+	for _, ttCase := range tests {
+		if got := normalizeSpeedtestHost(ttCase.in); got != ttCase.want {
+			t.Fatalf("normalizeSpeedtestHost(%q)=%q want %q", ttCase.in, got, ttCase.want)
+		}
+	}
+}
+
+func TestCandidateHTTPBaseStripsOoklaCDN(t *testing.T) {
+	got := candidateHTTPBase(domesticSpeedtestCandidate{
+		host: "mobile.shunicomtest.com.prod.hosts.ooklaserver.net",
+		port: "8080",
+	})
+	want := "http://mobile.shunicomtest.com:8080"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
