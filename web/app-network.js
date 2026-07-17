@@ -555,8 +555,8 @@ function networkConfigEls() {
 function setNetworkConfigFormEnabled(enabled) {
     var e = networkConfigEls();
     var body = document.querySelector('.network-config-body');
-    // is-empty only greys out when BOTH IP config and bridge create have no device.
-    // Dissolve of existing bridges remains available separately.
+    // is-empty greys CREATE forms only (CSS). Confirm/rollback/dissolve stay usable
+    // when the only uplink NIC is enslaved into a pending bridge.
     if (body) body.classList.toggle('is-empty', !enabled);
     [e.device, e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
         if (el) el.disabled = !enabled;
@@ -566,8 +566,9 @@ function setNetworkConfigFormEnabled(enabled) {
     } else {
         if (e.apply) e.apply.disabled = true;
         if (e.preflight) e.preflight.disabled = true;
-        if (e.confirm) e.confirm.hidden = true;
-        if (e.rollback) e.rollback.hidden = true;
+        // Never hide confirm/rollback just because the device list is empty.
+        // After bridge create the uplink NIC is enslaved and dropdown can be empty,
+        // but pending confirm must remain usable after reconnect.
     }
     [e.device, e.method].forEach(function (select) {
         if (select && window.syncCustomSelect) window.syncCustomSelect(select);
@@ -672,8 +673,16 @@ function renderNetworkConfigPending(pending, openWindow) {
     state.networkConfigRollbackUntil = Date.now() + Math.max(0, pending.remaining_sec || 0) * 1000;
     applyPendingNetworkConfigToForm(pending);
     setNetworkConfigLocked(true);
-    if (e.confirm) e.confirm.hidden = false;
-    if (e.rollback) e.rollback.hidden = false;
+    if (e.confirm) {
+        e.confirm.hidden = false;
+        e.confirm.disabled = false;
+        e.confirm.removeAttribute('disabled');
+    }
+    if (e.rollback) {
+        e.rollback.hidden = false;
+        e.rollback.disabled = false;
+        e.rollback.removeAttribute('disabled');
+    }
     if (openWindow && window.__app.openWindow) {
         window.__app.openWindow('network-config');
     }
@@ -1755,8 +1764,21 @@ function renderHostBridgePending(pending, openWindow) {
         setHostBridgeCreateEnabled(!!currentNetworkConfigDevice());
         return;
     }
-    if (e.confirm) e.confirm.hidden = false;
-    if (e.rollback) e.rollback.hidden = false;
+    // Always force confirm/rollback interactive — is-empty / form locks must not freeze them.
+    if (e.confirm) {
+        e.confirm.hidden = false;
+        e.confirm.disabled = false;
+        e.confirm.removeAttribute('disabled');
+        e.confirm.style.pointerEvents = 'auto';
+        e.confirm.style.opacity = '1';
+    }
+    if (e.rollback) {
+        e.rollback.hidden = false;
+        e.rollback.disabled = false;
+        e.rollback.removeAttribute('disabled');
+        e.rollback.style.pointerEvents = 'auto';
+        e.rollback.style.opacity = '1';
+    }
     if (e.create) e.create.hidden = true;
     if (e.preflight) e.preflight.hidden = true;
     // lock create fields during pending
@@ -1773,6 +1795,10 @@ function renderHostBridgePending(pending, openWindow) {
             if (typeof switchNetworkConfigTab === 'function') {
                 switchNetworkConfigTab('bridge');
             }
+            // Re-assert clickability after tab switch / device list reload races.
+            var be = hostBridgeEls();
+            if (be.confirm) { be.confirm.disabled = false; be.confirm.hidden = false; }
+            if (be.rollback) { be.rollback.disabled = false; be.rollback.hidden = false; }
         }, 30);
     }
     var untilMs = Date.now() + Math.max(0, pending.remaining_sec || 0) * 1000;
@@ -1895,13 +1921,28 @@ async function createHostBridge() {
         setHostBridgeOutput(result.output || result.note || '');
         if (e.status) e.status.textContent = result.note || '';
         if (e.suffix) e.suffix.dataset.touched = '';
-        // Prefer dedicated pending UI (confirm/rollback + countdown).
-        await loadHostBridgePending(true);
-        if (window.__app && window.__app.loadNetworkConfigDevices) {
-            await window.__app.loadNetworkConfigDevices();
+        // Network usually drops right after create. Paint confirm UI from the
+        // create response immediately — do not await heavy reloads that hang
+        // on a dead TCP connection.
+        if (result && (result.ok || result.rollback_id)) {
+            renderHostBridgePending({
+                pending: true,
+                id: result.rollback_id || '',
+                bridge: result.bridge || body.bridge || '',
+                device: result.device || body.device || '',
+                method: body.method || '',
+                remaining_sec: 180
+            }, true);
         }
-        try { await refreshNetworkDetailCards(); } catch (_) {}
-        refreshAppTrafficSoon();
+        // Best-effort background refresh; ignore failures while link is settling.
+        setTimeout(function () {
+            loadHostBridgePending(true).catch(function () {});
+            if (window.__app && window.__app.loadNetworkConfigDevices) {
+                window.__app.loadNetworkConfigDevices().catch(function () {});
+            }
+            refreshNetworkDetailCards().catch(function () {});
+            refreshAppTrafficSoon();
+        }, 1500);
     } catch (err) {
         var msg = (err && err.payload && (err.payload.error || err.payload.message)) || (err && err.message) || i18n('host_bridge_failed');
         if (e.status) e.status.textContent = msg;

@@ -330,26 +330,30 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		logf("down original connection %s", origSnap.Connection)
 	}
 
-	// Bring bridge up (NM should pull the port with it)
-	if out, err := nmcli(ctx, []string{"connection", "up", bridgeConn}, 25*time.Second); err != nil {
+	// Bring bridge up first (critical path for host connectivity).
+	if out, err := nmcli(ctx, []string{"connection", "up", bridgeConn}, 20*time.Second); err != nil {
 		_ = s.cleanupHostBridgeConnections(ctx, bridgeConn, portConn, origSnap.Connection)
 		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: joinLogs(logs, out), Error: "激活网桥失败: " + err.Error()}
 	}
 	logf("activated bridge %s", bridgeName)
 
-	// Best-effort: ensure port is up
-	if out, err := nmcli(ctx, []string{"connection", "up", portConn}, 15*time.Second); err != nil {
+	// Port is usually auto-activated via master; keep this short.
+	if out, err := nmcli(ctx, []string{"connection", "up", portConn}, 8*time.Second); err != nil {
 		logf("port up warning: %v %s", err, out)
 	}
 
-	// Re-assert DNS/gateway after activation. NM sometimes activates a manual
-	// profile before DNS is written to resolv.conf; empty nameserver ⇒
-	// ERR_NAME_NOT_RESOLVED for the console origin and /api/v1/events.
+	// Prefer fast DNS fix over a second full connection re-up (extra ~25s outage).
 	if method == "manual" {
 		if out, err := ensureNMBridgeDNSAfterUp(ctx, bridgeConn, dns, gateway); err != nil {
 			logf("dns ensure warning: %v %s", err, out)
 		} else if out != "" {
 			logf("dns ensure: %s", out)
+		}
+	} else if method == "auto" && !usableResolvDNS() {
+		if werr := writeResolvDNS(ensureHostBridgeDNS("", readResolvDNS(), gateway)); werr != nil {
+			logf("seed resolv warning: %v", werr)
+		} else {
+			logf("seeded resolv while DHCP settles")
 		}
 	}
 
@@ -1046,7 +1050,8 @@ func ensureHostBridgeDNS(candidates ...string) string {
 }
 
 // ensureNMBridgeDNSAfterUp re-applies DNS (and gateway if missing) on the bridge
-// profile and reactivates when /etc/resolv.conf has no usable nameserver.
+// profile. Prefer a direct resolv.conf write over a second full "connection up",
+// which can add another ~25s outage right after the first activation.
 func ensureNMBridgeDNSAfterUp(ctx context.Context, bridgeConn, dns, gateway string) (string, error) {
 	dns = ensureHostBridgeDNS(dns, readResolvDNS(), gateway)
 	if dns == "" {
@@ -1057,15 +1062,19 @@ func ensureNMBridgeDNSAfterUp(ctx context.Context, bridgeConn, dns, gateway stri
 	if gateway != "" && net.ParseIP(gateway).To4() != nil {
 		args = append(args, "ipv4.gateway", gateway)
 	}
-	out1, err := nmcli(ctx, args, 10*time.Second)
+	out1, err := nmcli(ctx, args, 8*time.Second)
 	if err != nil {
 		return out1, err
 	}
-	// If resolv already has a real nameserver, modify alone is enough for next up.
 	if usableResolvDNS() {
 		return strings.TrimSpace(out1 + " (resolv ok)"), nil
 	}
-	out2, err := nmcli(ctx, []string{"connection", "up", bridgeConn}, 25*time.Second)
+	// Fast path: patch resolv without re-activating the link.
+	if werr := writeResolvDNS(dns); werr == nil && usableResolvDNS() {
+		return strings.TrimSpace(out1 + " (resolv written)"), nil
+	}
+	// Last resort only — shorter timeout; client is already reconnecting.
+	out2, err := nmcli(ctx, []string{"connection", "up", bridgeConn}, 12*time.Second)
 	return strings.TrimSpace(strings.Join([]string{out1, out2}, "\n")), err
 }
 

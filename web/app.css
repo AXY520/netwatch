@@ -1750,12 +1750,27 @@ button.icon-button,
             pointer-events: auto;
             opacity: 1;
         }
-        /* No NIC: grey out IP panel + bridge create grid; dissolve row stays usable. */
-        .network-config-body.is-empty #network-config-panel-ip,
+        /*
+         * No free NIC: grey out CREATE form only.
+         * Confirm/rollback must stay clickable after bridge create (device is enslaved,
+         * device dropdown empties, body gets is-empty — that used to freeze pending buttons).
+         */
+        .network-config-body.is-empty #network-config-panel-ip .network-config-grid,
+        .network-config-body.is-empty #network-config-preflight-btn,
+        .network-config-body.is-empty #network-config-apply-btn,
         .network-config-body.is-empty .host-bridge-grid,
-        .network-config-body.is-empty .host-bridge-actions {
+        .network-config-body.is-empty #host-bridge-preflight-btn,
+        .network-config-body.is-empty #host-bridge-create-btn {
             opacity: 0.55;
             pointer-events: none;
+        }
+        .network-config-body.is-empty #network-config-confirm-btn,
+        .network-config-body.is-empty #network-config-rollback-btn,
+        .network-config-body.is-empty #host-bridge-confirm-btn,
+        .network-config-body.is-empty #host-bridge-rollback-btn,
+        .network-config-body.is-empty .host-bridge-dissolve-row {
+            opacity: 1;
+            pointer-events: auto;
         }
 
         .network-config-grid {
