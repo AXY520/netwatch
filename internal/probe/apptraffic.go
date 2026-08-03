@@ -58,45 +58,68 @@ func sanitizeIconURL(raw, boxDomain string) string {
 // is traffic sent from the host bridge to app containers (application download).
 // Host-network-mode app services bypass the bridge entirely and aren't counted.
 type AppBridgeStats struct {
-	Bridge         string `json:"bridge"`
-	AppID          string `json:"app_id,omitempty"`
-	AppTitle       string `json:"app_title,omitempty"`
-	Project        string `json:"project,omitempty"`
-	SubnetV4       string `json:"subnet_v4,omitempty"`
-	SubnetV6       string `json:"subnet_v6,omitempty"`
-	RxBytes        uint64 `json:"rx_bytes"`
-	TxBytes        uint64 `json:"tx_bytes"`
-	RxPackets      uint64 `json:"rx_packets"`
-	TxPackets      uint64 `json:"tx_packets"`
-	RxErrors       uint64 `json:"rx_errors"`
-	TxErrors       uint64 `json:"tx_errors"`
-	RxDropped      uint64 `json:"rx_dropped"`
-	TxDropped      uint64 `json:"tx_dropped"`
-	ContainerCount int    `json:"container_count,omitempty"`
-	RunningCount   int    `json:"running_count,omitempty"`
-	Domain         string `json:"domain,omitempty"`
-	Icon           string `json:"icon,omitempty"`
-	StatusText     string `json:"status_text,omitempty"`
-	CreatedAt      int64  `json:"created_at,omitempty"`
+	Bridge             string `json:"bridge"`
+	AppID              string `json:"app_id,omitempty"`
+	AppTitle           string `json:"app_title,omitempty"`
+	Project            string `json:"project,omitempty"`
+	SubnetV4           string `json:"subnet_v4,omitempty"`
+	SubnetV6           string `json:"subnet_v6,omitempty"`
+	RxBytes            uint64 `json:"rx_bytes"`
+	TxBytes            uint64 `json:"tx_bytes"`
+	UploadBytes        uint64 `json:"upload_bytes"`
+	DownloadBytes      uint64 `json:"download_bytes"`
+	RxPackets          uint64 `json:"rx_packets"`
+	TxPackets          uint64 `json:"tx_packets"`
+	RxErrors           uint64 `json:"rx_errors"`
+	TxErrors           uint64 `json:"tx_errors"`
+	RxDropped          uint64 `json:"rx_dropped"`
+	TxDropped          uint64 `json:"tx_dropped"`
+	ContainerCount     int    `json:"container_count,omitempty"`
+	RunningCount       int    `json:"running_count,omitempty"`
+	Domain             string `json:"domain,omitempty"`
+	Icon               string `json:"icon,omitempty"`
+	StatusText         string `json:"status_text,omitempty"`
+	CreatedAt          int64  `json:"created_at,omitempty"`
+	SampledAt          string `json:"sampled_at"`
+	AgeSeconds         int64  `json:"age_seconds"`
+	Stale              bool   `json:"stale"`
+	CounterPerspective string `json:"counter_perspective"`
+	Source             string `json:"source"`
 }
 
 type AppTrafficSnapshot struct {
-	GeneratedAt string           `json:"generated_at"`
-	Bridges     []AppBridgeStats `json:"bridges"`
-	Note        string           `json:"note,omitempty"`
+	GeneratedAt        string           `json:"generated_at"`
+	Bridges            []AppBridgeStats `json:"bridges"`
+	Note               string           `json:"note,omitempty"`
+	CounterPerspective string           `json:"counter_perspective"`
+	Source             string           `json:"source"`
 }
 
 type AppTrafficLiveResult struct {
-	GeneratedAt string            `json:"generated_at"`
-	Bridge      AppBridgeStats    `json:"bridge"`
-	History     []AppTrafficPoint `json:"history"`
-	Note        string            `json:"note,omitempty"`
+	GeneratedAt        string            `json:"generated_at"`
+	Bridge             AppBridgeStats    `json:"bridge"`
+	History            []AppTrafficPoint `json:"history"`
+	Note               string            `json:"note,omitempty"`
+	CounterPerspective string            `json:"counter_perspective"`
+	Source             string            `json:"source"`
 }
 
 const (
-	sysClassNetDir  = "/sys/class/net"
-	lzcBridgePrefix = "lzc-br-"
+	sysClassNetDir               = "/sys/class/net"
+	lzcBridgePrefix              = "lzc-br-"
+	appTrafficCounterPerspective = "host_bridge"
+	appTrafficSource             = "linux_bridge_sysfs"
 )
+
+func finalizeAppBridgeStats(stats *AppBridgeStats, sampledAt string) {
+	stats.UploadBytes = stats.RxBytes
+	stats.DownloadBytes = stats.TxBytes
+	stats.SampledAt = sampledAt
+	stats.AgeSeconds = 0
+	stats.Stale = false
+	stats.CounterPerspective = appTrafficCounterPerspective
+	stats.Source = appTrafficSource
+}
 
 func CollectBridgeTraffic(bridge string) (AppBridgeStats, bool) {
 	if !strings.HasPrefix(bridge, lzcBridgePrefix) {
@@ -117,11 +140,39 @@ func CollectBridgeTraffic(bridge string) (AppBridgeStats, bool) {
 		RxDropped: readSysCounter(filepath.Join(statsPath, "rx_dropped")),
 		TxDropped: readSysCounter(filepath.Join(statsPath, "tx_dropped")),
 	}
+	finalizeAppBridgeStats(&stats, localTimestamp())
 	if addrs, ok := bridgeAddresses()[bridge]; ok {
 		stats.SubnetV4 = addrs.v4
 		stats.SubnetV6 = addrs.v6
 	}
 	return stats, true
+}
+
+// CollectAppTrafficCounters returns lightweight bridge counters without
+// querying Docker or the Lazycat SDK. It is intended for frequent metrics
+// scrapes where application metadata enrichment would be unnecessarily costly.
+func CollectAppTrafficCounters() []AppBridgeStats {
+	entries, err := os.ReadDir(sysClassNetDir)
+	if err != nil {
+		return nil
+	}
+	sampledAt := localTimestamp()
+	stats := make([]AppBridgeStats, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, lzcBridgePrefix) {
+			continue
+		}
+		statsPath := filepath.Join(sysClassNetDir, name, "statistics")
+		item := AppBridgeStats{
+			Bridge:  name,
+			RxBytes: readSysCounter(filepath.Join(statsPath, "rx_bytes")),
+			TxBytes: readSysCounter(filepath.Join(statsPath, "tx_bytes")),
+		}
+		finalizeAppBridgeStats(&item, sampledAt)
+		stats = append(stats, item)
+	}
+	return stats
 }
 
 // CollectAppTraffic enumerates all `lzc-br-*` bridges in the current network
@@ -202,7 +253,12 @@ func isExcludedApp(appID, title string) bool {
 }
 
 func CollectAppTraffic() AppTrafficSnapshot {
-	snap := AppTrafficSnapshot{GeneratedAt: localTimestamp()}
+	sampledAt := localTimestamp()
+	snap := AppTrafficSnapshot{
+		GeneratedAt:        sampledAt,
+		CounterPerspective: appTrafficCounterPerspective,
+		Source:             appTrafficSource,
+	}
 	entries, err := os.ReadDir(sysClassNetDir)
 	if err != nil {
 		snap.Note = "无法访问 /sys/class/net (容器需要 host 网络模式)"
@@ -276,6 +332,7 @@ func CollectAppTraffic() AppTrafficSnapshot {
 			RxDropped: readSysCounter(filepath.Join(statsPath, "rx_dropped")),
 			TxDropped: readSysCounter(filepath.Join(statsPath, "tx_dropped")),
 		}
+		finalizeAppBridgeStats(&stats, sampledAt)
 		if addrs, ok := addrByName[name]; ok {
 			stats.SubnetV4 = addrs.v4
 			stats.SubnetV6 = addrs.v6

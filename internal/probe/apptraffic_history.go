@@ -16,36 +16,53 @@ const appTrafficHistoryWriteMinInterval = 10 * time.Second
 // AppTrafficPoint stores raw host-bridge counters. For lzc app bridges, RX maps
 // to application upload and TX maps to application download.
 type AppTrafficPoint struct {
-	Timestamp string `json:"timestamp"`
-	RxBytes   uint64 `json:"rx_bytes"`
-	TxBytes   uint64 `json:"tx_bytes"`
+	Timestamp           string `json:"timestamp"`
+	RxBytes             uint64 `json:"rx_bytes"`
+	TxBytes             uint64 `json:"tx_bytes"`
+	UploadBytes         uint64 `json:"upload_bytes"`
+	DownloadBytes       uint64 `json:"download_bytes"`
+	CounterPerspective  string `json:"counter_perspective"`
+	Source              string `json:"source"`
+	Discontinuity       bool   `json:"discontinuity,omitempty"`
+	DiscontinuityReason string `json:"discontinuity_reason,omitempty"`
+	AgeSeconds          int64  `json:"age_seconds"`
+	Stale               bool   `json:"stale"`
 }
 
 type AppTrafficTopItem struct {
-	Bridge     string  `json:"bridge"`
-	RxDelta    uint64  `json:"rx_delta"`
-	TxDelta    uint64  `json:"tx_delta"`
-	TotalDelta uint64  `json:"total_delta"`
-	PeakBps    float64 `json:"peak_bps"`
+	Bridge             string  `json:"bridge"`
+	RxDelta            uint64  `json:"rx_delta"`
+	TxDelta            uint64  `json:"tx_delta"`
+	TotalDelta         uint64  `json:"total_delta"`
+	PeakBps            float64 `json:"peak_bps"`
+	UploadDelta        uint64  `json:"upload_delta"`
+	DownloadDelta      uint64  `json:"download_delta"`
+	CounterPerspective string  `json:"counter_perspective"`
+	Source             string  `json:"source"`
 }
 
 type appTrafficHistoryStore struct {
-	mu        sync.RWMutex
-	history   map[string][]AppTrafficPoint // bridge name → points
-	maxPoints int
-	path      string
-	lastWrite time.Time
+	mu                sync.RWMutex
+	history           map[string][]AppTrafficPoint // bridge name → points
+	maxPoints         int
+	path              string
+	lastWrite         time.Time
+	loadedHistory     bool
+	sampledSinceStart map[string]bool
 }
 
 func newAppTrafficHistoryStore(dataDir string) *appTrafficHistoryStore {
 	path := filepath.Join(dataDir, "app_traffic_history.json")
 	store := &appTrafficHistoryStore{
-		history:   make(map[string][]AppTrafficPoint),
-		maxPoints: maxAppTrafficPoints,
-		path:      path,
+		history:           make(map[string][]AppTrafficPoint),
+		maxPoints:         maxAppTrafficPoints,
+		path:              path,
+		sampledSinceStart: make(map[string]bool),
 	}
 	if body, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(body, &store.history)
+		if json.Unmarshal(body, &store.history) == nil && len(store.history) > 0 {
+			store.loadedHistory = true
+		}
 	}
 	return store
 }
@@ -165,11 +182,45 @@ func (s *appTrafficHistoryStore) sampleBridge(name string, now time.Time) {
 	rx := readSysCounter(filepath.Join(sysClassNetDir, name, "statistics", "rx_bytes"))
 	tx := readSysCounter(filepath.Join(sysClassNetDir, name, "statistics", "tx_bytes"))
 	pts := s.history[name]
-	pts = append(pts, AppTrafficPoint{Timestamp: now.Format(time.DateTime), RxBytes: rx, TxBytes: tx})
+	point := AppTrafficPoint{Timestamp: now.Format(time.DateTime), RxBytes: rx, TxBytes: tx}
+	if len(pts) > 0 {
+		last := pts[len(pts)-1]
+		if rx < last.RxBytes || tx < last.TxBytes {
+			point.Discontinuity = true
+			point.DiscontinuityReason = "counter_reset"
+		} else if s.loadedHistory && !s.sampledSinceStart[name] {
+			point.Discontinuity = true
+			point.DiscontinuityReason = "service_restart"
+		}
+	}
+	point = enrichAppTrafficPoint(point, now)
+	pts = append(pts, point)
+	s.sampledSinceStart[name] = true
 	if len(pts) > s.maxPoints {
 		pts = pts[len(pts)-s.maxPoints:]
 	}
 	s.history[name] = pts
+}
+
+func enrichAppTrafficPoint(point AppTrafficPoint, now time.Time) AppTrafficPoint {
+	point.UploadBytes = point.RxBytes
+	point.DownloadBytes = point.TxBytes
+	point.CounterPerspective = appTrafficCounterPerspective
+	point.Source = appTrafficSource
+	if sampledAt, err := time.ParseInLocation(time.DateTime, point.Timestamp, time.Local); err == nil {
+		point.AgeSeconds = max(int64(now.Sub(sampledAt).Seconds()), 0)
+		point.Stale = now.Sub(sampledAt) > 5*time.Minute
+	}
+	return point
+}
+
+func enrichAppTrafficPoints(points []AppTrafficPoint) []AppTrafficPoint {
+	now := time.Now()
+	out := append([]AppTrafficPoint(nil), points...)
+	for i := range out {
+		out[i] = enrichAppTrafficPoint(out[i], now)
+	}
+	return out
 }
 
 // snapshot returns the history for a specific bridge, limited to the last `limit` points.
@@ -178,9 +229,9 @@ func (s *appTrafficHistoryStore) snapshot(bridge string, limit int) []AppTraffic
 	defer s.mu.RUnlock()
 	pts := s.history[bridge]
 	if limit <= 0 || limit >= len(pts) {
-		return append([]AppTrafficPoint(nil), pts...)
+		return enrichAppTrafficPoints(pts)
 	}
-	return append([]AppTrafficPoint(nil), pts[len(pts)-limit:]...)
+	return enrichAppTrafficPoints(pts[len(pts)-limit:])
 }
 
 // snapshotSince returns history points newer than since. It includes the
@@ -191,7 +242,7 @@ func (s *appTrafficHistoryStore) snapshotSince(bridge string, since time.Time, l
 
 	pts := s.history[bridge]
 	if since.IsZero() {
-		return limitPoints(pts, limit)
+		return enrichAppTrafficPoints(limitPoints(pts, limit))
 	}
 
 	start := -1
@@ -211,7 +262,7 @@ func (s *appTrafficHistoryStore) snapshotSince(bridge string, since time.Time, l
 	if start < 0 {
 		return nil
 	}
-	return limitPoints(pts[start:], limit)
+	return enrichAppTrafficPoints(limitPoints(pts[start:], limit))
 }
 
 func limitPoints(pts []AppTrafficPoint, limit int) []AppTrafficPoint {
@@ -236,7 +287,7 @@ func (s *appTrafficHistoryStore) topSince(since time.Time, limit int) []AppTraff
 		for i := 1; i < len(scoped); i++ {
 			prev := scoped[i-1]
 			curr := scoped[i]
-			if curr.RxBytes < prev.RxBytes || curr.TxBytes < prev.TxBytes {
+			if curr.Discontinuity || curr.RxBytes < prev.RxBytes || curr.TxBytes < prev.TxBytes {
 				continue
 			}
 			rx := curr.RxBytes - prev.RxBytes
@@ -259,11 +310,15 @@ func (s *appTrafficHistoryStore) topSince(since time.Time, limit int) []AppTraff
 			continue
 		}
 		out = append(out, AppTrafficTopItem{
-			Bridge:     bridge,
-			RxDelta:    rxDelta,
-			TxDelta:    txDelta,
-			TotalDelta: total,
-			PeakBps:    peak,
+			Bridge:             bridge,
+			RxDelta:            rxDelta,
+			TxDelta:            txDelta,
+			TotalDelta:         total,
+			PeakBps:            peak,
+			UploadDelta:        rxDelta,
+			DownloadDelta:      txDelta,
+			CounterPerspective: appTrafficCounterPerspective,
+			Source:             appTrafficSource,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -306,7 +361,7 @@ func (s *appTrafficHistoryStore) snapshotAll() map[string]AppTrafficPoint {
 	out := make(map[string]AppTrafficPoint, len(s.history))
 	for name, pts := range s.history {
 		if len(pts) > 0 {
-			out[name] = pts[len(pts)-1]
+			out[name] = enrichAppTrafficPoint(pts[len(pts)-1], time.Now())
 		}
 	}
 	return out

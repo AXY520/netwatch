@@ -127,6 +127,28 @@ func TestHandleNetworkMutationAuditRejectsUnsupportedMethods(t *testing.T) {
 	}
 }
 
+func TestMetricsExposeRawAndSemanticAppTrafficCounters(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	handler.handleMetrics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, metric := range []string{
+		"netwatch_app_traffic_rx_bytes",
+		"netwatch_app_traffic_tx_bytes",
+		"netwatch_app_traffic_upload_bytes",
+		"netwatch_app_traffic_download_bytes",
+	} {
+		if !strings.Contains(body, "# HELP "+metric+" ") {
+			t.Fatalf("metrics missing %s", metric)
+		}
+	}
+}
+
 func TestSpeedStreamLimitReturnsTooManyRequests(t *testing.T) {
 	handler := newTestHandler(t)
 	for i := 0; i < maxConcurrentSpeedStreams; i++ {

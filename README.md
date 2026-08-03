@@ -158,6 +158,35 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `GET /api/v1/timeseries?limit=300`：读取时序点
 - `GET /api/v1/network/app-traffic`：读取懒猫应用网桥流量
 - `GET /api/v1/network/app-traffic/history?bridge=lzc-br-xxx&limit=300`：读取指定网桥历史
+- `GET /api/v1/network/app-traffic/live?bridge=lzc-br-xxx`：立即采样指定网桥并返回当前计数与历史
+- `GET /api/v1/network/app-traffic/top?range=1h&limit=5`：读取区间流量排行
+
+### 应用流量语义
+
+应用流量来自宿主网络命名空间中的 Linux 网桥 sysfs 计数器，数据源标记为
+`linux_bridge_sysfs`，计数视角标记为 `host_bridge`。为兼容旧客户端，API 继续返回
+原始 `rx_bytes`、`tx_bytes`，同时提供语义化字段：
+
+```json
+{
+  "rx_bytes": 100,
+  "tx_bytes": 200,
+  "upload_bytes": 100,
+  "download_bytes": 200,
+  "counter_perspective": "host_bridge",
+  "source": "linux_bridge_sysfs"
+}
+```
+
+在宿主 bridge 视角下，RX 是应用容器发往宿主网桥的流量，对应应用上传；TX 是宿主
+网桥发往应用容器的流量，对应应用下载。该统计可能包含应用内部或局域网流量，不等同于
+运营商公网账单。使用 `network_mode: host` 的应用服务绕过独立应用网桥，无法通过此方式
+完整统计。历史点出现服务重启或计数器归零时会标记 `discontinuity`，调用方不得跨断点
+计算速率。
+
+`/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
+`netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、
+`netwatch_app_traffic_download_bytes`。
 
 ## 配置
 

@@ -10,21 +10,29 @@ import (
 
 // CapabilityReport describes runtime features available in the current environment.
 type CapabilityReport struct {
-	GeneratedAt          string   `json:"generated_at"`
-	HostNetworkLikely    bool     `json:"host_network_likely"`
-	MTR                  bool     `json:"mtr"`
-	Nmcli                bool     `json:"nmcli"`
-	Iptables             bool     `json:"iptables"`
-	Nsenter              bool     `json:"nsenter"`
-	DockerSocket         bool     `json:"docker_socket"`
-	LazycatBridgeTraffic bool     `json:"lazycat_bridge_traffic"`
-	ContainerControl     bool     `json:"container_control"`
-	NetworkConfig        bool     `json:"network_config"`
-	HostBridge           bool     `json:"host_bridge"`
-	Trace                bool     `json:"trace"`
-	AppTraffic           bool     `json:"app_traffic"`
-	LANDiscovery         bool     `json:"lan_discovery"`
-	Notes                []string `json:"notes,omitempty"`
+	GeneratedAt          string                      `json:"generated_at"`
+	HostNetworkLikely    bool                        `json:"host_network_likely"`
+	MTR                  bool                        `json:"mtr"`
+	Nmcli                bool                        `json:"nmcli"`
+	Iptables             bool                        `json:"iptables"`
+	Nsenter              bool                        `json:"nsenter"`
+	DockerSocket         bool                        `json:"docker_socket"`
+	LazycatBridgeTraffic bool                        `json:"lazycat_bridge_traffic"`
+	ContainerControl     bool                        `json:"container_control"`
+	NetworkConfig        bool                        `json:"network_config"`
+	HostBridge           bool                        `json:"host_bridge"`
+	Trace                bool                        `json:"trace"`
+	AppTraffic           bool                        `json:"app_traffic"`
+	LANDiscovery         bool                        `json:"lan_discovery"`
+	Notes                []string                    `json:"notes,omitempty"`
+	Details              map[string]CapabilityDetail `json:"details,omitempty"`
+}
+
+type CapabilityDetail struct {
+	Available bool   `json:"available"`
+	Source    string `json:"source"`
+	Transport string `json:"transport,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func binaryAvailable(name string) bool {
@@ -70,6 +78,31 @@ func (s *Service) Capabilities() CapabilityReport {
 		Trace:                mtrOK,
 		AppTraffic:           appTrafficOK,
 		LANDiscovery:         true,
+		Details:              make(map[string]CapabilityDetail),
+	}
+	networkTransport := "local_binary"
+	networkSource := "nmcli"
+	if lzcsdk.Available() {
+		networkTransport = "unix_socket"
+		networkSource = "lazycat_sdk"
+	}
+	networkReason := ""
+	if !nmcliOK {
+		networkReason = "lazycat sdk socket and local nmcli are unavailable"
+	}
+	appTrafficReason := ""
+	if !appTrafficOK {
+		appTrafficReason = "/sys/class/net is unavailable"
+	}
+	report.Details["host_network_control"] = CapabilityDetail{
+		Available: nmcliOK, Source: networkSource, Transport: networkTransport, Reason: networkReason,
+	}
+	report.Details["app_traffic"] = CapabilityDetail{
+		Available: appTrafficOK, Source: appTrafficSource, Transport: "sysfs", Reason: appTrafficReason,
+	}
+	report.Details["app_metadata"] = CapabilityDetail{
+		Available: dockerOK, Source: "lzc_docker_socket", Transport: "unix_socket",
+		Reason: capabilityReason(dockerOK, "lzc docker socket is unavailable"),
 	}
 	if !mtrOK {
 		report.Notes = append(report.Notes, "mtr unavailable: route tracing disabled")
@@ -84,4 +117,11 @@ func (s *Service) Capabilities() CapabilityReport {
 		report.Notes = append(report.Notes, "iptables/nsenter unavailable: container network block disabled")
 	}
 	return report
+}
+
+func capabilityReason(available bool, reason string) string {
+	if available {
+		return ""
+	}
+	return reason
 }

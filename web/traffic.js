@@ -71,6 +71,14 @@ const state = {
 
     const i18n = (key) => (typeof window.__ === 'function' ? window.__(key) : key);
 
+    function uploadBytes(item) {
+        return Number(item?.upload_bytes ?? item?.rx_bytes) || 0;
+    }
+
+    function downloadBytes(item) {
+        return Number(item?.download_bytes ?? item?.tx_bytes) || 0;
+    }
+
     function setPageNote(text) {
         // #traffic-page-note was removed from header; keep optional for future restore.
         if (els.note) els.note.textContent = text || '';
@@ -208,11 +216,11 @@ const state = {
             const t1 = parseTimestamp(prev.timestamp);
             const t2 = parseTimestamp(curr.timestamp);
             const seconds = Math.max(1, (t2 - t1) / 1000);
-            const previousRx = Number(prev.rx_bytes) || 0;
-            const previousTx = Number(prev.tx_bytes) || 0;
-            const currentRx = Number(curr.rx_bytes) || 0;
-            const currentTx = Number(curr.tx_bytes) || 0;
-            if (currentRx < previousRx || currentTx < previousTx) continue;
+            const previousRx = uploadBytes(prev);
+            const previousTx = downloadBytes(prev);
+            const currentRx = uploadBytes(curr);
+            const currentTx = downloadBytes(curr);
+            if (curr.discontinuity || currentRx < previousRx || currentTx < previousTx) continue;
             const rxDelta = currentRx - previousRx;
             const txDelta = currentTx - previousTx;
             rates.push({
@@ -261,7 +269,7 @@ const state = {
             latestRate: latest ? latest.totalRate : 0,
             avgRate: seconds > 0 ? totalDelta / seconds : 0,
             peakRate: peak,
-            currentTotal: (current?.rx_bytes || 0) + (current?.tx_bytes || 0)
+            currentTotal: uploadBytes(current) + downloadBytes(current)
         };
     }
 
@@ -365,8 +373,8 @@ const state = {
         const f = (n) => (Number(n) || 0).toLocaleString();
         if (els.counterTable) els.counterTable.innerHTML = `
             <tbody>
-                <tr><th>${i18n('rx_total')}</th><td>${formatBytes(current?.rx_bytes || 0)}</td></tr>
-                <tr><th>${i18n('tx_total')}</th><td>${formatBytes(current?.tx_bytes || 0)}</td></tr>
+                <tr><th>${i18n('app_traffic_upload')}</th><td>${formatBytes(uploadBytes(current))}</td></tr>
+                <tr><th>${i18n('app_traffic_download')}</th><td>${formatBytes(downloadBytes(current))}</td></tr>
                 <tr><th>${i18n('rx_packets')}</th><td>${f(current?.rx_packets)}</td></tr>
                 <tr><th>${i18n('tx_packets')}</th><td>${f(current?.tx_packets)}</td></tr>
                 <tr><th>${i18n('rx_dropped')}</th><td>${f(current?.rx_dropped)}</td></tr>
@@ -386,8 +394,8 @@ const state = {
                 <tr><th>${i18n('avg_interval')}</th><td>${avgInterval}</td></tr>
                 <tr><th>${i18n('first_sample')}</th><td>${escapeHtml(first)}</td></tr>
                 <tr><th>${i18n('last_sample')}</th><td>${escapeHtml(last)}</td></tr>
-                <tr><th>${i18n('rx_delta')}</th><td>${formatBytes(summary.rxDelta)}</td></tr>
-                <tr><th>${i18n('tx_delta')}</th><td>${formatBytes(summary.txDelta)}</td></tr>
+                <tr><th>${i18n('app_traffic_upload')}</th><td>${formatBytes(summary.rxDelta)}</td></tr>
+                <tr><th>${i18n('app_traffic_download')}</th><td>${formatBytes(summary.txDelta)}</td></tr>
                 <tr><th>${i18n('current_total')}</th><td>${formatBytes(summary.currentTotal)}</td></tr>
             </tbody>
         `;
@@ -404,8 +412,9 @@ const state = {
             const t1 = parseTimestamp(prev.timestamp);
             const t2 = parseTimestamp(curr.timestamp);
             const seconds = Math.max(1, (t2 - t1) / 1000);
-            if ((curr.rx_bytes || 0) < (prev.rx_bytes || 0) || (curr.tx_bytes || 0) < (prev.tx_bytes || 0)) {
-                anomalies.push({ timestamp: curr.timestamp, type: i18n('counter_reset'), value: '-' });
+            if (curr.discontinuity || uploadBytes(curr) < uploadBytes(prev) || downloadBytes(curr) < downloadBytes(prev)) {
+                const reason = curr.discontinuity_reason === 'service_restart' ? i18n('service_restart') : i18n('counter_reset');
+                anomalies.push({ timestamp: curr.timestamp, type: reason, value: '-' });
             }
             if (summary.rates.length > 1 && seconds > Math.max(180, ((summary.sampleSeconds || summary.seconds) / summary.rates.length) * 3)) {
                 anomalies.push({ timestamp: curr.timestamp, type: i18n('sample_gap'), value: formatSeconds(Math.round(seconds)) });
@@ -464,16 +473,16 @@ const state = {
         const sort = els.sort?.value || 'total-desc';
         const list = [...(state.snapshot?.bridges || [])].filter((item) => {
             if (isNetwatchBridge(item)) return false;
-            const total = (item.rx_bytes || 0) + (item.tx_bytes || 0);
+            const total = uploadBytes(item) + downloadBytes(item);
             const haystack = `${appTitle(item)} ${appSubtitle(item)}`.toLowerCase();
             if (hideIdle && total === 0) return false;
             return q === '' || haystack.includes(q);
         });
         list.sort((a, b) => {
             if (sort === 'name-asc') return appTitle(a).localeCompare(appTitle(b), 'zh-CN');
-            if (sort === 'rx-desc') return (b.rx_bytes || 0) - (a.rx_bytes || 0);
-            if (sort === 'tx-desc') return (b.tx_bytes || 0) - (a.tx_bytes || 0);
-            return ((b.rx_bytes || 0) + (b.tx_bytes || 0)) - ((a.rx_bytes || 0) + (a.tx_bytes || 0));
+            if (sort === 'rx-desc') return uploadBytes(b) - uploadBytes(a);
+            if (sort === 'tx-desc') return downloadBytes(b) - downloadBytes(a);
+            return (uploadBytes(b) + downloadBytes(b)) - (uploadBytes(a) + downloadBytes(a));
         });
         return list;
     }
@@ -483,8 +492,8 @@ const state = {
         if (!prev || !state.prevCountersAt || !item) return '';
         const dt = (Date.now() - state.prevCountersAt) / 1000;
         if (!(dt > 0.4)) return '';
-        const rx = Math.max(0, (item.rx_bytes || 0) - (prev.rx || 0));
-        const tx = Math.max(0, (item.tx_bytes || 0) - (prev.tx || 0));
+        const rx = Math.max(0, uploadBytes(item) - (prev.rx || 0));
+        const tx = Math.max(0, downloadBytes(item) - (prev.tx || 0));
         const bps = (rx + tx) / dt;
         if (!(bps > 0)) return '0 B/s';
         return formatSpeed(bps);
@@ -496,7 +505,7 @@ const state = {
             const map = {};
             state.snapshot.bridges.forEach((b) => {
                 if (!b || !b.bridge) return;
-                map[b.bridge] = { rx: b.rx_bytes || 0, tx: b.tx_bytes || 0 };
+                map[b.bridge] = { rx: uploadBytes(b), tx: downloadBytes(b) };
             });
             state.prevCounters = map;
             state.prevCountersAt = state._snapshotAt || Date.now();
@@ -536,7 +545,7 @@ const state = {
         els.appList.innerHTML = list.map((item) => {
             const title = appTitle(item);
             const sub = appSubtitle(item);
-            const total = (item.rx_bytes || 0) + (item.tx_bytes || 0);
+            const total = uploadBytes(item) + downloadBytes(item);
             const rate = liveRateForBridge(item.bridge, item);
             const icon = item.icon ? `<img class="app-icon" src="${escapeHtml(item.icon)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
             const subHtml = sub ? `<div class="traffic-app-sub">${escapeHtml(sub)}</div>` : '';

@@ -150,8 +150,10 @@ func (s *Service) SampleAppTrafficBridge(bridge string, since time.Time, limit i
 		return AppTrafficLiveResult{}, false
 	}
 	return AppTrafficLiveResult{
-		GeneratedAt: localTimestamp(),
-		Bridge:      stats,
-		History:     s.appTrafficHistory.snapshotSince(bridge, since, limit),
+		GeneratedAt:        localTimestamp(),
+		Bridge:             stats,
+		History:            s.appTrafficHistory.snapshotSince(bridge, since, limit),
+		CounterPerspective: appTrafficCounterPerspective,
+		Source:             appTrafficSource,
 	}, true
 }

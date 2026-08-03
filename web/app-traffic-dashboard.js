@@ -7,6 +7,14 @@ var i18n = window.__app.i18n;
 var netwatchGet = window.__app.netwatchGet;
 var netwatchPost = window.__app.netwatchPost;
 
+function appTrafficUploadBytes(item) {
+    return Number(item && item.upload_bytes != null ? item.upload_bytes : item && item.rx_bytes) || 0;
+}
+
+function appTrafficDownloadBytes(item) {
+    return Number(item && item.download_bytes != null ? item.download_bytes : item && item.tx_bytes) || 0;
+}
+
 function initAppTraffic() {
     if (state.appTrafficInitialized) return;
     state.appTrafficInitialized = true;
@@ -26,11 +34,12 @@ function initAppTraffic() {
         if (key === 'app') {
             result = getAppTrafficName(a).localeCompare(getAppTrafficName(b), 'zh-CN');
         } else if (key === 'rx') {
-            result = (a.rx_bytes || 0) - (b.rx_bytes || 0);
+            result = appTrafficUploadBytes(a) - appTrafficUploadBytes(b);
         } else if (key === 'tx') {
-            result = (a.tx_bytes || 0) - (b.tx_bytes || 0);
+            result = appTrafficDownloadBytes(a) - appTrafficDownloadBytes(b);
         } else {
-            result = ((a.rx_bytes || 0) + (a.tx_bytes || 0)) - ((b.rx_bytes || 0) + (b.tx_bytes || 0));
+            result = (appTrafficUploadBytes(a) + appTrafficDownloadBytes(a)) -
+                (appTrafficUploadBytes(b) + appTrafficDownloadBytes(b));
         }
         return direction === 'asc' ? result : -result;
     };
@@ -67,7 +76,9 @@ function initAppTraffic() {
             var direction = state.appTrafficSort.direction;
             list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
             tbody.innerHTML = list.map(function (b) {
-                var total = (b.rx_bytes || 0) + (b.tx_bytes || 0);
+                var uploadBytes = appTrafficUploadBytes(b);
+                var downloadBytes = appTrafficDownloadBytes(b);
+                var total = uploadBytes + downloadBytes;
                 var iconHtml = b.icon ? '<img class="app-icon" src="' + NetwatchShared.escapeHtml(b.icon) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '';
                 var statusLine = b.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(b.status_text) + '</div>' : '';
                 var nameHtml;
@@ -91,8 +102,8 @@ function initAppTraffic() {
                 }
                 return '<tr data-bridge="' + b.bridge + '" data-block="' + blockMode + '">' +
                     '<td class="col-app"><div class="app-cell">' + iconHtml + '<div class="app-cell-info">' + nameHtml + '</div></div>' + blockBtns + '</td>' +
-                    '<td class="col-rx">' + NetwatchShared.formatBytes(b.rx_bytes || 0) + '</td>' +
-                    '<td class="col-tx">' + NetwatchShared.formatBytes(b.tx_bytes || 0) + '</td>' +
+                    '<td class="col-rx">' + NetwatchShared.formatBytes(uploadBytes) + '</td>' +
+                    '<td class="col-tx">' + NetwatchShared.formatBytes(downloadBytes) + '</td>' +
                     '<td class="col-total">' + NetwatchShared.formatBytes(total) + '</td>' +
                 '</tr>';
             }).join('');

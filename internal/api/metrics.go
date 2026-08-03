@@ -34,6 +34,20 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeHelp("netwatch_nat_reachable", "STUN reachability", "gauge")
 	fmt.Fprintf(&b, "netwatch_nat_reachable %d\n", boolInt(summary.NetworkInfo.NAT.Reachable))
 
+	traffic := probe.CollectAppTrafficCounters()
+	writeHelp("netwatch_app_traffic_rx_bytes", "Raw bytes received by the host bridge", "counter")
+	writeHelp("netwatch_app_traffic_tx_bytes", "Raw bytes transmitted by the host bridge", "counter")
+	writeHelp("netwatch_app_traffic_upload_bytes", "Application upload bytes from the host-bridge perspective", "counter")
+	writeHelp("netwatch_app_traffic_download_bytes", "Application download bytes from the host-bridge perspective", "counter")
+	for _, app := range traffic {
+		label := fmt.Sprintf(`bridge="%s",app_id="%s",perspective="%s",source="%s"`,
+			escapeLabel(app.Bridge), escapeLabel(app.AppID), escapeLabel(app.CounterPerspective), escapeLabel(app.Source))
+		fmt.Fprintf(&b, "netwatch_app_traffic_rx_bytes{%s} %d\n", label, app.RxBytes)
+		fmt.Fprintf(&b, "netwatch_app_traffic_tx_bytes{%s} %d\n", label, app.TxBytes)
+		fmt.Fprintf(&b, "netwatch_app_traffic_upload_bytes{%s} %d\n", label, app.UploadBytes)
+		fmt.Fprintf(&b, "netwatch_app_traffic_download_bytes{%s} %d\n", label, app.DownloadBytes)
+	}
+
 	_, _ = w.Write([]byte(b.String()))
 }
 
