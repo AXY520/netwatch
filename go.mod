@@ -6,6 +6,7 @@ require (
 	gitee.com/linakesi/lzc-sdk v0.1.0
 	github.com/cilium/ebpf v0.21.0
 	github.com/jsimonetti/rtnetlink/v2 v2.0.1
+	github.com/miekg/dns v1.1.55
 	github.com/showwin/speedtest-go v1.7.10
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0
@@ -21,7 +22,9 @@ require (
 	github.com/josharian/native v1.1.0 // indirect
 	github.com/mdlayher/netlink v1.7.2 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 )

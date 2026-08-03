@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,6 +13,26 @@ import (
 func (h *Handler) handleTimeseries(w http.ResponseWriter, r *http.Request) {
 	limit := clampQueryLimit(r.URL.Query().Get("limit"), 300, 2000)
 	writeJSON(w, http.StatusOK, h.service.GetTimeseries(limit))
+}
+
+func (h *Handler) handleDNSDiagnostic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var request probe.DNSDiagnosticRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	result, err := probe.RunDNSDiagnostic(ctx, request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, time.Minute)
 }
 
 func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {

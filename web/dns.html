@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN" id="html-root">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0b">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
+    <title data-i18n="dns_diag_page_title">NETWATCH // DNS 诊断</title>
+    <script>
+        var savedTheme = localStorage.getItem('theme');
+        if (!savedTheme) savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+    </script>
+    <script src="/i18n.js" defer></script>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+    <div class="container traffic-page dns-diag-page">
+        <header class="traffic-topbar">
+            <div class="traffic-header-copy">
+                <div class="logo">NET<span>WATCH</span></div>
+                <div class="note traffic-page-subtitle" data-i18n="dns_diag_page_subtitle">系统 DNS 与指定服务器对比</div>
+            </div>
+            <div class="controls">
+                <a class="button-link btn-with-icon" href="/events.html"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span data-i18n="events_center_btn">事件中心</span></a>
+                <a class="button-link btn-with-icon" href="/"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span data-i18n="back_to_dashboard">返回仪表盘</span></a>
+            </div>
+        </header>
+
+        <main class="dns-diag-layout">
+            <form id="dns-diag-form" class="dns-diag-toolbar">
+                <label class="dns-diag-name-field">
+                    <span data-i18n="dns_diag_domain">域名</span>
+                    <input id="dns-diag-name" type="text" inputmode="url" autocomplete="off" placeholder="github.com" required>
+                </label>
+                <fieldset class="dns-diag-type-field">
+                    <legend data-i18n="dns_diag_record_type">记录类型</legend>
+                    <div class="dns-type-segments" id="dns-type-segments">
+                        <button type="button" class="active" data-type="A" aria-pressed="true">A</button>
+                        <button type="button" data-type="AAAA" aria-pressed="false">AAAA</button>
+                        <button type="button" data-type="CNAME" aria-pressed="false">CNAME</button>
+                    </div>
+                </fieldset>
+                <label class="dns-diag-server-field">
+                    <span data-i18n="dns_diag_server">对比服务器</span>
+                    <input id="dns-diag-server" type="text" autocomplete="off" placeholder="223.5.5.5">
+                </label>
+                <button id="dns-diag-run" type="submit" class="btn-with-icon"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span><span data-i18n="dns_diag_run">查询</span></button>
+            </form>
+
+            <div id="dns-diag-status" class="dns-diag-status placeholder" data-i18n="dns_diag_idle">等待查询</div>
+            <section id="dns-diag-differences" class="dns-diag-differences" hidden></section>
+            <section id="dns-diag-results" class="dns-diag-results" hidden>
+                <article class="dns-result-panel" id="dns-system-result"></article>
+                <article class="dns-result-panel" id="dns-specified-result" hidden></article>
+            </section>
+        </main>
+    </div>
+
+    <script src="/shared.js" defer></script>
+    <script src="/api.js" defer></script>
+    <script src="/dns.js" defer></script>
+</body>
+</html>

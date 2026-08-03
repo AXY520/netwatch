@@ -172,6 +172,7 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `GET /api/v1/diagnostics/trace`：读取最近一次 trace 任务状态
 - `POST /api/v1/diagnostics/trace?host=github.com&hops=20`：启动 trace 任务
 - `GET /api/v1/diagnostics/trace/task`：读取 trace 任务状态
+- `POST /api/v1/diagnostics/dns`：查询 A、AAAA 或 CNAME，可对比系统 DNS 与指定服务器
 - `GET /api/v1/timeseries?limit=300`：读取时序点
 - `GET /api/v1/network/app-traffic`：读取懒猫应用网桥流量
 - `GET /api/v1/network/app-traffic/history?bridge=lzc-br-xxx&limit=300`：读取指定网桥历史

@@ -25,6 +25,7 @@ func (h *Handler) registerObservationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/timeseries", h.handleTimeseries)
 	mux.HandleFunc("/api/v1/settings", h.handleSettings)
 	mux.HandleFunc("/api/v1/diagnostics/trace", h.handleTrace)
+	mux.HandleFunc("/api/v1/diagnostics/dns", h.handleDNSDiagnostic)
 	mux.HandleFunc("/api/v1/diagnostics/trace/task", h.handleTraceTask)
 	mux.HandleFunc("/api/v1/diagnostics/trace/cancel", h.handleTraceCancel)
 	mux.HandleFunc("/api/v1/events", h.handleSSE)

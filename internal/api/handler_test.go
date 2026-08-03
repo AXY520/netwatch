@@ -48,6 +48,16 @@ func TestHandleTraceRejectsUnsupportedMethods(t *testing.T) {
 	}
 }
 
+func TestHandleDNSDiagnosticRejectsInvalidPayload(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/diagnostics/dns", strings.NewReader(`{"name":"example.com","type":"MX"}`))
+	rec := httptest.NewRecorder()
+	handler.handleDNSDiagnostic(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 func TestHandleLocalUploadReportsReceivedBytes(t *testing.T) {
 	handler := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/local/upload", strings.NewReader("abc"))
