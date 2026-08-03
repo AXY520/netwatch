@@ -3,6 +3,7 @@ package probe
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,14 +42,20 @@ type NetworkEventQuery struct {
 }
 
 type networkEventStore struct {
-	mu     sync.RWMutex
-	path   string
-	events []NetworkEvent
-	seq    uint64
+	mu                   sync.RWMutex
+	path                 string
+	events               []NetworkEvent
+	seq                  uint64
+	trafficBaselineReady bool
+	trafficSampledAt     time.Time
+	trafficCounters      map[string]AppBridgeStats
 }
 
 func newNetworkEventStore(dataDir string) *networkEventStore {
-	store := &networkEventStore{path: filepath.Join(dataDir, "network_events.json")}
+	store := &networkEventStore{
+		path:            filepath.Join(dataDir, "network_events.json"),
+		trafficCounters: make(map[string]AppBridgeStats),
+	}
 	if body, err := os.ReadFile(store.path); err == nil {
 		_ = json.Unmarshal(body, &store.events)
 	}
@@ -203,6 +210,114 @@ func (s *Service) recordSummaryEvents(previous, current Summary) {
 				DedupeKey: "interface_state_changed:" + item.Name,
 			})
 		}
+	}
+	previousPrefixes := interfaceIPv6Prefixes(previous.NetworkInfo.Interfaces)
+	currentPrefixes := interfaceIPv6Prefixes(current.NetworkInfo.Interfaces)
+	interfaceNames := make(map[string]bool, len(previousPrefixes)+len(currentPrefixes))
+	for name := range previousPrefixes {
+		interfaceNames[name] = true
+	}
+	for name := range currentPrefixes {
+		interfaceNames[name] = true
+	}
+	for name := range interfaceNames {
+		before := strings.Join(previousPrefixes[name], ", ")
+		after := strings.Join(currentPrefixes[name], ", ")
+		if before == after {
+			continue
+		}
+		s.appendNetworkEvent(NetworkEvent{
+			Kind: "ipv6_prefix_changed", Severity: "info", Source: "network_observer", Title: "IPv6 前缀已变化",
+			Summary:   fmt.Sprintf("%s: %s -> %s", name, displayEventValue(before), displayEventValue(after)),
+			Details:   map[string]any{"interface": name, "before": previousPrefixes[name], "after": currentPrefixes[name]},
+			DedupeKey: "ipv6_prefix_changed:" + name,
+		})
+	}
+}
+
+func interfaceIPv6Prefixes(interfaces []InterfaceInfo) map[string][]string {
+	out := make(map[string][]string)
+	for _, item := range interfaces {
+		seen := make(map[string]bool)
+		for _, raw := range item.IPv6 {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil || !prefix.Addr().IsGlobalUnicast() || prefix.Addr().IsLinkLocalUnicast() {
+				continue
+			}
+			value := prefix.Masked().String()
+			if !seen[value] {
+				seen[value] = true
+				out[item.Name] = append(out[item.Name], value)
+			}
+		}
+		sort.Strings(out[item.Name])
+	}
+	return out
+}
+
+func (s *Service) recordAppTrafficEvents() {
+	if s.events == nil {
+		return
+	}
+	threshold := s.notify.snapshotConfig().AbnormalTrafficThreshold
+	s.events.observeAppTraffic(CollectAppTrafficCounters(), time.Now(), threshold)
+}
+
+func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.Time, thresholdMbps int) {
+	current := make(map[string]AppBridgeStats, len(stats))
+	for _, item := range stats {
+		current[item.Bridge] = item
+	}
+	s.mu.Lock()
+	if !s.trafficBaselineReady {
+		s.trafficBaselineReady = true
+		s.trafficSampledAt = now
+		s.trafficCounters = current
+		s.mu.Unlock()
+		return
+	}
+	previous := s.trafficCounters
+	previousAt := s.trafficSampledAt
+	s.trafficCounters = current
+	s.trafficSampledAt = now
+	s.mu.Unlock()
+
+	for bridge := range current {
+		if _, ok := previous[bridge]; !ok {
+			s.append(NetworkEvent{
+				Kind: "app_bridge_appeared", Severity: "info", Source: "app_traffic_observer", Title: "应用网桥已出现",
+				Summary: bridge, Details: map[string]any{"bridge": bridge}, DedupeKey: "app_bridge:" + bridge,
+			})
+		}
+	}
+	for bridge := range previous {
+		if _, ok := current[bridge]; !ok {
+			s.append(NetworkEvent{
+				Kind: "app_bridge_disappeared", Severity: "warning", Source: "app_traffic_observer", Title: "应用网桥已消失",
+				Summary: bridge, Details: map[string]any{"bridge": bridge}, DedupeKey: "app_bridge:" + bridge,
+			})
+		}
+	}
+	seconds := now.Sub(previousAt).Seconds()
+	if thresholdMbps <= 0 || seconds <= 0 {
+		return
+	}
+	for bridge, item := range current {
+		before, ok := previous[bridge]
+		if !ok || item.RxBytes < before.RxBytes || item.TxBytes < before.TxBytes {
+			continue
+		}
+		bytesDelta := item.RxBytes - before.RxBytes + item.TxBytes - before.TxBytes
+		mbps := float64(bytesDelta) * 8 / seconds / 1_000_000
+		if mbps < float64(thresholdMbps) {
+			continue
+		}
+		s.append(NetworkEvent{
+			Kind: "app_traffic_high", Severity: "warning", Source: "app_traffic_observer", Title: "应用流量超过阈值",
+			Summary:   fmt.Sprintf("%s: %.1f Mbps", bridge, mbps),
+			Details:   map[string]any{"bridge": bridge, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
+			DedupeKey: "app_traffic_high:" + bridge,
+		})
 	}
 }
 

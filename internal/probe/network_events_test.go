@@ -57,3 +57,42 @@ func TestRecordSummaryEventsCapturesNetworkChanges(t *testing.T) {
 		t.Fatalf("kinds = %v", kinds)
 	}
 }
+
+func TestRecordSummaryEventsCollapsesIPv6PrivacyAddressesToPrefix(t *testing.T) {
+	service := &Service{events: newNetworkEventStore(t.TempDir())}
+	previous := Summary{Ready: true, NetworkInfo: NetworkInfo{Interfaces: []InterfaceInfo{{Name: "wlan0", IPv6: []string{"2001:db8:1::10/64"}}}}}
+	current := Summary{Ready: true, NetworkInfo: NetworkInfo{Interfaces: []InterfaceInfo{{Name: "wlan0", IPv6: []string{"2001:db8:1::20/64"}}}}}
+	service.recordSummaryEvents(previous, current)
+	if events := service.NetworkEvents(NetworkEventQuery{Limit: 10}); len(events) != 0 {
+		t.Fatalf("privacy address rotation must not create prefix event: %+v", events)
+	}
+	current.NetworkInfo.Interfaces[0].IPv6 = []string{"2001:db8:2::20/64"}
+	service.recordSummaryEvents(previous, current)
+	events := service.NetworkEvents(NetworkEventQuery{Limit: 10})
+	if len(events) != 1 || events[0].Kind != "ipv6_prefix_changed" {
+		t.Fatalf("events = %+v", events)
+	}
+}
+
+func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
+	store := newNetworkEventStore(t.TempDir())
+	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", RxBytes: 100, TxBytes: 100}}, start, 10)
+	store.observeAppTraffic([]AppBridgeStats{
+		{Bridge: "lzc-br-a", RxBytes: 20_000_100, TxBytes: 20_000_100},
+		{Bridge: "lzc-br-b", RxBytes: 0, TxBytes: 0},
+	}, start.Add(10*time.Second), 10)
+	events := store.query(NetworkEventQuery{Limit: 10})
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	kinds := NetworkEventKinds(events)
+	if kinds[0] != "app_bridge_appeared" || kinds[1] != "app_traffic_high" {
+		t.Fatalf("kinds = %v", kinds)
+	}
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b"}}, start.Add(20*time.Second), 10)
+	events = store.query(NetworkEventQuery{Kind: "app_bridge_disappeared", Limit: 10})
+	if len(events) != 1 || events[0].Summary != "lzc-br-a" {
+		t.Fatalf("disappearance events = %+v", events)
+	}
+}

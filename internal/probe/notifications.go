@@ -142,6 +142,7 @@ func (s *Service) runBackgroundMonitorTick() {
 	s.mu.Unlock()
 
 	s.recordSummaryEvents(previousSummary, finalSummary)
+	s.recordAppTrafficEvents()
 	s.recordTimeseries(finalSummary)
 	s.notify.evaluateRules(finalSummary, func() RealtimeNetStats {
 		return s.nicStats.sampleAndSnapshot()
