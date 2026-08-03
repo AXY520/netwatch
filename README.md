@@ -127,6 +127,7 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `POST /api/v1/network/bridges/confirm`：确认主机网桥变更
 - `POST /api/v1/network/bridges/rollback`：回滚主机网桥变更
 - `POST /api/v1/network/bridges/dissolve`：解散受管主机网桥
+- `GET /api/v1/network/mutations/audit?limit=50`：读取最近的统一网络变更审计（最多 200 条）
 
 设置：
 

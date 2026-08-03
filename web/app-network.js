@@ -962,13 +962,19 @@ async function applyNetworkConfig() {
             if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         }
         if (e.output) {
-            e.output.textContent = result.output || '';
-            e.output.hidden = !result.output;
+            var configOutput = appendNetworkMutationVerification(result.output || '', result.verification);
+            e.output.textContent = configOutput;
+            e.output.hidden = !configOutput;
         }
         if (e.confirm) e.confirm.hidden = false;
         if (e.rollback) e.rollback.hidden = false;
     } catch (err) {
         if (e.status) e.status.textContent = i18n('network_config_failed') + ': ' + err.message;
+        if (e.output && err && err.payload) {
+            var failedOutput = appendNetworkMutationVerification(err.payload.output || '', err.payload.verification);
+            e.output.textContent = failedOutput;
+            e.output.hidden = !failedOutput;
+        }
     } finally {
         if (e.apply) e.apply.disabled = false;
     }
@@ -1721,6 +1727,21 @@ function setHostBridgeOutput(text) {
     e.output.textContent = text;
 }
 
+function appendNetworkMutationVerification(output, verification) {
+	output = String(output || '').trim();
+	if (!verification || !Array.isArray(verification.steps)) return output;
+	var statusKey = verification.status === 'passed' ? 'ok' : (verification.status === 'warning' ? 'degraded' : 'failed');
+	var lines = [i18n('network_mutation_verification') + ': ' + i18n(statusKey) + ' (' + (verification.duration_ms || 0) + 'ms)'];
+	verification.steps.forEach(function (step) {
+		if (step && !step.ok) {
+			var label = i18n('network_verify_' + step.name);
+			if (!label || label === 'network_verify_' + step.name) label = step.name || i18n('unknown');
+			lines.push(label + ': ' + (step.error || i18n('failed')));
+		}
+	});
+	return [output, lines.join('\n')].filter(Boolean).join('\n');
+}
+
 function currentNetworkConfigDevice() {
     var e = hostBridgeEls();
     return e.device ? String(e.device.value || '').trim() : '';
@@ -1992,7 +2013,7 @@ async function finishHostBridge(action) {
         : '/api/v1/network/bridges/rollback';
     try {
         var result = await netwatchPost(path, body);
-        setHostBridgeOutput(result.output || result.note || '');
+        setHostBridgeOutput(appendNetworkMutationVerification(result.output || result.note || '', result.verification));
         if (e.status) {
             e.status.dataset.kind = '';
             e.status.textContent = result.note || '';
@@ -2006,7 +2027,7 @@ async function finishHostBridge(action) {
     } catch (err) {
         var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_bridge_failed');
         if (e.status) e.status.textContent = msg;
-        setHostBridgeOutput((err && err.payload && err.payload.output) || '');
+        setHostBridgeOutput(appendNetworkMutationVerification((err && err.payload && err.payload.output) || '', err && err.payload && err.payload.verification));
     }
 }
 
@@ -2086,7 +2107,7 @@ async function createHostBridge() {
     if (e.create) e.create.disabled = true;
     try {
         var result = await netwatchPost('/api/v1/network/bridges/create', body);
-        setHostBridgeOutput(result.output || result.note || '');
+        setHostBridgeOutput(appendNetworkMutationVerification(result.output || result.note || '', result.verification));
         if (e.status) e.status.textContent = result.note || '';
         if (e.suffix) e.suffix.dataset.touched = '';
         // Network usually drops right after create. Paint confirm UI from the
@@ -2114,7 +2135,7 @@ async function createHostBridge() {
     } catch (err) {
         var msg = (err && err.payload && (err.payload.error || err.payload.message)) || (err && err.message) || i18n('host_bridge_failed');
         if (e.status) e.status.textContent = msg;
-        setHostBridgeOutput((err && err.payload && err.payload.output) || '');
+        setHostBridgeOutput(appendNetworkMutationVerification((err && err.payload && err.payload.output) || '', err && err.payload && err.payload.verification));
     } finally {
         if (e.create) e.create.disabled = false;
     }
@@ -2654,7 +2675,7 @@ async function applyHostDNS() {
     if (e.apply) e.apply.disabled = true;
     try {
         var result = await netwatchPost('/api/v1/network/dns/apply', body);
-        setHostDNSOutput(result.output || result.note || '');
+        setHostDNSOutput(appendNetworkMutationVerification(result.output || result.note || '', result.verification));
         if (e.status) e.status.textContent = result.note || '';
         if (result && (result.ok || result.rollback_id)) {
             var pendDev = result.device || body.device || '';
@@ -2682,7 +2703,7 @@ async function applyHostDNS() {
     } catch (err) {
         var msg = (err && err.payload && (err.payload.error || err.payload.message)) || (err && err.message) || i18n('host_dns_failed');
         if (e.status) e.status.textContent = msg;
-        setHostDNSOutput((err && err.payload && err.payload.output) || '');
+        setHostDNSOutput(appendNetworkMutationVerification((err && err.payload && err.payload.output) || '', err && err.payload && err.payload.verification));
     } finally {
         if (e.apply) e.apply.disabled = false;
     }

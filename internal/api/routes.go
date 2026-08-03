@@ -64,6 +64,7 @@ func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/network/mutations/audit", h.handleNetworkMutationAudit)
 	mux.HandleFunc("/api/v1/network/ipv6/renew-nics", h.handleIPv6RenewNICs)
 	mux.HandleFunc("/api/v1/network/ipv6/renew", h.handleIPv6Renew)
 	mux.HandleFunc("/api/v1/network/config/devices", h.handleNetworkConfigDevices)

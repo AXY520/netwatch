@@ -30,13 +30,13 @@ type networkConfigSnapshot struct {
 }
 
 type networkConfigRollback struct {
-	ID       string
-	Device   string
-	Request  NetworkConfigApplyRequest
-	Previous NetworkConfigDevice
-	Snapshot networkConfigSnapshot
-	Timer    *time.Timer
-	Until    time.Time
+	ID       string                    `json:"id"`
+	Device   string                    `json:"device"`
+	Request  NetworkConfigApplyRequest `json:"request"`
+	Previous NetworkConfigDevice       `json:"previous"`
+	Snapshot networkConfigSnapshot     `json:"snapshot"`
+	Timer    *time.Timer               `json:"-"`
+	Until    time.Time                 `json:"until"`
 }
 
 type networkConfigAuditEvent struct {
@@ -71,16 +71,16 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 	if err := validateNetworkConfigRequest(req); err != nil {
 		return NetworkConfigApplyResult{Device: req.Device, Error: err.Error()}
 	}
-	s.network.mu.Lock()
-	if s.network.dnsRollback != nil {
-		s.network.mu.Unlock()
-		return NetworkConfigApplyResult{Device: req.Device, Error: "已有待确认的 DNS 变更，请先确认或回滚"}
+	id, err := s.reserveNetworkMutation(networkMutationIP, req.Device)
+	if err != nil {
+		return NetworkConfigApplyResult{Device: req.Device, Error: err.Error()}
 	}
-	if s.network.bridgeRollback != nil {
-		s.network.mu.Unlock()
-		return NetworkConfigApplyResult{Device: req.Device, Error: "已有待确认的网桥变更，请先确认或回滚"}
-	}
-	s.network.mu.Unlock()
+	activated := false
+	defer func() {
+		if !activated {
+			s.abortNetworkMutation(id)
+		}
+	}()
 
 	devices, err := listNetworkConfigDevices(ctx)
 	if err != nil {
@@ -100,8 +100,6 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 	if err != nil {
 		return NetworkConfigApplyResult{Device: req.Device, Connection: dev.Connection, Error: err.Error()}
 	}
-	id := newRollbackID()
-
 	args := networkConfigApplyArgs(dev.Connection, req)
 	out1, err := nmcli(ctx, args, 10*time.Second)
 	if err == nil {
@@ -116,24 +114,31 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 
 	until := time.Now().Add(networkConfigRollbackDelay)
 	rb := &networkConfigRollback{ID: id, Device: req.Device, Request: req, Previous: dev, Snapshot: snapshot, Until: until}
-	rb.Timer = time.AfterFunc(networkConfigRollbackDelay, func() {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if out, err := s.rollbackNetworkConfig(rollbackCtx, id, "auto_rollback"); err != nil {
-			logger.Warn("network config auto rollback failed id=%s device=%s err=%v out=%q", id, req.Device, err, out)
+	if err := s.activateNetworkMutation(&networkMutation{
+		ID: id, Kind: networkMutationIP, Target: req.Device, Until: until, IP: rb,
+	}); err != nil {
+		_, restoreErr := restoreNetworkConfigSnapshot(ctx, rb.Device, rb.Snapshot)
+		if restoreErr != nil {
+			return NetworkConfigApplyResult{Device: req.Device, Connection: dev.Connection, Error: fmt.Sprintf("登记网络变更失败: %v；恢复原配置失败: %v", err, restoreErr)}
 		}
-	})
-
-	s.network.mu.Lock()
-	if old := s.network.rollbacks[req.Device]; old != nil && old.Timer != nil {
-		old.Timer.Stop()
+		return NetworkConfigApplyResult{Device: req.Device, Connection: dev.Connection, Error: "登记网络变更失败: " + err.Error()}
 	}
-	s.network.rollbacks[req.Device] = rb
-	s.network.rollbacks[id] = rb
-	s.network.mu.Unlock()
+	activated = true
+	s.scheduleNetworkMutationRollback(s.networkMutationSnapshot())
+	verification := s.verifyNetworkMutation(ctx, id)
+	if verification.Status == "failed" {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rollbackOut, rollbackErr := s.rollbackNetworkConfig(rollbackCtx, id, "verification_rollback")
+		cancel()
+		errText := "网络配置未通过应用后验证，已自动回滚"
+		if rollbackErr != nil {
+			errText = "网络配置未通过应用后验证，自动回滚失败: " + rollbackErr.Error()
+		}
+		return NetworkConfigApplyResult{Device: req.Device, Connection: dev.Connection, Output: strings.TrimSpace(strings.Join([]string{out1, rollbackOut}, "\n")), Error: errText, Verification: &verification}
+	}
 
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: "apply", ID: id, Device: req.Device, Connection: dev.Connection, Request: &req, Snapshot: &snapshot, OK: true})
-	return NetworkConfigApplyResult{OK: true, Device: req.Device, Connection: dev.Connection, RollbackID: id, RollbackUntil: until.Format(time.DateTime), Output: strings.TrimSpace(out1)}
+	return NetworkConfigApplyResult{OK: true, Device: req.Device, Connection: dev.Connection, RollbackID: id, RollbackUntil: until.Format(time.DateTime), Output: strings.TrimSpace(out1), Verification: &verification}
 }
 
 func (s *Service) CheckNetworkConfigIP(ctx context.Context, req NetworkConfigIPCheckRequest) NetworkConfigIPCheckResult {
@@ -164,18 +169,11 @@ func (s *Service) ConfirmNetworkConfig(id string) NetworkConfigConfirmResult {
 	if id == "" {
 		return NetworkConfigConfirmResult{Error: "rollback id required"}
 	}
-	s.network.mu.Lock()
-	rb := s.network.rollbacks[id]
-	if rb == nil {
-		s.network.mu.Unlock()
+	mutation, err := s.confirmNetworkMutation(id, networkMutationIP)
+	if err != nil || mutation.IP == nil {
 		return NetworkConfigConfirmResult{ID: id, Error: "rollback task not found"}
 	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
-	delete(s.network.rollbacks, id)
-	delete(s.network.rollbacks, rb.Device)
-	s.network.mu.Unlock()
+	rb := mutation.IP
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: "confirm", ID: id, Device: rb.Device, Connection: rb.Snapshot.Connection, OK: true})
 	return NetworkConfigConfirmResult{OK: true, ID: id}
 }
@@ -198,7 +196,7 @@ func (s *Service) GetNetworkConfigPending() NetworkConfigPendingResult {
 			remaining = 0
 		}
 		return NetworkConfigPendingResult{
-			Pending:       remaining > 0,
+			Pending:       true,
 			ID:            rb.ID,
 			Device:        rb.Device,
 			Connection:    rb.Snapshot.Connection,
@@ -227,20 +225,14 @@ func (s *Service) RollbackNetworkConfig(ctx context.Context, id string) NetworkC
 
 func (s *Service) rollbackNetworkConfig(ctx context.Context, id, action string) (string, error) {
 	id = strings.TrimSpace(id)
-	s.network.mu.Lock()
-	rb := s.network.rollbacks[id]
-	if rb == nil {
-		s.network.mu.Unlock()
+	mutation, err := s.beginNetworkMutationRollback(id, networkMutationIP)
+	if err != nil || mutation.IP == nil {
 		return "", errors.New("rollback task not found")
 	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
-	delete(s.network.rollbacks, id)
-	delete(s.network.rollbacks, rb.Device)
-	s.network.mu.Unlock()
+	rb := mutation.IP
 
 	out, err := restoreNetworkConfigSnapshot(ctx, rb.Device, rb.Snapshot)
+	s.finishNetworkMutationRollback(rb.ID, err)
 	s.auditNetworkConfig(networkConfigAuditEvent{Action: action, ID: id, Device: rb.Device, Connection: rb.Snapshot.Connection, Snapshot: &rb.Snapshot, OK: err == nil, Error: errString(err)})
 	return out, err
 }

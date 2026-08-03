@@ -96,6 +96,37 @@ func TestHandleHealthReportsStartingUntilFirstProbe(t *testing.T) {
 	}
 }
 
+func TestHandleNetworkMutationAudit(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/mutations/audit?limit=10", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleNetworkMutationAudit(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Events []probe.NetworkMutationAuditEvent `json:"events"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Events) != 0 {
+		t.Fatalf("events = %+v, want empty", got.Events)
+	}
+}
+
+func TestHandleNetworkMutationAuditRejectsUnsupportedMethods(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/mutations/audit", nil)
+	rec := httptest.NewRecorder()
+	handler.handleNetworkMutationAudit(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestSpeedStreamLimitReturnsTooManyRequests(t *testing.T) {
 	handler := newTestHandler(t)
 	for i := 0; i < maxConcurrentSpeedStreams; i++ {

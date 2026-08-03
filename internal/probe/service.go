@@ -119,9 +119,9 @@ func (s *Service) Start(baseCtx context.Context) {
 		s.Refresh(startCtx)
 	}()
 
-	// Rebuild unconfirmed bridge pending/timer from disk (survives process restart).
+	// Rebuild the single host network mutation and its rollback timer from disk.
 	go func() {
-		s.ensureHostBridgeRollbackRestored()
+		s.restoreNetworkMutation()
 	}()
 
 	go func() {

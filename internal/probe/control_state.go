@@ -12,7 +12,13 @@ type containerControlState struct {
 // changes share one transaction domain because applying them concurrently can
 // invalidate another operation's rollback snapshot.
 type networkMutationState struct {
-	mu        sync.Mutex
+	mu      sync.Mutex
+	auditMu sync.Mutex
+	active  *networkMutation
+
+	// Typed references are compatibility views used by the existing APIs. The
+	// active mutation above is the authoritative owner and permits only one host
+	// network change at a time.
 	rollbacks map[string]*networkConfigRollback
 
 	// Host VM bridge create/dissolve pending rollback (at most one).

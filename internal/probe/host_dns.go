@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"time"
@@ -15,20 +16,20 @@ import (
 const hostDNSRollbackDelay = 60 * time.Second
 
 type hostDNSSnapshot struct {
-	Connection    string
-	Device        string
-	DNS           string
-	IgnoreAutoDNS string // yes|no|""
-	Method        string // connection ipv4.method (untouched by DNS-only apply)
+	Connection    string `json:"connection"`
+	Device        string `json:"device"`
+	DNS           string `json:"dns"`
+	IgnoreAutoDNS string `json:"ignore_auto_dns"` // yes|no|""
+	Method        string `json:"method"`          // connection ipv4.method (untouched by DNS-only apply)
 }
 
 type hostDNSRollback struct {
-	ID       string
-	Device   string
-	Request  HostDNSApplyRequest
-	Snapshot hostDNSSnapshot
-	Timer    *time.Timer
-	Until    time.Time
+	ID       string              `json:"id"`
+	Device   string              `json:"device"`
+	Request  HostDNSApplyRequest `json:"request"`
+	Snapshot hostDNSSnapshot     `json:"snapshot"`
+	Timer    *time.Timer         `json:"-"`
+	Until    time.Time           `json:"until"`
 }
 
 // GetHostDNS returns DNS for the preferred device (or auto-picked uplink) plus candidates.
@@ -79,23 +80,16 @@ func (s *Service) ApplyHostDNS(ctx context.Context, req HostDNSApplyRequest) Hos
 		}
 	}
 
-	// Mutual exclusion with IP config / bridge / other DNS pending.
-	s.network.mu.Lock()
-	if s.network.dnsRollback != nil {
-		s.network.mu.Unlock()
-		return HostDNSOpResult{Error: "已有待确认的 DNS 变更，请先确认或回滚"}
+	id, err := s.reserveNetworkMutation(networkMutationDNS, req.Device)
+	if err != nil {
+		return HostDNSOpResult{Error: err.Error()}
 	}
-	if s.network.bridgeRollback != nil {
-		s.network.mu.Unlock()
-		return HostDNSOpResult{Error: "已有待确认的网桥变更，请先确认或回滚"}
-	}
-	for _, rb := range s.network.rollbacks {
-		if rb != nil {
-			s.network.mu.Unlock()
-			return HostDNSOpResult{Error: "已有待确认的网卡配置变更，请先确认或回滚"}
+	activated := false
+	defer func() {
+		if !activated {
+			s.abortNetworkMutation(id)
 		}
-	}
-	s.network.mu.Unlock()
+	}()
 
 	cands, err := listHostDNSCandidates(ctx)
 	if err != nil {
@@ -147,7 +141,6 @@ func (s *Service) ApplyHostDNS(ctx context.Context, req HostDNSApplyRequest) Hos
 		}
 	}
 
-	id := newRollbackID()
 	until := time.Now().Add(hostDNSRollbackDelay)
 	rb := &hostDNSRollback{
 		ID:       id,
@@ -156,20 +149,28 @@ func (s *Service) ApplyHostDNS(ctx context.Context, req HostDNSApplyRequest) Hos
 		Snapshot: snap,
 		Until:    until,
 	}
-	rb.Timer = time.AfterFunc(hostDNSRollbackDelay, func() {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if out, err := s.rollbackHostDNS(rollbackCtx, id, "auto_rollback"); err != nil {
-			logger.Warn("host dns auto rollback failed id=%s device=%s err=%v out=%q", id, target.Device, err, out)
+	if err := s.activateNetworkMutation(&networkMutation{
+		ID: id, Kind: networkMutationDNS, Target: target.Device, Until: until, DNS: rb,
+	}); err != nil {
+		_, restoreErr := restoreHostDNSSnapshot(ctx, snap)
+		if restoreErr != nil {
+			return HostDNSOpResult{Device: target.Device, Connection: target.Connection, Error: fmt.Sprintf("登记 DNS 变更失败: %v；恢复原配置失败: %v", err, restoreErr)}
 		}
-	})
-
-	s.network.mu.Lock()
-	if old := s.network.dnsRollback; old != nil && old.Timer != nil {
-		old.Timer.Stop()
+		return HostDNSOpResult{Device: target.Device, Connection: target.Connection, Error: "登记 DNS 变更失败: " + err.Error()}
 	}
-	s.network.dnsRollback = rb
-	s.network.mu.Unlock()
+	activated = true
+	s.scheduleNetworkMutationRollback(s.networkMutationSnapshot())
+	verification := s.verifyNetworkMutation(ctx, id)
+	if verification.Status == "failed" {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rollbackOut, rollbackErr := s.rollbackHostDNS(rollbackCtx, id, "verification_rollback")
+		cancel()
+		errText := "DNS 未通过应用后验证，已自动回滚"
+		if rollbackErr != nil {
+			errText = "DNS 未通过应用后验证，自动回滚失败: " + rollbackErr.Error()
+		}
+		return HostDNSOpResult{Device: target.Device, Connection: target.Connection, Output: strings.TrimSpace(strings.Join([]string{out, rollbackOut}, "\n")), Error: errText, Verification: &verification}
+	}
 
 	logger.Info("host dns applied device=%s conn=%s method=%s dns=%q rollback=%s",
 		target.Device, target.Connection, req.Method, req.DNS, id)
@@ -184,6 +185,7 @@ func (s *Service) ApplyHostDNS(ctx context.Context, req HostDNSApplyRequest) Hos
 		RollbackUntil: until.Format(time.DateTime),
 		Output:        out,
 		Note:          "DNS 已应用，请在 60 秒内确认；超时自动回滚",
+		Verification:  &verification,
 	}
 }
 
@@ -192,18 +194,12 @@ func (s *Service) ConfirmHostDNS(id string) HostDNSOpResult {
 	if id == "" {
 		return HostDNSOpResult{Error: "rollback id required"}
 	}
-	s.network.mu.Lock()
-	rb := s.network.dnsRollback
-	if rb == nil || (id != "" && rb.ID != id) {
-		s.network.mu.Unlock()
+	mutation, err := s.confirmNetworkMutation(id, networkMutationDNS)
+	if err != nil || mutation.DNS == nil {
 		return HostDNSOpResult{Error: "没有匹配的待确认 DNS 变更"}
 	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
+	rb := mutation.DNS
 	device, conn := rb.Device, rb.Snapshot.Connection
-	s.network.dnsRollback = nil
-	s.network.mu.Unlock()
 	logger.Info("host dns confirmed id=%s device=%s", id, device)
 	return HostDNSOpResult{OK: true, Device: device, Connection: conn, Note: "DNS 变更已确认"}
 }
@@ -235,9 +231,6 @@ func (s *Service) getHostDNSPending() *HostDNSPending {
 	if remaining < 0 {
 		remaining = 0
 	}
-	if remaining == 0 {
-		return nil
-	}
 	method := rb.Request.Method
 	if method == "" {
 		method = "manual"
@@ -257,24 +250,15 @@ func (s *Service) getHostDNSPending() *HostDNSPending {
 }
 
 func (s *Service) rollbackHostDNS(ctx context.Context, id, action string) (string, error) {
-	s.network.mu.Lock()
-	rb := s.network.dnsRollback
-	if rb == nil {
-		s.network.mu.Unlock()
+	mutation, err := s.beginNetworkMutationRollback(id, networkMutationDNS)
+	if err != nil || mutation.DNS == nil {
 		return "", errors.New("没有待回滚的 DNS 变更")
 	}
-	if id != "" && rb.ID != id {
-		s.network.mu.Unlock()
-		return "", errors.New("rollback id 不匹配")
-	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
+	rb := mutation.DNS
 	snap := rb.Snapshot
-	s.network.dnsRollback = nil
-	s.network.mu.Unlock()
 
 	out, err := restoreHostDNSSnapshot(ctx, snap)
+	s.finishNetworkMutationRollback(rb.ID, err)
 	logger.Info("host dns rollback action=%s device=%s ok=%v", action, snap.Device, err == nil)
 	return out, err
 }

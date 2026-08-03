@@ -76,6 +76,20 @@ func (h *Handler) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.Capabilities())
 }
 
+func (h *Handler) handleNetworkMutationAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": h.service.NetworkMutationAudit(limit)})
+}
+
 func (h *Handler) handleNetworkConfigDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -125,7 +139,9 @@ func (h *Handler) handleNetworkConfigApply(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	result := h.service.ApplyNetworkConfig(r.Context(), req)
+	ctx, cancel := context.WithTimeout(h.service.LifecycleContext(), 75*time.Second)
+	defer cancel()
+	result := h.service.ApplyNetworkConfig(ctx, req)
 	status := http.StatusOK
 	if !result.OK {
 		status = http.StatusBadRequest
@@ -165,7 +181,9 @@ func (h *Handler) handleNetworkConfigRollback(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	result := h.service.RollbackNetworkConfig(r.Context(), req.ID)
+	ctx, cancel := context.WithTimeout(h.service.LifecycleContext(), 45*time.Second)
+	defer cancel()
+	result := h.service.RollbackNetworkConfig(ctx, req.ID)
 	status := http.StatusOK
 	if !result.OK {
 		status = http.StatusBadRequest
@@ -200,7 +218,9 @@ func (h *Handler) handleHostDNSApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	result := h.service.ApplyHostDNS(r.Context(), req)
+	ctx, cancel := context.WithTimeout(h.service.LifecycleContext(), 60*time.Second)
+	defer cancel()
+	result := h.service.ApplyHostDNS(ctx, req)
 	if !result.OK {
 		writeJSON(w, http.StatusBadRequest, result)
 		return
@@ -234,7 +254,9 @@ func (h *Handler) handleHostDNSRollback(w http.ResponseWriter, r *http.Request) 
 		ID string `json:"id"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req)
-	result := h.service.RollbackHostDNS(r.Context(), req.ID)
+	ctx, cancel := context.WithTimeout(h.service.LifecycleContext(), 45*time.Second)
+	defer cancel()
+	result := h.service.RollbackHostDNS(ctx, req.ID)
 	if !result.OK {
 		writeJSON(w, http.StatusBadRequest, result)
 		return

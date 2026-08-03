@@ -24,13 +24,13 @@ const hostBridgeRollbackDelay = 3 * time.Minute
 var hostBridgeNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 
 type hostBridgeRollback struct {
-	ID       string
-	Bridge   string
-	Device   string
-	Record   HostBridgeRecord
-	Original networkConfigSnapshot
-	Until    time.Time
-	Timer    *time.Timer
+	ID       string                `json:"id"`
+	Bridge   string                `json:"bridge"`
+	Device   string                `json:"device"`
+	Record   HostBridgeRecord      `json:"record"`
+	Original networkConfigSnapshot `json:"original"`
+	Until    time.Time             `json:"until"`
+	Timer    *time.Timer           `json:"-"`
 }
 
 func hostBridgesPath(dataDir string) string {
@@ -240,24 +240,21 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		}
 	}
 
-	// Avoid clobbering pending IP / DNS / bridge confirm.
-	s.network.mu.Lock()
-	if rb := s.network.rollbacks[req.Device]; rb != nil {
-		s.network.mu.Unlock()
-		return HostBridgeOpResult{Error: "该网卡有待确认的 IP 配置变更，请先确认或回滚"}
+	id, err := s.reserveNetworkMutation(networkMutationBridge, bridgeName)
+	if err != nil {
+		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Error: err.Error()}
 	}
-	if s.network.dnsRollback != nil {
-		s.network.mu.Unlock()
-		return HostBridgeOpResult{Error: "已有待确认的 DNS 变更，请先确认或回滚"}
-	}
-	if s.network.bridgeRollback != nil {
-		s.network.mu.Unlock()
-		return HostBridgeOpResult{Error: "已有待确认的网桥变更，请先确认或回滚"}
-	}
-	s.network.mu.Unlock()
+	activated := false
+	defer func() {
+		if !activated {
+			s.abortNetworkMutation(id)
+		}
+	}()
 
 	if backend == "ip" {
-		return s.createHostBridgeViaIP(ctx, req, bridgeName, method, address, gateway, dns)
+		result := s.createHostBridgeViaIP(ctx, req, bridgeName, method, address, gateway, dns, id)
+		activated = result.OK
+		return result
 	}
 
 	origSnap, err := readNetworkConfigSnapshot(ctx, dev.Connection)
@@ -361,7 +358,6 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		}
 	}
 
-	id := newRollbackID()
 	until := time.Now().Add(hostBridgeRollbackDelay)
 	rec := HostBridgeRecord{
 		Bridge:           bridgeName,
@@ -395,19 +391,28 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		Record: rec,
 		Until:  until,
 	}
-	rb.Timer = time.AfterFunc(hostBridgeRollbackDelay, func() {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		if out, err := s.rollbackHostBridge(rollbackCtx, id, "auto_rollback"); err != nil {
-			logger.Warn("host bridge auto rollback failed id=%s bridge=%s err=%v out=%q", id, bridgeName, err, out)
+	if err := s.activateNetworkMutation(&networkMutation{
+		ID: id, Kind: networkMutationBridge, Target: bridgeName, Until: until, Bridge: rb,
+	}); err != nil {
+		out, restoreErr := s.teardownHostBridge(ctx, rec, true)
+		if restoreErr != nil {
+			return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: out, Error: fmt.Sprintf("登记网桥变更失败: %v；恢复原连接失败: %v", err, restoreErr)}
 		}
-	})
-	s.network.mu.Lock()
-	if old := s.network.bridgeRollback; old != nil && old.Timer != nil {
-		old.Timer.Stop()
+		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: out, Error: "登记网桥变更失败: " + err.Error()}
 	}
-	s.network.bridgeRollback = rb
-	s.network.mu.Unlock()
+	activated = true
+	s.scheduleNetworkMutationRollback(s.networkMutationSnapshot())
+	verification := s.verifyNetworkMutation(ctx, id)
+	if verification.Status == "failed" {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		rollbackOut, rollbackErr := s.rollbackHostBridge(rollbackCtx, id, "verification_rollback")
+		cancel()
+		errText := "网桥未通过应用后验证，已自动回滚"
+		if rollbackErr != nil {
+			errText = "网桥未通过应用后验证，自动回滚失败: " + rollbackErr.Error()
+		}
+		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: strings.TrimSpace(strings.Join([]string{strings.Join(logs, "\n"), rollbackOut}, "\n")), Error: errText, Verification: &verification}
+	}
 
 	s.auditHostBridge(map[string]any{
 		"action": "create", "bridge": bridgeName, "device": req.Device,
@@ -422,23 +427,18 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		RollbackUntil: until.Format(time.DateTime),
 		Output:        strings.Join(logs, "\n"),
 		Note:          "网桥已创建，请在 3 分钟内确认；超时自动回滚",
+		Verification:  &verification,
 	}
 }
 
 func (s *Service) ConfirmHostBridge(id string) HostBridgeOpResult {
 	id = strings.TrimSpace(id)
-	s.network.mu.Lock()
-	rb := s.network.bridgeRollback
-	if rb == nil || (id != "" && rb.ID != id) {
-		s.network.mu.Unlock()
+	mutation, err := s.getNetworkMutation(id, networkMutationBridge)
+	if err != nil || mutation.Bridge == nil {
 		return HostBridgeOpResult{Error: "没有匹配的待确认网桥变更"}
 	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
-	s.network.bridgeRollback = nil
+	rb := mutation.Bridge
 	bridge, device := rb.Bridge, rb.Device
-	s.network.mu.Unlock()
 
 	// Mark confirmed in inventory
 	records := s.loadHostBridgeRecords()
@@ -450,7 +450,12 @@ func (s *Service) ConfirmHostBridge(id string) HostBridgeOpResult {
 			records[i].Note = "已确认：可将网卡桥接到 " + bridge
 		}
 	}
-	_ = s.saveHostBridgeRecords(records)
+	if err := s.saveHostBridgeRecords(records); err != nil {
+		return HostBridgeOpResult{Bridge: bridge, Device: device, Error: "保存网桥确认状态失败: " + err.Error()}
+	}
+	if _, err := s.confirmNetworkMutation(id, networkMutationBridge); err != nil {
+		return HostBridgeOpResult{Bridge: bridge, Device: device, Error: err.Error()}
+	}
 
 	s.auditHostBridge(map[string]any{"action": "confirm", "id": id, "bridge": bridge, "device": device, "ok": true})
 	return HostBridgeOpResult{OK: true, Bridge: bridge, Device: device, Note: "已确认网桥可用，不再自动回滚"}
@@ -485,15 +490,17 @@ func (s *Service) DissolveHostBridge(ctx context.Context, bridge string) HostBri
 		return HostBridgeOpResult{Bridge: bridge, Error: "未找到托管记录: " + bridge}
 	}
 
-	// Cancel pending confirm for this bridge so auto-rollback won't double-teardown.
+	// Dissolving an unconfirmed bridge is the same transaction as rolling it
+	// back; keep the mutation if teardown fails so the user can retry.
 	s.network.mu.Lock()
+	pendingID := ""
 	if rb := s.network.bridgeRollback; rb != nil && rb.Bridge == bridge {
-		if rb.Timer != nil {
-			rb.Timer.Stop()
-		}
-		s.network.bridgeRollback = nil
+		pendingID = rb.ID
 	}
 	s.network.mu.Unlock()
+	if pendingID != "" {
+		return s.RollbackHostBridge(ctx, pendingID)
+	}
 
 	out, err := s.teardownHostBridge(ctx, *rec, true)
 	if err != nil {
@@ -551,7 +558,7 @@ func (s *Service) getHostBridgePending() *HostBridgePending {
 // Unconfirmed bridges past the 3-minute window are torn down asynchronously.
 func (s *Service) ensureHostBridgeRollbackRestored() {
 	s.network.mu.Lock()
-	if s.network.bridgeRollback != nil {
+	if s.network.active != nil || s.network.bridgeRollback != nil {
 		s.network.mu.Unlock()
 		return
 	}
@@ -591,8 +598,16 @@ func (s *Service) ensureHostBridgeRollbackRestored() {
 	})
 
 	s.network.mu.Lock()
-	if s.network.bridgeRollback == nil {
-		s.network.bridgeRollback = rb
+	if s.network.active == nil && s.network.bridgeRollback == nil {
+		s.network.active = &networkMutation{
+			Version: 1, ID: id, Kind: networkMutationBridge, Target: active.Bridge,
+			Status: networkMutationPending, StartedAt: until.Add(-hostBridgeRollbackDelay),
+			Until: until, Bridge: rb,
+		}
+		s.syncNetworkMutationViewsLocked()
+		if err := s.persistNetworkMutationLocked(); err != nil {
+			logger.Warn("persist restored host bridge mutation: %v", err)
+		}
 		// Persist restored id/until so subsequent restarts keep the same deadline.
 		needSave := false
 		for i := range records {
@@ -723,33 +738,28 @@ func hostBridgeRecordDeadline(r HostBridgeRecord) (deadline time.Time, created t
 }
 
 func (s *Service) rollbackHostBridge(ctx context.Context, id, action string) (string, error) {
-	s.network.mu.Lock()
-	rb := s.network.bridgeRollback
-	if rb == nil {
-		s.network.mu.Unlock()
+	mutation, err := s.beginNetworkMutationRollback(id, networkMutationBridge)
+	if err != nil || mutation.Bridge == nil {
 		return "", errors.New("没有待回滚的网桥变更")
 	}
-	if id != "" && rb.ID != id {
-		s.network.mu.Unlock()
-		return "", errors.New("rollback id 不匹配")
-	}
-	if rb.Timer != nil {
-		rb.Timer.Stop()
-	}
-	s.network.bridgeRollback = nil
+	rb := mutation.Bridge
 	rec := rb.Record
-	s.network.mu.Unlock()
 
 	out, err := s.teardownHostBridge(ctx, rec, true)
 	// Remove inventory entry
-	records := s.loadHostBridgeRecords()
-	next := make([]HostBridgeRecord, 0, len(records))
-	for _, r := range records {
-		if r.Bridge != rec.Bridge {
-			next = append(next, r)
+	if err == nil {
+		records := s.loadHostBridgeRecords()
+		next := make([]HostBridgeRecord, 0, len(records))
+		for _, r := range records {
+			if r.Bridge != rec.Bridge {
+				next = append(next, r)
+			}
+		}
+		if saveErr := s.saveHostBridgeRecords(next); saveErr != nil {
+			err = fmt.Errorf("网桥已拆除，但保存网桥记录失败: %w", saveErr)
 		}
 	}
-	_ = s.saveHostBridgeRecords(next)
+	s.finishNetworkMutationRollback(rb.ID, err)
 
 	s.auditHostBridge(map[string]any{
 		"action": action, "id": rb.ID, "bridge": rec.Bridge, "device": rec.Device,

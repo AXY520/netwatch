@@ -1,5 +1,7 @@
 package probe
 
+import "encoding/json"
+
 type ProbeStatus string
 
 const (
@@ -203,13 +205,14 @@ type NetworkConfigIPCheckResult struct {
 }
 
 type NetworkConfigApplyResult struct {
-	OK            bool   `json:"ok"`
-	Device        string `json:"device,omitempty"`
-	Connection    string `json:"connection,omitempty"`
-	RollbackID    string `json:"rollback_id,omitempty"`
-	RollbackUntil string `json:"rollback_until,omitempty"`
-	Output        string `json:"output,omitempty"`
-	Error         string `json:"error,omitempty"`
+	OK            bool                         `json:"ok"`
+	Device        string                       `json:"device,omitempty"`
+	Connection    string                       `json:"connection,omitempty"`
+	RollbackID    string                       `json:"rollback_id,omitempty"`
+	RollbackUntil string                       `json:"rollback_until,omitempty"`
+	Output        string                       `json:"output,omitempty"`
+	Error         string                       `json:"error,omitempty"`
+	Verification  *NetworkMutationVerification `json:"verification,omitempty"`
 }
 
 type NetworkConfigConfirmResult struct {
@@ -268,16 +271,17 @@ type HostDNSApplyRequest struct {
 }
 
 type HostDNSOpResult struct {
-	OK            bool   `json:"ok"`
-	Device        string `json:"device,omitempty"`
-	Connection    string `json:"connection,omitempty"`
-	Method        string `json:"method,omitempty"`
-	DNS           string `json:"dns,omitempty"`
-	RollbackID    string `json:"rollback_id,omitempty"`
-	RollbackUntil string `json:"rollback_until,omitempty"`
-	Output        string `json:"output,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Note          string `json:"note,omitempty"`
+	OK            bool                         `json:"ok"`
+	Device        string                       `json:"device,omitempty"`
+	Connection    string                       `json:"connection,omitempty"`
+	Method        string                       `json:"method,omitempty"`
+	DNS           string                       `json:"dns,omitempty"`
+	RollbackID    string                       `json:"rollback_id,omitempty"`
+	RollbackUntil string                       `json:"rollback_until,omitempty"`
+	Output        string                       `json:"output,omitempty"`
+	Error         string                       `json:"error,omitempty"`
+	Note          string                       `json:"note,omitempty"`
+	Verification  *NetworkMutationVerification `json:"verification,omitempty"`
 }
 
 type HostDNSPending struct {
@@ -331,14 +335,45 @@ type HostBridgeActionRequest struct {
 }
 
 type HostBridgeOpResult struct {
-	OK            bool   `json:"ok"`
-	Bridge        string `json:"bridge,omitempty"`
-	Device        string `json:"device,omitempty"`
-	RollbackID    string `json:"rollback_id,omitempty"`
-	RollbackUntil string `json:"rollback_until,omitempty"`
-	Output        string `json:"output,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Note          string `json:"note,omitempty"`
+	OK            bool                         `json:"ok"`
+	Bridge        string                       `json:"bridge,omitempty"`
+	Device        string                       `json:"device,omitempty"`
+	RollbackID    string                       `json:"rollback_id,omitempty"`
+	RollbackUntil string                       `json:"rollback_until,omitempty"`
+	Output        string                       `json:"output,omitempty"`
+	Error         string                       `json:"error,omitempty"`
+	Note          string                       `json:"note,omitempty"`
+	Verification  *NetworkMutationVerification `json:"verification,omitempty"`
+}
+
+type NetworkMutationVerificationStep struct {
+	Name       string `json:"name"`
+	Required   bool   `json:"required"`
+	OK         bool   `json:"ok"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+type NetworkMutationVerification struct {
+	Status     string                            `json:"status"` // passed | warning | failed
+	StartedAt  string                            `json:"started_at"`
+	DurationMS int64                             `json:"duration_ms"`
+	Steps      []NetworkMutationVerificationStep `json:"steps"`
+}
+
+type NetworkMutationAuditEvent struct {
+	Timestamp    string                       `json:"timestamp"`
+	ID           string                       `json:"id"`
+	Kind         string                       `json:"kind"`
+	Target       string                       `json:"target,omitempty"`
+	Action       string                       `json:"action"`
+	State        string                       `json:"state,omitempty"`
+	DurationMS   int64                        `json:"duration_ms,omitempty"`
+	Verification *NetworkMutationVerification `json:"verification,omitempty"`
+	Requested    json.RawMessage              `json:"requested,omitempty"`
+	Previous     json.RawMessage              `json:"previous,omitempty"`
+	Error        string                       `json:"error,omitempty"`
 }
 
 type HostBridgeListResult struct {

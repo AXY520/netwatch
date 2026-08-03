@@ -168,7 +168,7 @@ func readResolvDNS() string {
 	return strings.Join(dns, ",")
 }
 
-func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreateRequest, bridgeName, method, address, gateway, dns string) HostBridgeOpResult {
+func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreateRequest, bridgeName, method, address, gateway, dns, id string) HostBridgeOpResult {
 	findBinPaths()
 	if ipPath == "" {
 		return HostBridgeOpResult{Device: req.Device, Error: "ip 命令不可用"}
@@ -276,7 +276,6 @@ func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreat
 		}
 	}
 
-	id := newRollbackID()
 	until := time.Now().Add(hostBridgeRollbackDelay)
 	rec := HostBridgeRecord{
 		Bridge:        bridgeName,
@@ -312,19 +311,27 @@ func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreat
 		Record: rec,
 		Until:  until,
 	}
-	rb.Timer = time.AfterFunc(hostBridgeRollbackDelay, func() {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		if out, err := s.rollbackHostBridge(rollbackCtx, id, "auto_rollback"); err != nil {
-			logger.Warn("host bridge auto rollback failed id=%s bridge=%s err=%v out=%q", id, bridgeName, err, out)
+	if err := s.activateNetworkMutation(&networkMutation{
+		ID: id, Kind: networkMutationBridge, Target: bridgeName, Until: until, Bridge: rb,
+	}); err != nil {
+		out, restoreErr := s.teardownHostBridgeViaIP(rec)
+		if restoreErr != nil {
+			return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: out, Error: fmt.Sprintf("登记网桥变更失败: %v；恢复原连接失败: %v", err, restoreErr)}
 		}
-	})
-	s.network.mu.Lock()
-	if old := s.network.bridgeRollback; old != nil && old.Timer != nil {
-		old.Timer.Stop()
+		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: out, Error: "登记网桥变更失败: " + err.Error()}
 	}
-	s.network.bridgeRollback = rb
-	s.network.mu.Unlock()
+	s.scheduleNetworkMutationRollback(s.networkMutationSnapshot())
+	verification := s.verifyNetworkMutation(ctx, id)
+	if verification.Status == "failed" {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		rollbackOut, rollbackErr := s.rollbackHostBridge(rollbackCtx, id, "verification_rollback")
+		cancel()
+		errText := "网桥未通过应用后验证，已自动回滚"
+		if rollbackErr != nil {
+			errText = "网桥未通过应用后验证，自动回滚失败: " + rollbackErr.Error()
+		}
+		return HostBridgeOpResult{Device: req.Device, Bridge: bridgeName, Output: strings.TrimSpace(strings.Join([]string{strings.Join(logs, "\n"), rollbackOut}, "\n")), Error: errText, Verification: &verification}
+	}
 
 	s.auditHostBridge(map[string]any{
 		"action": "create", "backend": "ip", "bridge": bridgeName, "device": req.Device,
@@ -339,6 +346,7 @@ func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreat
 		RollbackUntil: until.Format(time.DateTime),
 		Output:        strings.Join(logs, "\n"),
 		Note:          "网桥已创建（ip link），请在 3 分钟内确认；超时自动回滚",
+		Verification:  &verification,
 	}
 }
 
