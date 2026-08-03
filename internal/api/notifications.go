@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"netwatch/internal/probe"
 )
@@ -44,14 +45,16 @@ func (h *Handler) handleLANDevices(w http.ResponseWriter, r *http.Request) {
 		// Async: return cached snapshot + scanning=true immediately.
 		// Full discovery continues in background so reverse proxies cannot
 		// cancel the scan via request context (hostproxy: context canceled).
-		writeJSON(w, http.StatusOK, h.service.StartLANScan())
+		result := h.service.StartLANScan()
+		writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 10*time.Minute)
 		return
 	}
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.GetLANDevices())
+	result := h.service.GetLANDevices()
+	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 10*time.Minute)
 }
 
 func (h *Handler) handleLANDeviceMeta(w http.ResponseWriter, r *http.Request) {

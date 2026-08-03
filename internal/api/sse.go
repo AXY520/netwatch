@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"netwatch/internal/logger"
 )
@@ -50,7 +51,13 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		// client can fall back to polling instead of getting a 500 error.
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(h.service.GetSummary())
+		summary := h.service.GetSummary()
+		body, err := marshalObservationJSON(summary, summary.GeneratedAt, observationStaleAfter(summary.RefreshIntervalSec))
+		if err == nil {
+			_, _ = w.Write(append(body, '\n'))
+		} else {
+			_ = json.NewEncoder(w).Encode(summary)
+		}
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -76,7 +83,8 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	if initial, err := json.Marshal(h.service.GetSummary()); err == nil {
+	initialSummary := h.service.GetSummary()
+	if initial, err := marshalObservationJSON(initialSummary, initialSummary.GeneratedAt, observationStaleAfter(initialSummary.RefreshIntervalSec)); err == nil {
 		if !writeEvent("summary", initial) {
 			return
 		}
@@ -102,7 +110,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			body, err := json.Marshal(summary)
+			body, err := marshalObservationJSON(summary, summary.GeneratedAt, observationStaleAfter(summary.RefreshIntervalSec))
 			if err != nil {
 				logger.Error("sse summary marshal: %v", err)
 				continue
@@ -126,7 +134,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			body, err := json.Marshal(snap)
+			body, err := marshalObservationJSON(snap, snap.Timestamp, 15*time.Second)
 			if err != nil {
 				logger.Error("sse nic_realtime marshal: %v", err)
 				continue
@@ -138,7 +146,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			body, err := json.Marshal(devices)
+			body, err := marshalObservationJSON(devices, devices.GeneratedAt, 10*time.Minute)
 			if err != nil {
 				logger.Error("sse lan_devices marshal: %v", err)
 				continue

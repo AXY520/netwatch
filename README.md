@@ -103,6 +103,22 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `GET /api/v1/events`：SSE 推送 summary
 - `GET /metrics`：Prometheus 风格指标
 
+当前状态类观测 API 会在保留原有 `generated_at`、`timestamp` 或 `checked_at` 字段的同时，
+追加统一 freshness 元数据：
+
+```json
+{
+  "sampled_at": "2026-08-04 12:00:00",
+  "age_seconds": 8,
+  "stale": false
+}
+```
+
+`age_seconds` 在响应时根据原采样时间动态计算，不是写盘时的固定值。超过对应观测类型的
+有效期会返回 `stale: true`；尚未获得有效采样时间时同样视为 stale。摘要、网站检测、
+网络信息、NAT、网卡实时速率、出口查询、端口、LAN、trace、capabilities 和 SSE 中的
+当前状态事件遵循同一规则。历史数组保持原有顶层 JSON 形状，通过逐点时间戳表达时间范围。
+
 连通性与网络：
 
 - `GET /api/v1/connectivity/websites`：网站连通性缓存

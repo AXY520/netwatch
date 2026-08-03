@@ -16,7 +16,8 @@ func (h *Handler) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.Capabilities())
+	result := h.service.Capabilities()
+	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 5*time.Minute)
 }
 
 func (h *Handler) handleNetworkMutationAudit(w http.ResponseWriter, r *http.Request) {

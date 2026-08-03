@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"netwatch/internal/probe"
 )
@@ -146,6 +147,53 @@ func TestMetricsExposeRawAndSemanticAppTrafficCounters(t *testing.T) {
 		if !strings.Contains(body, "# HELP "+metric+" ") {
 			t.Fatalf("metrics missing %s", metric)
 		}
+	}
+}
+
+func TestMarshalObservationJSONAddsDynamicFreshnessWithoutLosingIntegers(t *testing.T) {
+	sampledAt := time.Now().Add(-2 * time.Minute).Format(time.DateTime)
+	body, err := marshalObservationJSON(struct {
+		Counter uint64 `json:"counter"`
+	}{Counter: math.MaxUint64}, sampledAt, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `"counter":18446744073709551615`) {
+		t.Fatalf("uint64 precision changed: %s", text)
+	}
+	var got struct {
+		SampledAt  string `json:"sampled_at"`
+		AgeSeconds int64  `json:"age_seconds"`
+		Stale      bool   `json:"stale"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SampledAt != sampledAt || got.AgeSeconds < 119 || !got.Stale {
+		t.Fatalf("freshness = %+v", got)
+	}
+}
+
+func TestWriteObservationJSONFallsBackForArrays(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeObservationJSON(rec, http.StatusOK, []int{1, 2}, time.Now().Format(time.DateTime), time.Minute)
+	if strings.TrimSpace(rec.Body.String()) != `[1,2]` {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
+func TestMarshalObservationJSONMarksMissingSampleTimeStale(t *testing.T) {
+	body, err := marshalObservationJSON(struct{}{}, "", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got observationFreshness
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Stale || got.SampledAt != "" {
+		t.Fatalf("freshness = %+v", got)
 	}
 }
 

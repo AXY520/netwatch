@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"netwatch/internal/probe"
 )
@@ -35,7 +36,8 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, h.service.GetTraceTask())
+		result := h.service.GetTraceTask()
+		writeObservationJSON(w, http.StatusOK, result, result.Timestamp, 5*time.Minute)
 	case http.MethodPost:
 		host := r.URL.Query().Get("host")
 		if host == "" {
@@ -50,7 +52,8 @@ func (h *Handler) handleTrace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleTraceTask(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, h.service.GetTraceTask())
+	result := h.service.GetTraceTask()
+	writeObservationJSON(w, http.StatusOK, result, result.Timestamp, 5*time.Minute)
 }
 
 func (h *Handler) handleTraceCancel(w http.ResponseWriter, r *http.Request) {
@@ -65,10 +68,12 @@ func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, r *http.Request)
 	// Manual refresh: POST or ?force=1 always double-samples for usable bps.
 	force := r.Method == http.MethodPost || r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
 	if force {
-		writeJSON(w, http.StatusOK, h.service.ForceGetRealtimeNetStats())
+		result := h.service.ForceGetRealtimeNetStats()
+		writeObservationJSON(w, http.StatusOK, result, result.Timestamp, 15*time.Second)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.GetRealtimeNetStats())
+	result := h.service.GetRealtimeNetStats()
+	writeObservationJSON(w, http.StatusOK, result, result.Timestamp, 15*time.Second)
 }
 
 func (h *Handler) handleHostPorts(w http.ResponseWriter, r *http.Request) {
@@ -76,14 +81,17 @@ func (h *Handler) handleHostPorts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, probe.CollectHostPorts(r.Context()))
+	result := probe.CollectHostPorts(r.Context())
+	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, time.Minute)
 }
 
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		h.service.ClearPublicIPCache()
-		writeJSON(w, http.StatusOK, h.service.RefreshEgressLookups(r.Context()))
+		result := h.service.RefreshEgressLookups(r.Context())
+		writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 15*time.Minute)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.GetEgressLookups(r.Context()))
+	result := h.service.GetEgressLookups(r.Context())
+	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 15*time.Minute)
 }
