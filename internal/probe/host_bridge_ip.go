@@ -319,12 +319,12 @@ func (s *Service) createHostBridgeViaIP(ctx context.Context, req HostBridgeCreat
 			logger.Warn("host bridge auto rollback failed id=%s bridge=%s err=%v out=%q", id, bridgeName, err, out)
 		}
 	})
-	s.control.netcfgMu.Lock()
-	if old := s.control.bridgeRollback; old != nil && old.Timer != nil {
+	s.network.mu.Lock()
+	if old := s.network.bridgeRollback; old != nil && old.Timer != nil {
 		old.Timer.Stop()
 	}
-	s.control.bridgeRollback = rb
-	s.control.netcfgMu.Unlock()
+	s.network.bridgeRollback = rb
+	s.network.mu.Unlock()
 
 	s.auditHostBridge(map[string]any{
 		"action": "create", "backend": "ip", "bridge": bridgeName, "device": req.Device,

@@ -63,11 +63,12 @@ type Service struct {
 	lanDeviceSubsMu sync.Mutex
 
 	// domain subsystems
-	settings *settingsStore
-	lan      *lanHub
-	notify   *notifyHub
-	control  *controlState
-	tasks    *taskRuntime
+	settings   *settingsStore
+	lan        *lanHub
+	notify     *notifyHub
+	containers *containerControlState
+	network    *networkMutationState
+	tasks      *taskRuntime
 
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
@@ -92,7 +93,8 @@ func NewService(cfg Config) *Service {
 		settings:              newSettingsStore(def),
 		lan:                   newLANHub(cfg.DataDir, def),
 		notify:                newNotifyHub(cfg.DataDir, def),
-		control:               newControlState(),
+		containers:            newContainerControlState(),
+		network:               newNetworkMutationState(),
 		tasks:                 newTaskRuntime(),
 	}
 	s.egressCond = sync.NewCond(&s.egressMu)
@@ -196,7 +198,7 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		DomesticSites:          append([]SiteTarget(nil), s.cfg.DomesticSites...),
 		GlobalSites:            append([]SiteTarget(nil), s.cfg.GlobalSites...),
 		AlertWebhookURL:        s.alertWebhookURL,
-		BlockedBridges:         s.control.snapshotBlocked(),
+		BlockedBridges:         s.containers.snapshotBlocked(),
 	}
 	s.mu.RUnlock()
 	s.settings.writeToSettings(&out)
@@ -224,7 +226,7 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	}
 	s.alertWebhookURL = in.AlertWebhookURL
 	if in.BlockedBridges != nil {
-		s.control.replaceBlocked(in.BlockedBridges)
+		s.containers.replaceBlocked(in.BlockedBridges)
 	}
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()

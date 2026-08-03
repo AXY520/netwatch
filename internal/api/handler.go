@@ -68,67 +68,6 @@ func (h *Handler) releaseSpeedSlot() {
 	<-h.speedSlots
 }
 
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/healthz", h.handleHealth)
-	mux.HandleFunc("/api/v1/capabilities", h.handleCapabilities)
-	mux.HandleFunc("/api/v1/summary", h.handleSummary)
-	mux.HandleFunc("/api/v1/connectivity/websites", h.handleWebsiteConnectivity)
-	mux.HandleFunc("/api/v1/connectivity/websites/run", h.handleWebsiteRefresh)
-	mux.HandleFunc("/api/v1/network", h.handleNetworkInfo)
-	mux.HandleFunc("/api/v1/network/interfaces/refresh", h.handleNetworkInterfacesRefresh)
-	mux.HandleFunc("/api/v1/network/nat/run", h.handleNATRefresh)
-	mux.HandleFunc("/api/v1/probe/run", h.handleRefresh)
-	mux.HandleFunc("/api/v1/speed/config", h.handleSpeedConfig)
-	mux.HandleFunc("/api/v1/speed/broadband/start", h.handleBroadbandStart)
-	mux.HandleFunc("/api/v1/speed/broadband/task", h.handleBroadbandTask)
-	mux.HandleFunc("/api/v1/speed/broadband/cancel", h.handleBroadbandCancel)
-	mux.HandleFunc("/api/v1/speed/broadband/run", h.handleBroadbandRun)
-	mux.HandleFunc("/api/v1/speed/broadband/history", h.handleBroadbandHistory)
-	mux.HandleFunc("/api/v1/speed/local/history", h.handleLocalHistory)
-	mux.HandleFunc("/api/v1/speed/local/result", h.handleLocalResult)
-	mux.HandleFunc("/api/v1/speed/local/ping", h.handleLocalPing)
-	mux.HandleFunc("/api/v1/speed/local/download", h.handleLocalDownload)
-	mux.HandleFunc("/api/v1/speed/local/upload", h.handleLocalUpload)
-	mux.HandleFunc("/api/v1/timeseries", h.handleTimeseries)
-	mux.HandleFunc("/api/v1/settings", h.handleSettings)
-	mux.HandleFunc("/api/v1/diagnostics/trace", h.handleTrace)
-	mux.HandleFunc("/api/v1/diagnostics/trace/task", h.handleTraceTask)
-	mux.HandleFunc("/api/v1/diagnostics/trace/cancel", h.handleTraceCancel)
-	mux.HandleFunc("/api/v1/events", h.handleSSE)
-	mux.HandleFunc("/api/v1/network/realtime", h.handleRealtimeNetStats)
-	mux.HandleFunc("/api/v1/network/ports", h.handleHostPorts)
-
-	mux.HandleFunc("/api/v1/network/egress-lookups", h.handleEgressLookups)
-	mux.HandleFunc("/api/v1/notifications/events", h.handleNotificationEvents)
-	mux.HandleFunc("/api/v1/notifications/bark/test", h.handleBarkNotificationTest)
-	mux.HandleFunc("/api/v1/notifications/pushplus/test", h.handlePushPlusNotificationTest)
-	mux.HandleFunc("/api/v1/lan/devices", h.handleLANDevices)
-	mux.HandleFunc("/api/v1/lan/devices/meta", h.handleLANDeviceMeta)
-	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
-	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
-	mux.HandleFunc("/api/v1/network/app-traffic/live", h.handleAppTrafficLive)
-	mux.HandleFunc("/api/v1/network/app-traffic/top", h.handleAppTrafficTop)
-	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
-	mux.HandleFunc("/api/v1/network/ipv6/renew-nics", h.handleIPv6RenewNICs)
-	mux.HandleFunc("/api/v1/network/ipv6/renew", h.handleIPv6Renew)
-	mux.HandleFunc("/api/v1/network/config/devices", h.handleNetworkConfigDevices)
-	mux.HandleFunc("/api/v1/network/config/pending", h.handleNetworkConfigPending)
-	mux.HandleFunc("/api/v1/network/config/check-ip", h.handleNetworkConfigCheckIP)
-	mux.HandleFunc("/api/v1/network/config/apply", h.handleNetworkConfigApply)
-	mux.HandleFunc("/api/v1/network/config/confirm", h.handleNetworkConfigConfirm)
-	mux.HandleFunc("/api/v1/network/config/rollback", h.handleNetworkConfigRollback)
-	mux.HandleFunc("/api/v1/network/bridges", h.handleHostBridges)
-	mux.HandleFunc("/api/v1/network/bridges/create", h.handleHostBridgeCreate)
-	mux.HandleFunc("/api/v1/network/bridges/confirm", h.handleHostBridgeConfirm)
-	mux.HandleFunc("/api/v1/network/bridges/rollback", h.handleHostBridgeRollback)
-	mux.HandleFunc("/api/v1/network/bridges/dissolve", h.handleHostBridgeDissolve)
-	mux.HandleFunc("/api/v1/network/bridges/pending", h.handleHostBridgePending)
-	mux.HandleFunc("/api/v1/containers", h.handleContainers)
-	mux.HandleFunc("/api/v1/containers/block", h.handleContainerBlock)
-	mux.HandleFunc("/api/v1/containers/unblock", h.handleContainerUnblock)
-	mux.HandleFunc("/metrics", h.handleMetrics)
-}
-
 func (h *Handler) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -232,6 +171,75 @@ func (h *Handler) handleNetworkConfigRollback(w http.ResponseWriter, r *http.Req
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, result)
+}
+
+func (h *Handler) handleHostDNS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	device := strings.TrimSpace(r.URL.Query().Get("device"))
+	writeJSON(w, http.StatusOK, h.service.GetHostDNS(r.Context(), device))
+}
+
+func (h *Handler) handleHostDNSPending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.GetHostDNSPending())
+}
+
+func (h *Handler) handleHostDNSApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.HostDNSApplyRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	result := h.service.ApplyHostDNS(r.Context(), req)
+	if !result.OK {
+		writeJSON(w, http.StatusBadRequest, result)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleHostDNSConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req)
+	result := h.service.ConfirmHostDNS(req.ID)
+	if !result.OK {
+		writeJSON(w, http.StatusBadRequest, result)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleHostDNSRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req)
+	result := h.service.RollbackHostDNS(r.Context(), req.ID)
+	if !result.OK {
+		writeJSON(w, http.StatusBadRequest, result)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleHostBridges(w http.ResponseWriter, r *http.Request) {

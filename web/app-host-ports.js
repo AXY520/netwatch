@@ -159,10 +159,22 @@ function initHostPorts() {
         latestPortsData = data || {};
         var rows = compactPorts(Array.isArray(latestPortsData.ports) ? latestPortsData.ports : []);
         var query = searchInput ? searchInput.value.trim() : '';
-        var queryPort = query === '' ? null : parseInt(query, 10);
-        var queryValid = query === '' || (String(queryPort) === query && queryPort >= 1 && queryPort <= 65535);
-        if (queryValid && queryPort !== null) rows = rows.filter(function (row) { return row.port === queryPort; });
+        var queryValid = query === '' || /^\d{1,5}$/.test(query);
+        if (queryValid && query !== '') {
+            rows = rows.filter(function (row) {
+                return String(row.port || '').indexOf(query) !== -1;
+            });
+        }
         sortRows(rows);
+        if (queryValid && query !== '') {
+            rows.sort(function (a, b) {
+                var aPort = String(a.port || '');
+                var bPort = String(b.port || '');
+                var aRank = aPort === query ? 0 : (aPort.indexOf(query) === 0 ? 1 : 2);
+                var bRank = bPort === query ? 0 : (bPort.indexOf(query) === 0 ? 1 : 2);
+                return (aRank - bRank) || ((a.port || 0) - (b.port || 0));
+            });
+        }
         listEl.classList.toggle('advanced', !!state.hostPortsAdvanced);
         if (rows.length === 0) {
             listEl.innerHTML = '<div class="host-port-empty"><strong>' + NetwatchShared.escapeHtml(query === '' ? i18n('no_host_ports') : (queryValid ? i18n('port_not_occupied') : i18n('port_search_invalid'))) + '</strong></div>';

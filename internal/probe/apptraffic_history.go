@@ -13,7 +13,8 @@ import (
 const maxAppTrafficPoints = 1440
 const appTrafficHistoryWriteMinInterval = 10 * time.Second
 
-// AppTrafficPoint is a single sample of cumulative rx/tx bytes for one bridge.
+// AppTrafficPoint stores raw host-bridge counters. For lzc app bridges, RX maps
+// to application upload and TX maps to application download.
 type AppTrafficPoint struct {
 	Timestamp string `json:"timestamp"`
 	RxBytes   uint64 `json:"rx_bytes"`

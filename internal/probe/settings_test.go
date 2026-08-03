@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -67,5 +68,13 @@ func TestLoadMutableSettingsMissingFile(t *testing.T) {
 	def := DefaultMutableSettings()
 	if got.BarkGroup != def.BarkGroup {
 		t.Fatalf("got BarkGroup %q", got.BarkGroup)
+	}
+}
+
+func TestNormalizeDashboardCollapsedSections(t *testing.T) {
+	got := normalizeDashboardCollapsedSections([]string{"app_traffic", "unknown", "app_traffic", "host_ports"})
+	want := []string{"app_traffic", "host_ports"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }

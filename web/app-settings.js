@@ -127,6 +127,7 @@ async function loadSettings() {
             nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
             chart_time_label_interval: settingsData.chart_time_label_interval || 0,
+            dashboard_collapsed_sections: settingsData.dashboard_collapsed_sections || [],
             traffic_sampling_enabled: settingsData.traffic_sampling_enabled !== false,
             traffic_sampling_interval_sec: settingsData.traffic_sampling_interval_sec || 60,
             per_app_sampling_interval: settingsData.per_app_sampling_interval || {},

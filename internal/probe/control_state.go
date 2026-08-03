@@ -2,26 +2,37 @@ package probe
 
 import "sync"
 
-// controlState holds host-mutating control plane state that is independent of
-// observation loops: container network blocks and network-config rollbacks.
-type controlState struct {
-	mu        sync.RWMutex
-	blocked   map[string]string // bridge -> mode
-	netcfgMu  sync.Mutex
+// containerControlState owns container network isolation state.
+type containerControlState struct {
+	mu      sync.RWMutex
+	blocked map[string]string // bridge -> mode
+}
+
+// networkMutationState serializes host network changes. IP, bridge and DNS
+// changes share one transaction domain because applying them concurrently can
+// invalidate another operation's rollback snapshot.
+type networkMutationState struct {
+	mu        sync.Mutex
 	rollbacks map[string]*networkConfigRollback
 
 	// Host VM bridge create/dissolve pending rollback (at most one).
 	bridgeRollback *hostBridgeRollback
+
+	// Host DNS-only change pending rollback (at most one).
+	dnsRollback *hostDNSRollback
 }
 
-func newControlState() *controlState {
-	return &controlState{
-		blocked:   map[string]string{},
+func newContainerControlState() *containerControlState {
+	return &containerControlState{blocked: map[string]string{}}
+}
+
+func newNetworkMutationState() *networkMutationState {
+	return &networkMutationState{
 		rollbacks: map[string]*networkConfigRollback{},
 	}
 }
 
-func (c *controlState) snapshotBlocked() map[string]string {
+func (c *containerControlState) snapshotBlocked() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	out := make(map[string]string, len(c.blocked))
@@ -31,13 +42,13 @@ func (c *controlState) snapshotBlocked() map[string]string {
 	return out
 }
 
-func (c *controlState) setBlocked(bridge, mode string) {
+func (c *containerControlState) setBlocked(bridge, mode string) {
 	c.mu.Lock()
 	c.blocked[bridge] = mode
 	c.mu.Unlock()
 }
 
-func (c *controlState) clearBlocked(bridge string) string {
+func (c *containerControlState) clearBlocked(bridge string) string {
 	c.mu.Lock()
 	mode := c.blocked[bridge]
 	delete(c.blocked, bridge)
@@ -45,13 +56,13 @@ func (c *controlState) clearBlocked(bridge string) string {
 	return mode
 }
 
-func (c *controlState) getBlocked(bridge string) string {
+func (c *containerControlState) getBlocked(bridge string) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.blocked[bridge]
 }
 
-func (c *controlState) replaceBlocked(in map[string]string) {
+func (c *containerControlState) replaceBlocked(in map[string]string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.blocked = make(map[string]string, len(in))

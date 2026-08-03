@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"netwatch/internal/probe"
@@ -29,12 +30,12 @@ func TestSettingsPartialUpdatePreservesLANAutoRemove(t *testing.T) {
 
 	// Main-page style payload: no LAN auto-remove field.
 	mainPage := map[string]any{
-		"refresh_interval_sec":         15,
-		"background_monitor_enabled":   true,
+		"refresh_interval_sec":            15,
+		"background_monitor_enabled":      true,
 		"background_monitor_interval_sec": 60,
-		"notifications_enabled":        false,
-		"nic_realtime_enabled":         true,
-		"nic_realtime_interval_sec":    1,
+		"notifications_enabled":           false,
+		"nic_realtime_enabled":            true,
+		"nic_realtime_interval_sec":       1,
 	}
 	body, _ = json.Marshal(mainPage)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewReader(body))
@@ -83,6 +84,37 @@ func TestSettingsCanExplicitlyDisableAutoRemove(t *testing.T) {
 	}
 	if got.LANDeviceAutoRemoveDays != 0 {
 		t.Fatalf("lan_device_auto_remove_days = %d, want 0 (explicit disable)", got.LANDeviceAutoRemoveDays)
+	}
+}
+
+func TestSettingsPersistsDashboardCollapsedSectionsAcrossPartialUpdates(t *testing.T) {
+	handler := newTestHandler(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"dashboard_collapsed_sections": []string{"app_traffic", "host_ports"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]any{"refresh_interval_sec": 15})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	handler.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("partial update status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var got probe.MutableSettings
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []string{"app_traffic", "host_ports"}
+	if !reflect.DeepEqual(got.DashboardCollapsedSections, want) {
+		t.Fatalf("collapsed sections = %#v, want %#v", got.DashboardCollapsedSections, want)
 	}
 }
 

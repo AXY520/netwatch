@@ -240,17 +240,21 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 		}
 	}
 
-	// Avoid clobbering pending IP change or pending bridge confirm.
-	s.control.netcfgMu.Lock()
-	if rb := s.control.rollbacks[req.Device]; rb != nil {
-		s.control.netcfgMu.Unlock()
+	// Avoid clobbering pending IP / DNS / bridge confirm.
+	s.network.mu.Lock()
+	if rb := s.network.rollbacks[req.Device]; rb != nil {
+		s.network.mu.Unlock()
 		return HostBridgeOpResult{Error: "该网卡有待确认的 IP 配置变更，请先确认或回滚"}
 	}
-	if s.control.bridgeRollback != nil {
-		s.control.netcfgMu.Unlock()
+	if s.network.dnsRollback != nil {
+		s.network.mu.Unlock()
+		return HostBridgeOpResult{Error: "已有待确认的 DNS 变更，请先确认或回滚"}
+	}
+	if s.network.bridgeRollback != nil {
+		s.network.mu.Unlock()
 		return HostBridgeOpResult{Error: "已有待确认的网桥变更，请先确认或回滚"}
 	}
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	if backend == "ip" {
 		return s.createHostBridgeViaIP(ctx, req, bridgeName, method, address, gateway, dns)
@@ -398,12 +402,12 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 			logger.Warn("host bridge auto rollback failed id=%s bridge=%s err=%v out=%q", id, bridgeName, err, out)
 		}
 	})
-	s.control.netcfgMu.Lock()
-	if old := s.control.bridgeRollback; old != nil && old.Timer != nil {
+	s.network.mu.Lock()
+	if old := s.network.bridgeRollback; old != nil && old.Timer != nil {
 		old.Timer.Stop()
 	}
-	s.control.bridgeRollback = rb
-	s.control.netcfgMu.Unlock()
+	s.network.bridgeRollback = rb
+	s.network.mu.Unlock()
 
 	s.auditHostBridge(map[string]any{
 		"action": "create", "bridge": bridgeName, "device": req.Device,
@@ -423,18 +427,18 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 
 func (s *Service) ConfirmHostBridge(id string) HostBridgeOpResult {
 	id = strings.TrimSpace(id)
-	s.control.netcfgMu.Lock()
-	rb := s.control.bridgeRollback
+	s.network.mu.Lock()
+	rb := s.network.bridgeRollback
 	if rb == nil || (id != "" && rb.ID != id) {
-		s.control.netcfgMu.Unlock()
+		s.network.mu.Unlock()
 		return HostBridgeOpResult{Error: "没有匹配的待确认网桥变更"}
 	}
 	if rb.Timer != nil {
 		rb.Timer.Stop()
 	}
-	s.control.bridgeRollback = nil
+	s.network.bridgeRollback = nil
 	bridge, device := rb.Bridge, rb.Device
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	// Mark confirmed in inventory
 	records := s.loadHostBridgeRecords()
@@ -482,14 +486,14 @@ func (s *Service) DissolveHostBridge(ctx context.Context, bridge string) HostBri
 	}
 
 	// Cancel pending confirm for this bridge so auto-rollback won't double-teardown.
-	s.control.netcfgMu.Lock()
-	if rb := s.control.bridgeRollback; rb != nil && rb.Bridge == bridge {
+	s.network.mu.Lock()
+	if rb := s.network.bridgeRollback; rb != nil && rb.Bridge == bridge {
 		if rb.Timer != nil {
 			rb.Timer.Stop()
 		}
-		s.control.bridgeRollback = nil
+		s.network.bridgeRollback = nil
 	}
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	out, err := s.teardownHostBridge(ctx, *rec, true)
 	if err != nil {
@@ -518,9 +522,9 @@ func (s *Service) GetHostBridgePending() HostBridgePending {
 
 func (s *Service) getHostBridgePending() *HostBridgePending {
 	s.ensureHostBridgeRollbackRestored()
-	s.control.netcfgMu.Lock()
-	defer s.control.netcfgMu.Unlock()
-	rb := s.control.bridgeRollback
+	s.network.mu.Lock()
+	defer s.network.mu.Unlock()
+	rb := s.network.bridgeRollback
 	if rb == nil {
 		return nil
 	}
@@ -546,12 +550,12 @@ func (s *Service) getHostBridgePending() *HostBridgePending {
 // host_bridges.json after process restart / disconnect recovery.
 // Unconfirmed bridges past the 3-minute window are torn down asynchronously.
 func (s *Service) ensureHostBridgeRollbackRestored() {
-	s.control.netcfgMu.Lock()
-	if s.control.bridgeRollback != nil {
-		s.control.netcfgMu.Unlock()
+	s.network.mu.Lock()
+	if s.network.bridgeRollback != nil {
+		s.network.mu.Unlock()
 		return
 	}
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	records := s.loadHostBridgeRecords()
 	active, until, expired := pickHostBridgePendingRestore(records, time.Now())
@@ -586,9 +590,9 @@ func (s *Service) ensureHostBridgeRollbackRestored() {
 		}
 	})
 
-	s.control.netcfgMu.Lock()
-	if s.control.bridgeRollback == nil {
-		s.control.bridgeRollback = rb
+	s.network.mu.Lock()
+	if s.network.bridgeRollback == nil {
+		s.network.bridgeRollback = rb
 		// Persist restored id/until so subsequent restarts keep the same deadline.
 		needSave := false
 		for i := range records {
@@ -603,7 +607,7 @@ func (s *Service) ensureHostBridgeRollbackRestored() {
 				}
 			}
 		}
-		s.control.netcfgMu.Unlock()
+		s.network.mu.Unlock()
 		if needSave {
 			_ = s.saveHostBridgeRecords(records)
 		}
@@ -614,19 +618,19 @@ func (s *Service) ensureHostBridgeRollbackRestored() {
 	if rb.Timer != nil {
 		rb.Timer.Stop()
 	}
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 }
 
 func (s *Service) autoExpireUnconfirmedHostBridge(rec HostBridgeRecord) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	// Skip if already confirmed/removed or currently tracked as pending.
-	s.control.netcfgMu.Lock()
-	if rb := s.control.bridgeRollback; rb != nil && rb.Bridge == rec.Bridge {
-		s.control.netcfgMu.Unlock()
+	s.network.mu.Lock()
+	if rb := s.network.bridgeRollback; rb != nil && rb.Bridge == rec.Bridge {
+		s.network.mu.Unlock()
 		return
 	}
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	records := s.loadHostBridgeRecords()
 	found := false
@@ -719,22 +723,22 @@ func hostBridgeRecordDeadline(r HostBridgeRecord) (deadline time.Time, created t
 }
 
 func (s *Service) rollbackHostBridge(ctx context.Context, id, action string) (string, error) {
-	s.control.netcfgMu.Lock()
-	rb := s.control.bridgeRollback
+	s.network.mu.Lock()
+	rb := s.network.bridgeRollback
 	if rb == nil {
-		s.control.netcfgMu.Unlock()
+		s.network.mu.Unlock()
 		return "", errors.New("没有待回滚的网桥变更")
 	}
 	if id != "" && rb.ID != id {
-		s.control.netcfgMu.Unlock()
+		s.network.mu.Unlock()
 		return "", errors.New("rollback id 不匹配")
 	}
 	if rb.Timer != nil {
 		rb.Timer.Stop()
 	}
-	s.control.bridgeRollback = nil
+	s.network.bridgeRollback = nil
 	rec := rb.Record
-	s.control.netcfgMu.Unlock()
+	s.network.mu.Unlock()
 
 	out, err := s.teardownHostBridge(ctx, rec, true)
 	// Remove inventory entry

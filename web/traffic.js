@@ -283,8 +283,8 @@ const state = {
     function renderSingleLegend() {
         if (!els.legend) return;
         els.legend.innerHTML = `
-            <span><span class="legend-rx"></span>${i18n('rx')}</span>
-            <span><span class="legend-tx"></span>${i18n('tx')}</span>
+            <span><span class="legend-rx"></span>${i18n('app_traffic_upload')}</span>
+            <span><span class="legend-tx"></span>${i18n('app_traffic_download')}</span>
             <span><span class="legend-total"></span>${i18n('total')}</span>
         `;
     }
@@ -344,7 +344,7 @@ const state = {
         rates.forEach((rate, i) => {
             const x = xS(i);
             const y = yS(rate.totalRate);
-            const tip = `${rate.timestamp}\n${i18n('rx')} ${formatSpeed(rate.rxRate)}\n${i18n('tx')} ${formatSpeed(rate.txRate)}\n${i18n('total')} ${formatSpeed(rate.totalRate)}`;
+            const tip = `${rate.timestamp}\n${i18n('app_traffic_upload')} ${formatSpeed(rate.rxRate)}\n${i18n('app_traffic_download')} ${formatSpeed(rate.txRate)}\n${i18n('total')} ${formatSpeed(rate.totalRate)}`;
             svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8" fill="transparent"><title>${escapeHtml(tip)}</title></circle>`;
             const anomaly = anomalyByTimestamp.get(rate.timestamp);
             if (anomaly) {

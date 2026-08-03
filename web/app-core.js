@@ -74,7 +74,8 @@ var state = {
         key: 'port',
         direction: 'asc'
     },
-    hostPortsAdvanced: false
+    hostPortsAdvanced: false,
+    dashboardPanelCollapseInitialized: false
 };
 window.__app.state = state;
 
@@ -462,7 +463,9 @@ function updateConnectivityTable(tbody, items) {
         }
         var errorTitle = item.error ? ' title="' + NetwatchShared.escapeHtml(item.error) + '"' : '';
         var statusLabel = statusMap[status] || i18n('unknown');
-        return '<tr>' +
+        var rowStatusClass = status === 'ok' ? 'connectivity-row--ok' :
+            (status === 'down' || status === 'unknown' ? 'connectivity-row--down' : 'connectivity-row--warn');
+        return '<tr class="connectivity-row ' + rowStatusClass + '">' +
             '<td class="col-target"><div class="target-info"><img class="site-icon" src="' + getIconUrl(item.name) + '" onerror="this.src=\'/icons/default.ico\'"><span>' + NetwatchShared.escapeHtml(item.name) + '</span></div></td>' +
             '<td class="col-status" data-label="' + i18n('status_col') + '"><span class="nat-badge connectivity-status ' + getStatusClass(status) + '">' + statusLabel + '</span></td>' +
             '<td class="col-latency latency ' + latencyClass + '" data-label="' + i18n('latency_col') + '"' + errorTitle + '><span class="latency-value">' + latencyText + '</span></td>' +

@@ -61,17 +61,21 @@
                     </div>
                 </div>
                 <div class="connectivity-split">
-                    <div>
-                        <div class="table-subtitle" data-i18n="domestic_sites">国内网站</div>
+                    <div class="connectivity-group">
+                        <div class="connectivity-group-head">
+                            <div class="table-subtitle" data-i18n="domestic_sites">国内网站</div>
+                            <span class="connectivity-group-meta"><span data-i18n="status_col">状态</span><span data-i18n="latency_col">延迟</span></span>
+                        </div>
                         <table class="data-table connectivity-table-fixed" id="domestic-table">
-                            <thead><tr><th class="col-target" data-i18n="target_node">目标节点</th><th class="col-status" data-i18n="status_col">状态</th><th class="col-latency" data-i18n="latency_col">延迟</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
-                    <div>
-                        <div class="table-subtitle" data-i18n="global_sites">国际网站</div>
+                    <div class="connectivity-group">
+                        <div class="connectivity-group-head">
+                            <div class="table-subtitle" data-i18n="global_sites">国际网站</div>
+                            <span class="connectivity-group-meta"><span data-i18n="status_col">状态</span><span data-i18n="latency_col">延迟</span></span>
+                        </div>
                         <table class="data-table connectivity-table-fixed" id="global-table">
-                            <thead><tr><th class="col-target" data-i18n="target_node">目标节点</th><th class="col-status" data-i18n="status_col">状态</th><th class="col-latency" data-i18n="latency_col">延迟</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
@@ -184,7 +188,7 @@
                 </table>
             </section>
 
-            <section class="card interfaces-card">
+            <section class="card interfaces-card dashboard-collapsible" id="app-traffic-section" data-dashboard-section="app_traffic">
                 <div class="card-title">
                     <span data-i18n="app_traffic_title">应用流量</span>
                     <div class="title-tools">
@@ -192,25 +196,31 @@
                         <a class="button-link btn-with-icon" id="traffic-analysis-link" href="/traffic.html" hidden><span class="ui-icon ui-icon--traffic" aria-hidden="true"></span><span data-i18n="traffic_analysis_btn">流量分析</span></a>
                         <button id="traffic-settings-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
                         <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+                        <button type="button" class="icon-button dashboard-collapse-btn" data-collapse-section="app_traffic" title="折叠板块" aria-label="折叠板块" aria-expanded="true" data-i18n-title="collapse_panel" data-i18n-aria-label="collapse_panel"><span class="dashboard-collapse-icon" aria-hidden="true"></span></button>
                     </div>
                 </div>
-                <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                    <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
-                    <tbody></tbody>
-                </table></div>
-                <div id="app-traffic-note" class="traffic-note"></div>
+                <div class="dashboard-panel-content">
+                    <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
+                        <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
+                        <tbody></tbody>
+                    </table></div>
+                    <div id="app-traffic-note" class="traffic-note"></div>
+                </div>
             </section>
 
-            <section class="card interfaces-card">
+            <section class="card interfaces-card dashboard-collapsible" id="host-ports-section" data-dashboard-section="host_ports">
                 <div class="card-title">
                     <span id="host-ports-title" class="host-ports-title" data-i18n="host_ports_title">端口占用</span>
                     <div class="title-tools">
                         <label class="host-port-search"><span class="sr-only" data-i18n="port_search_label">搜索端口</span><input id="host-ports-search" type="search" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="端口号" data-i18n-placeholder="port_search_placeholder" autocomplete="off"></label>
                         <span id="host-ports-status" class="placeholder" data-i18n="waiting">等待查询</span>
                         <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+                        <button type="button" class="icon-button dashboard-collapse-btn" data-collapse-section="host_ports" title="折叠板块" aria-label="折叠板块" aria-expanded="true" data-i18n-title="collapse_panel" data-i18n-aria-label="collapse_panel"><span class="dashboard-collapse-icon" aria-hidden="true"></span></button>
                     </div>
                 </div>
-                <div class="host-ports-grid" id="host-ports-list"></div>
+                <div class="dashboard-panel-content">
+                    <div class="host-ports-grid" id="host-ports-list"></div>
+                </div>
             </section>
 
         </main>
@@ -441,7 +451,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="network_config_title">网络配置</div>
-                <div class="note" data-i18n="network_config_note">网卡 IP 与网桥在同一窗口；应用后 3 分钟内需确认，否则自动回滚。</div>
+                <div class="note" data-i18n="network_config_note">网卡 / 网桥 / DNS 同窗；改 IP 与网桥 3 分钟确认，改 DNS 60 秒确认。</div>
             </div>
             <div class="window-actions">
                 <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
@@ -455,6 +465,7 @@
             <div class="network-config-tabs" role="tablist" aria-label="network config tabs">
                 <button type="button" class="network-config-tab active" data-tab="ip" role="tab" aria-selected="true" id="network-config-tab-ip" data-i18n="network_config_tab_ip">网卡配置</button>
                 <button type="button" class="network-config-tab" data-tab="bridge" role="tab" aria-selected="false" id="network-config-tab-bridge" data-i18n="network_config_tab_bridge">网桥</button>
+                <button type="button" class="network-config-tab" data-tab="dns" role="tab" aria-selected="false" id="network-config-tab-dns" data-i18n="network_config_tab_dns">DNS</button>
             </div>
 
             <div class="network-config-panels-stage">
@@ -516,6 +527,39 @@
                     <pre class="ipv6-renew-output" id="host-bridge-output" hidden></pre>
                 </div>
             </div>
+
+            <div class="network-config-panel" id="network-config-panel-dns" data-panel="dns" role="tabpanel" aria-hidden="true">
+                <div class="host-dns-section" id="host-dns-section">
+                    <div class="host-dns-meta note" id="host-dns-target-line"></div>
+                    <div class="host-dns-grid">
+                        <label>
+                            <span data-i18n="host_dns_method">DNS 获取方式</span>
+                            <select id="host-dns-method">
+                                <option value="auto" data-i18n="host_dns_method_auto">自动（跟随 DHCP）</option>
+                                <option value="manual" data-i18n="host_dns_method_manual">手动指定</option>
+                            </select>
+                        </label>
+                        <label class="host-dns-manual-field">
+                            <span data-i18n="host_dns_servers">DNS 服务器</span>
+                            <input id="host-dns-servers" placeholder="223.5.5.5,119.29.29.29" autocomplete="off" spellcheck="false">
+                        </label>
+                    </div>
+                    <div class="host-dns-presets" id="host-dns-presets">
+                        <button type="button" class="host-dns-preset" data-dns="223.5.5.5,223.6.6.6">阿里</button>
+                        <button type="button" class="host-dns-preset" data-dns="119.29.29.29">腾讯</button>
+                        <button type="button" class="host-dns-preset" data-dns="114.114.114.114,114.114.115.115">114</button>
+                        <button type="button" class="host-dns-preset" data-dns="1.1.1.1,1.0.0.1">Cloudflare</button>
+                    </div>
+                    <div class="host-dns-actions">
+                        <button id="host-dns-apply-btn" data-i18n="host_dns_apply">应用 DNS</button>
+                        <button id="host-dns-confirm-btn" hidden data-i18n="host_dns_confirm">确认可用</button>
+                        <button id="host-dns-rollback-btn" hidden data-i18n="host_dns_rollback">立即回滚</button>
+                    </div>
+                    <div id="host-dns-status-line" class="host-bridge-status-line"></div>
+                    <pre class="ipv6-renew-output" id="host-dns-output" hidden></pre>
+                </div>
+            </div>
+
             </div>
         </div>
     </section>

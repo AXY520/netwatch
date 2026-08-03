@@ -129,6 +129,9 @@ type MutableSettings struct {
 	// Traffic chart settings
 	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
 
+	// Collapsed dashboard panels, persisted server-side for all clients.
+	DashboardCollapsedSections []string `json:"dashboard_collapsed_sections,omitempty"`
+
 	// Container network control enabled (show block buttons in traffic view)
 	ContainerControlEnabled bool `json:"container_control_enabled"`
 
@@ -234,6 +237,61 @@ type NetworkConfigPendingResult struct {
 }
 
 // Host bridge (VM internet / L2 bridge) types.
+
+// Host DNS (connection-level) management via Lazycat SDK / NM.
+type HostDNSInfo struct {
+	Enabled    bool               `json:"enabled"`
+	Device     string             `json:"device,omitempty"`
+	Connection string             `json:"connection,omitempty"`
+	Type       string             `json:"type,omitempty"`
+	Method     string             `json:"method,omitempty"` // auto | manual
+	DNS        string             `json:"dns,omitempty"`
+	RuntimeDNS string             `json:"runtime_dns,omitempty"`
+	Candidates []HostDNSCandidate `json:"candidates,omitempty"`
+	Pending    *HostDNSPending    `json:"pending,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	Note       string             `json:"note,omitempty"`
+}
+
+type HostDNSCandidate struct {
+	Device     string `json:"device"`
+	Type       string `json:"type"`
+	Connection string `json:"connection,omitempty"`
+	Method     string `json:"method,omitempty"`
+	DNS        string `json:"dns,omitempty"`
+}
+
+type HostDNSApplyRequest struct {
+	Device string `json:"device,omitempty"` // optional; empty = auto pick uplink
+	Method string `json:"method"`           // auto | manual
+	DNS    string `json:"dns,omitempty"`    // comma-separated for manual
+}
+
+type HostDNSOpResult struct {
+	OK            bool   `json:"ok"`
+	Device        string `json:"device,omitempty"`
+	Connection    string `json:"connection,omitempty"`
+	Method        string `json:"method,omitempty"`
+	DNS           string `json:"dns,omitempty"`
+	RollbackID    string `json:"rollback_id,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	Output        string `json:"output,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Note          string `json:"note,omitempty"`
+}
+
+type HostDNSPending struct {
+	Pending       bool   `json:"pending"`
+	ID            string `json:"id,omitempty"`
+	Device        string `json:"device,omitempty"`
+	Connection    string `json:"connection,omitempty"`
+	Method        string `json:"method,omitempty"`
+	DNS           string `json:"dns,omitempty"`
+	PrevMethod    string `json:"prev_method,omitempty"`
+	PrevDNS       string `json:"prev_dns,omitempty"`
+	RollbackUntil string `json:"rollback_until,omitempty"`
+	RemainingSec  int    `json:"remaining_sec,omitempty"`
+}
 
 type HostBridgeRecord struct {
 	Bridge           string `json:"bridge"`
@@ -496,7 +554,7 @@ type InterfaceInfo struct {
 	Flags        []string `json:"flags,omitempty"`
 	IPv4         []string `json:"ipv4,omitempty"`
 	IPv6         []string `json:"ipv6,omitempty"`
-	DeviceStatus string   `json:"device_status,omitempty"`  // connected/disconnected/disabled/...
+	DeviceStatus string   `json:"device_status,omitempty"` // connected/disconnected/disabled/...
 	WifiSSID     string   `json:"wifi_ssid,omitempty"`
 	WifiSignal   int32    `json:"wifi_signal,omitempty"` // 0..100
 }

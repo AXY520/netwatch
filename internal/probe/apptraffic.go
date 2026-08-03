@@ -53,8 +53,10 @@ func sanitizeIconURL(raw, boxDomain string) string {
 // Each lzcapp gets its own bridge named "lzc-br-XXXXXXXX" and a /26 IPv4 subnet
 // (and a fd03:1136:3800::/122 IPv6 subnet). All container egress traffic for
 // that app crosses this bridge, so its rx/tx counters approximate
-// "this application's traffic" — though host-network-mode app services bypass
-// the bridge entirely and won't be counted here.
+// "this application's traffic". These are host-bridge directions: RX is traffic
+// entering the host bridge from app containers (application upload), while TX
+// is traffic sent from the host bridge to app containers (application download).
+// Host-network-mode app services bypass the bridge entirely and aren't counted.
 type AppBridgeStats struct {
 	Bridge         string `json:"bridge"`
 	AppID          string `json:"app_id,omitempty"`

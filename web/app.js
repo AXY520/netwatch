@@ -41,6 +41,8 @@ function openWindow(name) {
         if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(false);
         if (window.__app.bindHostBridgeUI) window.__app.bindHostBridgeUI();
         if (window.__app.loadHostBridges) window.__app.loadHostBridges();
+        if (window.__app.bindHostDNSUI) window.__app.bindHostDNSUI();
+        if (window.__app.loadHostDNS) window.__app.loadHostDNS();
     } else if (name === 'notification-settings') {
         if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.add('active');
         if (window.__app.loadLazycatDevices) window.__app.loadLazycatDevices();
@@ -210,6 +212,8 @@ function bindControls() {
     if (networkConfigRefreshBtn) networkConfigRefreshBtn.addEventListener('click', function () { if (A.loadNetworkConfigDevices) A.loadNetworkConfigDevices(); });
     if (A.bindHostBridgeUI) A.bindHostBridgeUI();
     if (A.loadHostBridges) A.loadHostBridges();
+    if (A.bindHostDNSUI) A.bindHostDNSUI();
+    if (A.loadHostDNS) A.loadHostDNS();
     var networkConfigMethod = document.getElementById('network-config-method');
     if (networkConfigMethod) networkConfigMethod.addEventListener('change', function () {
         if (A.updateNetworkConfigMethodState) A.updateNetworkConfigMethodState();
@@ -434,6 +438,69 @@ function initSSE() {
     }
 }
 
+function initDashboardPanelCollapse() {
+    if (state.dashboardPanelCollapseInitialized) return;
+    state.dashboardPanelCollapseInitialized = true;
+    var allowed = { app_traffic: true, host_ports: true };
+    var collapsed = new Set((state.settings.dashboard_collapsed_sections || []).filter(function (key) {
+        return !!allowed[key];
+    }));
+    var saveQueue = Promise.resolve();
+
+    var paint = function () {
+        document.querySelectorAll('[data-dashboard-section]').forEach(function (section) {
+            var key = section.dataset.dashboardSection;
+            var isCollapsed = collapsed.has(key);
+            section.classList.toggle('collapsed', isCollapsed);
+            var button = section.querySelector('[data-collapse-section="' + key + '"]');
+            if (!button) return;
+            var label = i18n(isCollapsed ? 'expand_panel' : 'collapse_panel');
+            button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+            button.setAttribute('title', label);
+            button.setAttribute('aria-label', label);
+        });
+    };
+
+    var persist = function () {
+        var sections = Array.from(collapsed);
+        state.settings.dashboard_collapsed_sections = sections;
+        saveQueue = saveQueue.then(function () {
+            return window.NetwatchAPI.post('/api/v1/settings', {
+                dashboard_collapsed_sections: sections
+            });
+        }).then(function (saved) {
+            var confirmed = saved && Array.isArray(saved.dashboard_collapsed_sections)
+                ? saved.dashboard_collapsed_sections.filter(function (key) { return !!allowed[key]; })
+                : sections;
+            collapsed = new Set(confirmed);
+            state.settings.dashboard_collapsed_sections = confirmed;
+            paint();
+        }).catch(function (error) {
+            console.error('save dashboard collapsed sections:', error);
+            return window.NetwatchAPI.get('/api/v1/settings').then(function (settings) {
+                var confirmed = settings && Array.isArray(settings.dashboard_collapsed_sections)
+                    ? settings.dashboard_collapsed_sections.filter(function (key) { return !!allowed[key]; })
+                    : [];
+                collapsed = new Set(confirmed);
+                state.settings.dashboard_collapsed_sections = confirmed;
+                paint();
+            }).catch(function () {});
+        });
+    };
+
+    document.querySelectorAll('[data-collapse-section]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var key = button.dataset.collapseSection;
+            if (!allowed[key]) return;
+            if (collapsed.has(key)) collapsed.delete(key);
+            else collapsed.add(key);
+            paint();
+            persist();
+        });
+    });
+    paint();
+}
+
 function initWithRetry(maxRetries) {
     if (maxRetries === undefined) maxRetries = 3;
     bindControls();
@@ -446,6 +513,7 @@ function initWithRetry(maxRetries) {
         window.__app.loadSpeedHistory ? window.__app.loadSpeedHistory() : Promise.resolve(),
         window.__app.loadSettings ? window.__app.loadSettings() : Promise.resolve()
     ]).then(function () {
+        initDashboardPanelCollapse();
         var appTrafficWasInitialized = state.appTrafficInitialized;
         if (!appTrafficWasInitialized && window.__app.initAppTraffic) {
             window.__app.initAppTraffic();
@@ -463,6 +531,7 @@ function initWithRetry(maxRetries) {
             }
         }
     }).catch(function () {
+        initDashboardPanelCollapse();
         if (!state.appTrafficInitialized && window.__app.initAppTraffic) {
             window.__app.initAppTraffic();
         }
@@ -486,6 +555,7 @@ function boot() {
         // (same contract for NIC config and host bridge).
         if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(true);
         if (window.__app.loadHostBridgePending) window.__app.loadHostBridgePending(true);
+        if (window.__app.loadHostDNSPending) window.__app.loadHostDNSPending(true);
     }, 800);
 
     document.addEventListener('visibilitychange', function () {
@@ -494,6 +564,7 @@ function boot() {
             // Re-check pending after tab focus / network recovery.
             if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(true);
             if (window.__app.loadHostBridgePending) window.__app.loadHostBridgePending(true);
+        if (window.__app.loadHostDNSPending) window.__app.loadHostDNSPending(true);
         }
     });
 }

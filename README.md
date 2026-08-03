@@ -7,6 +7,7 @@ Netwatch 是一个面向主机网络观测的 Web 面板，用于查看网站连
 - 国内网站连通性：默认探测 `Baidu`、`Bilibili`
 - 国外网站连通性：默认探测 `GitHub`、`YouTube`
 - 本机网络信息：接口、地址、默认路由、DNS 等
+- 主机网络配置：通过懒猫 SDK 或本机 `nmcli` 修改网卡 IP、网桥和 DNS，并支持超时自动回滚
 - 出口信息：公网 IPv4/IPv6、国内出口、地区识别
 - NAT 类型检测：基于 STUN 的手动探测
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
@@ -112,6 +113,20 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `GET /api/v1/network/realtime`：网卡实时速率
 - `GET /api/v1/network/egress-lookups`：出口查询缓存或触发查询
 - `POST /api/v1/network/egress-lookups`：清除公网 IP 缓存并刷新出口查询
+- `GET /api/v1/network/config/devices`：读取可配置网卡
+- `POST /api/v1/network/config/apply`：应用网卡 IPv4 配置
+- `POST /api/v1/network/config/confirm`：确认网卡配置
+- `POST /api/v1/network/config/rollback`：回滚网卡配置
+- `GET /api/v1/network/dns`：读取指定网卡的 DNS 配置
+- `POST /api/v1/network/dns/apply`：应用自动或手动 DNS 配置
+- `POST /api/v1/network/dns/confirm`：确认 DNS 配置
+- `POST /api/v1/network/dns/rollback`：回滚 DNS 配置
+- `GET /api/v1/network/dns/pending`：读取待确认 DNS 变更
+- `GET /api/v1/network/bridges`：读取受管主机网桥
+- `POST /api/v1/network/bridges/create`：创建主机网桥
+- `POST /api/v1/network/bridges/confirm`：确认主机网桥变更
+- `POST /api/v1/network/bridges/rollback`：回滚主机网桥变更
+- `POST /api/v1/network/bridges/dissolve`：解散受管主机网桥
 
 设置：
 
@@ -211,6 +226,7 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - 主界面“快速刷新”只刷新网站延迟、出口 IP、出口地区和本机网络信息
 - NAT 检测独立运行，支持单独手动刷新
 - 宽带测速与网页到本机传输测速采用悬浮二级窗口，且同一时间只允许打开一个
+- 网卡 IP 与网桥变更需要在 3 分钟内确认，DNS 变更需要在 60 秒内确认，否则自动回滚
 - 测速界面会显示实时阶段和进度，关闭窗口会立即停止测速
 - 时间显示直接来自这台机器本地时间
 

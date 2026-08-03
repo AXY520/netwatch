@@ -57,7 +57,7 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 	}
 
 	s.mu.RLock()
-	blocked := s.control.snapshotBlocked()
+	blocked := s.containers.snapshotBlocked()
 	s.mu.RUnlock()
 
 	apps := make([]AppContainerGroup, 0, len(projGroups))
@@ -120,7 +120,7 @@ func (s *Service) BlockApp(ctx context.Context, bridge, mode string) error {
 		}
 	}
 
-	s.control.setBlocked(bridge, "internet")
+	s.containers.setBlocked(bridge, "internet")
 	s.saveBlockedBridges()
 	return nil
 }
@@ -169,7 +169,7 @@ func (s *Service) UnblockApp(ctx context.Context, bridge string) error {
 		return fmt.Errorf("bridge name is required")
 	}
 
-	mode := s.control.getBlocked(bridge)
+	mode := s.containers.getBlocked(bridge)
 
 	if mode == "all" {
 		// Backward compat: unblock bridges that were blocked with "all" mode
@@ -184,7 +184,7 @@ func (s *Service) UnblockApp(ctx context.Context, bridge string) error {
 		logger.Warn("bridge unblock internet fallback: %v", err)
 	}
 
-	s.control.clearBlocked(bridge)
+	s.containers.clearBlocked(bridge)
 	s.saveBlockedBridges()
 	return nil
 }
@@ -221,7 +221,7 @@ func (s *Service) unblockAppInternetViaContainers(ctx context.Context, bridge st
 
 func (s *Service) saveBlockedBridges() {
 	settings := s.GetMutableSettings()
-	settings.BlockedBridges = s.control.snapshotBlocked()
+	settings.BlockedBridges = s.containers.snapshotBlocked()
 	if err := saveMutableSettings(s.cfg.DataDir, settings); err != nil {
 		logger.Warn("saveBlockedBridges: %v", err)
 	}

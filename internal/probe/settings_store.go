@@ -7,25 +7,27 @@ import "sync"
 type settingsStore struct {
 	mu sync.RWMutex
 
-	chartTimeLabelInterval    int
-	containerControlEnabled   bool
-	trafficSamplingEnabled    bool
-	trafficSamplingInterval   int
-	perAppSamplingInterval    map[string]int
-	persistentTrafficBridges  []string
-	backgroundMonitorEnabled  bool
-	backgroundMonitorInterval int
+	chartTimeLabelInterval     int
+	dashboardCollapsedSections []string
+	containerControlEnabled    bool
+	trafficSamplingEnabled     bool
+	trafficSamplingInterval    int
+	perAppSamplingInterval     map[string]int
+	persistentTrafficBridges   []string
+	backgroundMonitorEnabled   bool
+	backgroundMonitorInterval  int
 }
 
 func newSettingsStore(def MutableSettings) *settingsStore {
 	return &settingsStore{
-		chartTimeLabelInterval:    def.ChartTimeLabelInterval,
-		containerControlEnabled:   def.ContainerControlEnabled,
-		trafficSamplingEnabled:    def.TrafficSamplingEnabled,
-		trafficSamplingInterval:   def.TrafficSamplingIntervalSec,
-		perAppSamplingInterval:    map[string]int{},
-		backgroundMonitorEnabled:  def.BackgroundMonitorEnabled,
-		backgroundMonitorInterval: def.BackgroundMonitorIntervalSec,
+		chartTimeLabelInterval:     def.ChartTimeLabelInterval,
+		dashboardCollapsedSections: normalizeDashboardCollapsedSections(def.DashboardCollapsedSections),
+		containerControlEnabled:    def.ContainerControlEnabled,
+		trafficSamplingEnabled:     def.TrafficSamplingEnabled,
+		trafficSamplingInterval:    def.TrafficSamplingIntervalSec,
+		perAppSamplingInterval:     map[string]int{},
+		backgroundMonitorEnabled:   def.BackgroundMonitorEnabled,
+		backgroundMonitorInterval:  def.BackgroundMonitorIntervalSec,
 	}
 }
 
@@ -43,6 +45,7 @@ func (st *settingsStore) writeToSettings(out *MutableSettings) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	out.ChartTimeLabelInterval = st.chartTimeLabelInterval
+	out.DashboardCollapsedSections = append([]string(nil), st.dashboardCollapsedSections...)
 	out.ContainerControlEnabled = st.containerControlEnabled
 	out.TrafficSamplingEnabled = st.trafficSamplingEnabled
 	out.TrafficSamplingIntervalSec = st.trafficSamplingInterval
@@ -61,6 +64,7 @@ func (st *settingsStore) apply(in MutableSettings) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.chartTimeLabelInterval = in.ChartTimeLabelInterval
+	st.dashboardCollapsedSections = normalizeDashboardCollapsedSections(in.DashboardCollapsedSections)
 	st.containerControlEnabled = in.ContainerControlEnabled
 	st.trafficSamplingEnabled = in.TrafficSamplingEnabled
 	if in.TrafficSamplingIntervalSec >= 5 {
@@ -77,6 +81,19 @@ func (st *settingsStore) apply(in MutableSettings) {
 		}
 	}
 	st.persistentTrafficBridges = append([]string(nil), in.PersistentTrafficBridges...)
+}
+
+func normalizeDashboardCollapsedSections(sections []string) []string {
+	allowed := map[string]bool{"app_traffic": true, "host_ports": true}
+	out := make([]string, 0, len(allowed))
+	seen := make(map[string]bool, len(allowed))
+	for _, section := range sections {
+		if allowed[section] && !seen[section] {
+			seen[section] = true
+			out = append(out, section)
+		}
+	}
+	return out
 }
 
 func (st *settingsStore) backgroundConfig() (enabled bool, intervalSec int) {
