@@ -101,6 +101,7 @@ Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于�
 - `GET /healthz`：健康检查
 - `GET /api/v1/summary`：完整摘要
 - `GET /api/v1/events`：SSE 推送 summary
+- `GET /api/v1/events/history?severity=warning&kind=nat_type_changed&since=2026-08-01&limit=100`：查询持久化网络事件
 - `GET /metrics`：Prometheus 风格指标
 
 当前状态类观测 API 会在保留原有 `generated_at`、`timestamp` 或 `checked_at` 字段的同时，

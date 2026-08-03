@@ -132,6 +132,7 @@ func (s *Service) runBackgroundMonitorTick() {
 	}
 
 	s.mu.Lock()
+	previousSummary := s.summary
 	summary.NetworkInfo.NAT = s.summary.NetworkInfo.NAT
 	s.summary = summary
 	s.summary.Ready = true
@@ -140,6 +141,7 @@ func (s *Service) runBackgroundMonitorTick() {
 	finalSummary := s.summary
 	s.mu.Unlock()
 
+	s.recordSummaryEvents(previousSummary, finalSummary)
 	s.recordTimeseries(finalSummary)
 	s.notify.evaluateRules(finalSummary, func() RealtimeNetStats {
 		return s.nicStats.sampleAndSnapshot()

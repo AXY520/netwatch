@@ -41,6 +41,7 @@ type Service struct {
 	publicIPCache         publicIPCacheData
 	publicIPMu            sync.Mutex
 	appTrafficHistory     *appTrafficHistoryStore
+	events                *networkEventStore
 	lastConnectivityProbe time.Time
 	lastEgressProbe       time.Time
 
@@ -84,6 +85,7 @@ func NewService(cfg Config) *Service {
 		nicStop:               make(chan struct{}),
 		nicDone:               make(chan struct{}),
 		appTrafficHistory:     newAppTrafficHistoryStore(cfg.DataDir),
+		events:                newNetworkEventStore(cfg.DataDir),
 		appTrafficStop:        make(chan struct{}),
 		appTrafficDone:        make(chan struct{}),
 		backgroundMonitorStop: make(chan struct{}),

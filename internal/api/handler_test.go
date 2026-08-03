@@ -128,6 +128,37 @@ func TestHandleNetworkMutationAuditRejectsUnsupportedMethods(t *testing.T) {
 	}
 }
 
+func TestHandleNetworkEventHistoryReturnsStableEnvelope(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/history?severity=warning&limit=10", nil)
+	rec := httptest.NewRecorder()
+	handler.handleNetworkEventHistory(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Events []probe.NetworkEvent `json:"events"`
+		Kinds  []string             `json:"kinds"`
+		Stale  bool                 `json:"stale"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Events == nil || got.Kinds == nil || got.Stale {
+		t.Fatalf("response = %+v", got)
+	}
+}
+
+func TestHandleNetworkEventHistoryRejectsInvalidSince(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/history?since=not-a-time", nil)
+	rec := httptest.NewRecorder()
+	handler.handleNetworkEventHistory(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestMetricsExposeRawAndSemanticAppTrafficCounters(t *testing.T) {
 	handler := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

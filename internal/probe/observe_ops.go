@@ -323,6 +323,7 @@ func (s *Service) refreshFast(ctx context.Context) {
 
 	summary.NetworkInfo.NAT = currentNAT
 	s.lastError = ""
+	previousSummary := s.summary
 	s.summary = summary
 	s.summary.Ready = true
 	s.summary.LastError = ""
@@ -330,6 +331,7 @@ func (s *Service) refreshFast(ctx context.Context) {
 	finalSummary := s.summary
 	s.mu.Unlock()
 
+	s.recordSummaryEvents(previousSummary, finalSummary)
 	s.recordTimeseries(finalSummary)
 	s.alert.check(finalSummary)
 	s.broadcast(finalSummary)
@@ -368,9 +370,11 @@ func (s *Service) refreshNAT(ctx context.Context) {
 
 	nat := s.ProbeNAT(ctx)
 	s.mu.Lock()
+	previousSummary := s.summary
 	s.summary.NetworkInfo.NAT = nat
 	snap := s.summary
 	s.mu.Unlock()
+	s.recordSummaryEvents(previousSummary, snap)
 	s.alert.check(snap)
 	s.broadcast(snap)
 }

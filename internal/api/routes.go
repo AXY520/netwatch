@@ -48,6 +48,7 @@ func (h *Handler) registerSpeedRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/events/history", h.handleNetworkEventHistory)
 	mux.HandleFunc("/api/v1/notifications/events", h.handleNotificationEvents)
 	mux.HandleFunc("/api/v1/notifications/bark/test", h.handleBarkNotificationTest)
 	mux.HandleFunc("/api/v1/notifications/pushplus/test", h.handlePushPlusNotificationTest)

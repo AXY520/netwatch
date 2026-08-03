@@ -55,6 +55,27 @@ func (s *Service) auditNetworkMutation(event NetworkMutationAuditEvent, mutation
 	if err := json.NewEncoder(f).Encode(event); err != nil {
 		logger.Warn("network mutation audit write: %v", err)
 	}
+	severity := "info"
+	if event.State == "failed" || event.State == "rolled_back" || event.Error != "" {
+		severity = "warning"
+	}
+	s.appendNetworkEvent(NetworkEvent{
+		Timestamp: event.Timestamp,
+		Kind:      "network_mutation_" + event.State,
+		Severity:  severity,
+		Source:    "network_control",
+		Title:     "网络配置操作：" + event.Kind,
+		Summary:   displayEventValue(event.Target) + " / " + displayEventValue(event.State),
+		Details: map[string]any{
+			"mutation_id":   event.ID,
+			"mutation_kind": event.Kind,
+			"target":        event.Target,
+			"state":         event.State,
+			"error":         event.Error,
+			"duration_ms":   event.DurationMS,
+		},
+		DedupeKey: "",
+	})
 }
 
 func networkMutationAuditPayloads(m *networkMutation) (requested, previous json.RawMessage) {

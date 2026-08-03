@@ -9,6 +9,36 @@ import (
 	"netwatch/internal/probe"
 )
 
+func (h *Handler) handleNetworkEventHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 100, 500)
+	var since time.Time
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		parsedOK := false
+		for _, layout := range []string{time.RFC3339, time.DateOnly, time.DateTime} {
+			if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+				since = parsed
+				parsedOK = true
+				break
+			}
+		}
+		if !parsedOK {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid since"})
+			return
+		}
+	}
+	events := h.service.NetworkEvents(probe.NetworkEventQuery{
+		Kind: r.URL.Query().Get("kind"), Severity: r.URL.Query().Get("severity"), Since: since, Limit: limit,
+	})
+	writeObservationJSON(w, http.StatusOK, map[string]any{
+		"events": events,
+		"kinds":  probe.NetworkEventKinds(h.service.NetworkEvents(probe.NetworkEventQuery{Limit: 500})),
+	}, time.Now().Format(time.DateTime), time.Minute)
+}
+
 func (h *Handler) handleNotificationEvents(w http.ResponseWriter, r *http.Request) {
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	writeJSON(w, http.StatusOK, map[string]any{
