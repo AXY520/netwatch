@@ -361,7 +361,10 @@ async function loadNetworkConfigDevices() {
         }
         var devices = data.devices || [];
         e.device.__allDevices = devices;
-        e.device.onchange = onNetworkConfigDeviceChange;
+        if (typeof window.__app.onNetworkConfigDeviceChange !== 'function') {
+            throw new Error('network config device handler unavailable');
+        }
+        e.device.onchange = window.__app.onNetworkConfigDeviceChange;
         if (devices.length === 0) {
             e.device.innerHTML = '';
             e.device.disabled = true;

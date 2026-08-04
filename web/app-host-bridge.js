@@ -769,5 +769,6 @@ window.__app.clearNetworkConfigLogs = clearNetworkConfigLogs;
 window.__app.switchNetworkConfigTab = switchNetworkConfigTab;
 window.__app.currentNetworkConfigTab = currentNetworkConfigTab;
 window.__app.renderNetworkConfigDeviceOptions = renderNetworkConfigDeviceOptions;
+window.__app.onNetworkConfigDeviceChange = onNetworkConfigDeviceChange;
 window.__app.appendNetworkMutationVerification = appendNetworkMutationVerification;
 })();
