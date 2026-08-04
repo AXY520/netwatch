@@ -28,19 +28,16 @@ window.NetwatchShared = (function () {
         return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
 
-    function observationAgeLabel(value, ageSeconds) {
-        var tr = typeof window.__ === 'function' ? window.__ : function (key) { return key; };
-        var seconds = Number(ageSeconds);
-        if (!Number.isFinite(seconds) || seconds < 0) {
-            var parsed = parseObservationTime(value);
-            seconds = parsed ? Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000)) : NaN;
-        }
-        if (!Number.isFinite(seconds)) return value ? String(value) : '';
-        if (seconds < 10) return tr('updated_just_now');
-        if (seconds < 60) return seconds + ' ' + tr('seconds_ago');
-        if (seconds < 3600) return Math.floor(seconds / 60) + ' ' + tr('minutes_ago');
-        if (seconds < 86400) return Math.floor(seconds / 3600) + ' ' + tr('hours_ago');
-        return Math.floor(seconds / 86400) + ' ' + tr('days_ago');
+    function observationTimestampLabel(value) {
+        if (!value) return '';
+        var raw = String(value).trim();
+        var exact = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+        if (exact) return exact[1] + ' ' + exact[2];
+        var parsed = parseObservationTime(raw);
+        if (!parsed) return raw;
+        var pad = function (number) { return String(number).padStart(2, '0'); };
+        return parsed.getFullYear() + '-' + pad(parsed.getMonth() + 1) + '-' + pad(parsed.getDate()) + ' ' +
+            pad(parsed.getHours()) + ':' + pad(parsed.getMinutes()) + ':' + pad(parsed.getSeconds());
     }
 
     function setObservationStatus(el, options) {
@@ -52,7 +49,7 @@ window.NetwatchShared = (function () {
         if (options.count !== undefined && options.count !== null) {
             parts.push(String(options.count) + (options.countLabel || ' 项'));
         }
-        var age = observationAgeLabel(options.generatedAt, options.ageSeconds);
+        var timestamp = observationTimestampLabel(options.generatedAt);
         var parsedAt = parseObservationTime(options.generatedAt);
         var inferredAge = parsedAt ? Math.max(0, Math.floor((Date.now() - parsedAt.getTime()) / 1000)) : 0;
         if (state === 'fresh' && (options.stale || (options.staleAfterSeconds && inferredAge > options.staleAfterSeconds))) state = 'stale';
@@ -62,7 +59,7 @@ window.NetwatchShared = (function () {
         else if (state === 'unsupported') parts.push(tr('capability_unsupported'));
         else if (state === 'empty') parts.push(tr('no_data'));
         else if (state === 'stale' || options.stale) parts.push(tr('data_stale'));
-        if (age) parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + age : age);
+        if (timestamp) parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + timestamp : tr('sampled_at') + ' ' + timestamp);
         el.textContent = parts.join(' · ');
         el.dataset.state = state;
         if (options.title || options.error) el.title = options.title || options.error;
@@ -504,7 +501,7 @@ window.NetwatchShared = (function () {
         escapeHtml: escapeHtml,
         applyThemeToggleIcon: applyThemeToggleIcon,
         showToast: showToast,
-        observationAgeLabel: observationAgeLabel,
+        observationTimestampLabel: observationTimestampLabel,
         setObservationStatus: setObservationStatus,
         lockModalScroll: lockModalScroll,
         unlockModalScroll: unlockModalScroll,
