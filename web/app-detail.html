@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0b">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
+    <title>NETWATCH // 应用网络详情</title>
+    <script>var savedTheme=localStorage.getItem('theme')||(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',savedTheme);</script>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+    <div id="toast" class="toast"></div>
+    <div class="container app-detail-page">
+        <header class="traffic-topbar">
+            <div class="traffic-header-copy"><div class="logo">NET<span>WATCH</span></div><div class="note">应用网络详情</div></div>
+            <div class="controls">
+                <a class="button-link btn-with-icon" href="/traffic.html"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span>返回流量分析</span></a>
+                <a class="button-link btn-with-icon" href="/"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>仪表盘</span></a>
+                <button id="detail-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+            </div>
+        </header>
+        <main id="detail-content" class="app-detail-layout" aria-live="polite"><div class="card placeholder">正在加载应用网络信息</div></main>
+    </div>
+    <script src="/shared.js" defer></script>
+    <script src="/api.js" defer></script>
+    <script src="/app-detail.js" defer></script>
+</body>
+</html>

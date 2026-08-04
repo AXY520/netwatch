@@ -167,6 +167,33 @@ type AppContainersResponse struct {
 	Applications []AppContainerGroup `json:"applications"`
 }
 
+type AppNetworkRate struct {
+	UploadBPS   float64 `json:"upload_bps"`
+	DownloadBPS float64 `json:"download_bps"`
+	TotalBPS    float64 `json:"total_bps"`
+}
+
+type AppNetworkDetail struct {
+	GeneratedAt         string                 `json:"generated_at"`
+	Mode                string                 `json:"mode"`
+	StatisticsAvailable bool                   `json:"statistics_available"`
+	Limitation          string                 `json:"limitation,omitempty"`
+	Bridge              *AppBridgeStats        `json:"bridge,omitempty"`
+	AppID               string                 `json:"app_id,omitempty"`
+	AppTitle            string                 `json:"app_title,omitempty"`
+	Project             string                 `json:"project,omitempty"`
+	Containers          []ContainerRuntimeInfo `json:"containers"`
+	Ports               []HostPortEntry        `json:"ports"`
+	History             []AppTrafficPoint      `json:"history"`
+	Events              []NetworkEvent         `json:"events"`
+	Live                AppNetworkRate         `json:"live"`
+	ConnectionTargets   []string               `json:"connection_targets"`
+	ConnectionNote      string                 `json:"connection_note"`
+	SampledAt           string                 `json:"sampled_at,omitempty"`
+	AgeSeconds          int64                  `json:"age_seconds"`
+	Stale               bool                   `json:"stale"`
+}
+
 type NetworkConfigDevice struct {
 	Device     string `json:"device"`
 	Type       string `json:"type"`

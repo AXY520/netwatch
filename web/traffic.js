@@ -550,11 +550,13 @@ const state = {
             const icon = item.icon ? `<img class="app-icon" src="${escapeHtml(item.icon)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
             const subHtml = sub ? `<div class="traffic-app-sub">${escapeHtml(sub)}</div>` : '';
             const rateHtml = rate ? `<div class="traffic-app-rate">${escapeHtml(i18n('traffic_live_rate') + ' ' + rate)}</div>` : '';
+            const detailURL = `/app-detail.html?bridge=${encodeURIComponent(item.bridge)}`;
             return `
                 <div class="traffic-app-item ${item.bridge === state.selectedBridge ? 'active' : ''}" data-bridge="${escapeHtml(item.bridge)}" role="button" tabindex="0">
                     <div class="traffic-app-icon-wrap">${icon}</div>
                     <div class="traffic-app-title"><strong>${escapeHtml(title)}</strong>${subHtml}${rateHtml}</div>
                     <div class="traffic-app-total">${formatBytes(total)}</div>
+                    <a class="traffic-app-detail-link" href="${detailURL}" title="应用网络详情" aria-label="查看 ${escapeHtml(title)} 的网络详情">›</a>
                 </div>
             `;
         }).join('');
@@ -784,6 +786,7 @@ const state = {
         els.sort?.addEventListener('change', renderAppList);
         els.hideIdle?.addEventListener('change', renderAppList);
         els.appList?.addEventListener('click', (e) => {
+            if (e.target.closest('.traffic-app-detail-link')) return;
             const btn = e.target.closest('.traffic-app-item');
             if (btn) selectBridge(btn.dataset.bridge);
         });

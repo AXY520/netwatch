@@ -2,11 +2,34 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"netwatch/internal/probe"
 )
+
+func (h *Handler) handleAppNetworkDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	d, ok := parseTrafficRange(r.URL.Query().Get("range"))
+	if !ok {
+		d = 24 * time.Hour
+	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 240, 500)
+	result, err := h.service.GetAppNetworkDetail(r.Context(), r.URL.Query().Get("bridge"), r.URL.Query().Get("app_id"), r.URL.Query().Get("project"), time.Now().Add(-d), limit)
+	if errors.Is(err, probe.ErrAppNetworkNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
 
 func (h *Handler) handleAppTraffic(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, probe.CollectAppTraffic())
