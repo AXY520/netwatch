@@ -4370,14 +4370,14 @@ button.icon-button,
     font-size: 0.78rem;
     white-space: nowrap;
 }
-.event-content { min-width: 0; display: flex; align-items: flex-start; gap: 0.7rem; padding: 0.78rem 1rem 0.78rem 0; }
+.event-content { min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 0.78rem 1rem 0.78rem 0; }
 .event-copy { min-width: 0; flex: 1 1 auto; }
 .event-app-icon {
-    width: 30px;
-    height: 30px;
-    flex: 0 0 30px;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
     margin-top: 0.05rem;
-    border-radius: 6px;
+    border-radius: 5px;
     object-fit: cover;
     background: var(--bg-elevated);
 }
