@@ -1278,12 +1278,13 @@ button.icon-button,
             border: 1px solid var(--border-subtle);
             background: rgba(255,255,255,0.018);
             display: grid;
-            grid-template-columns: minmax(5.2rem, 0.34fr) minmax(0, 0.66fr);
+            grid-template-columns: minmax(0, 1fr);
             gap: 0.45rem 0.65rem;
             align-items: center;
         }
         .host-ports-grid.advanced .host-port-item {
             cursor: pointer;
+            grid-template-columns: minmax(5.2rem, 0.34fr) minmax(0, 0.66fr);
         }
         .host-ports-grid.advanced .host-port-item:hover {
             border-color: var(--accent-cyan);
@@ -1295,6 +1296,7 @@ button.icon-button,
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            text-align: left;
         }
         .host-port-listen {
             min-width: 0;

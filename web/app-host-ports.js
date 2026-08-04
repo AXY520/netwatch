@@ -200,9 +200,12 @@ function initHostPorts() {
                 var iconHtml = group.icon ? '<img class="app-icon host-port-app-icon" src="' + NetwatchShared.escapeHtml(group.icon) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '';
                 var groupRows = group.rows.map(function (row, index) {
                     var clickable = state.hostPortsAdvanced ? ' role="button" tabindex="0" data-group="' + NetwatchShared.escapeHtml(group.type + '|' + (group.type === 'host' ? 'host' : group.rows[0].ownerKey)) + '" data-index="' + index + '"' : '';
+                    var advancedSummary = state.hostPortsAdvanced
+                        ? '<div class="host-port-listen">' + (group.type === 'host' ? '<strong class="host-port-row-owner">' + NetwatchShared.escapeHtml(row.ownerName) + '</strong><span> · </span>' : '') + NetwatchShared.escapeHtml(uniqueJoined(row.details, function (item) { return item.address; })) + '</div>'
+                        : '';
                     return '<div class="host-port-item"' + clickable + '>' +
                         '<div class="host-port-main"><strong>' + NetwatchShared.escapeHtml(String(row.port || '')) + '</strong><span class="host-port-proto">' + NetwatchShared.escapeHtml(row.protocol) + '</span><span class="host-port-state">' + NetwatchShared.escapeHtml(row.state || '') + '</span></div>' +
-                        '<div class="host-port-listen">' + (group.type === 'host' ? '<strong class="host-port-row-owner">' + NetwatchShared.escapeHtml(row.ownerName) + '</strong><span> · </span>' : '') + NetwatchShared.escapeHtml(uniqueJoined(row.details, function (item) { return item.address; })) + '</div>' +
+                        advancedSummary +
                     '</div>';
                 }).join('');
                 return '<section class="host-port-group ' + ownerClass + '"><div class="host-port-group-head">' + iconHtml + '<span class="owner-badge ' + ownerClass + '">' + NetwatchShared.escapeHtml(group.type === 'app' ? i18n('app_owner') : i18n('host_services')) + '</span><strong>' + NetwatchShared.escapeHtml(group.type === 'app' ? group.name : i18n('host_services')) + '</strong><span class="host-port-group-count">' + group.rows.length + '</span></div><div class="host-port-group-list">' + groupRows + '</div></section>';
