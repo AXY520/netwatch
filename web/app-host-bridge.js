@@ -11,7 +11,15 @@ var ensureNetworkConfigOption = window.__app.ensureNetworkConfigOption;
 var fillNetworkConfigForm = window.__app.fillNetworkConfigForm;
 var updateNetworkConfigApplyState = window.__app.updateNetworkConfigApplyState;
 var loadNetworkConfigPending = window.__app.loadNetworkConfigPending;
-var pinnedNetworkConfigDevice = window.__app.pinnedNetworkConfigDevice;
+
+function getPinnedNetworkConfigDevice() {
+    if (typeof window.__app.pinnedNetworkConfigDevice === 'function') {
+        return window.__app.pinnedNetworkConfigDevice();
+    }
+    return networkMutationCoordinator && typeof networkMutationCoordinator.pinnedDevice === 'function'
+        ? networkMutationCoordinator.pinnedDevice()
+        : '';
+}
 
 // --- Host bridge (tab inside network config window) ---
 
@@ -582,7 +590,7 @@ function renderNetworkConfigDeviceOptions(opts) {
     } else {
         devices = all.slice();
     }
-    var pin = pinnedNetworkConfigDevice();
+    var pin = getPinnedNetworkConfigDevice();
     var prev = opts.preferredDevice || pin || e.device.value;
     // Pending confirmation must always keep the target NIC visible/selected.
     if (pin && !devices.some(function (d) { return d && d.device === pin; })) {
@@ -633,7 +641,7 @@ function renderNetworkConfigDeviceOptions(opts) {
 function onNetworkConfigDeviceChange() {
     var e = networkConfigEls();
     if (!e.device) return;
-    var pin = pinnedNetworkConfigDevice();
+    var pin = getPinnedNetworkConfigDevice();
     if (pin) {
         // Pending confirm/rollback: never follow accidental selection changes.
         if (e.device.value !== pin) {
@@ -716,7 +724,7 @@ function switchNetworkConfigTab(tab) {
     }
     if (tab === 'dns' && typeof window.__app.loadHostDNS === 'function') {
         var de = networkConfigEls();
-        var pinDev = pinnedNetworkConfigDevice();
+        var pinDev = getPinnedNetworkConfigDevice();
         window.__app.loadHostDNS(pinDev || (de.device ? de.device.value : ''));
     }
 }

@@ -67,9 +67,12 @@ async function main() {
     ].forEach((name) => assert.equal(typeof global.__app[name], 'function', `${name} must be exported`));
 
     await global.__app.loadNetworkConfigDevices();
+    const pinnedNetworkConfigDevice = global.__app.pinnedNetworkConfigDevice;
+    delete global.__app.pinnedNetworkConfigDevice;
     global.__app.onNetworkConfigDeviceChange();
     global.__app.setHostBridgeCreateEnabled(false);
     global.__app.setHostDNSOutput('');
+    global.__app.pinnedNetworkConfigDevice = pinnedNetworkConfigDevice;
 }
 
 main().catch((error) => {

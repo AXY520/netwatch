@@ -10,7 +10,15 @@ var currentNetworkConfigTab = window.__app.currentNetworkConfigTab;
 var renderNetworkConfigDeviceOptions = window.__app.renderNetworkConfigDeviceOptions;
 var ensureNetworkConfigOption = window.__app.ensureNetworkConfigOption;
 var appendNetworkMutationVerification = window.__app.appendNetworkMutationVerification;
-var pinnedNetworkConfigDevice = window.__app.pinnedNetworkConfigDevice;
+
+function getPinnedNetworkConfigDevice() {
+    if (typeof window.__app.pinnedNetworkConfigDevice === 'function') {
+        return window.__app.pinnedNetworkConfigDevice();
+    }
+    return networkMutationCoordinator && typeof networkMutationCoordinator.pinnedDevice === 'function'
+        ? networkMutationCoordinator.pinnedDevice()
+        : '';
+}
 
 var hostDNSCountdownTimer = null;
 var hostDNSLoadSeq = 0;
@@ -75,7 +83,7 @@ function renderHostDNSPending(pending, openWindow) {
         if (e.method) e.method.disabled = false;
         if (e.servers) e.servers.disabled = false;
         // Unlock device only if no other pending (IP/bridge) is pinning it.
-        if (e.device && !pinnedNetworkConfigDevice()) {
+        if (e.device && !getPinnedNetworkConfigDevice()) {
             e.device.disabled = false;
             if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         }
@@ -191,7 +199,7 @@ async function loadHostDNS(preferredDevice) {
     var e = hostDNSEls();
     if (!e.section) return null;
     var seq = ++hostDNSLoadSeq;
-    var pin = pinnedNetworkConfigDevice();
+    var pin = getPinnedNetworkConfigDevice();
     var requested = preferredDevice != null ? String(preferredDevice || '').trim() : '';
     if (!requested) requested = pin;
     if (!requested && e.device) requested = String(e.device.value || '').trim();
