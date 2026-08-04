@@ -5,9 +5,13 @@
     var runButton = document.getElementById('dns-diag-run');
     var statusEl = document.getElementById('dns-diag-status');
     var resultsEl = document.getElementById('dns-diag-results');
-    var systemEl = document.getElementById('dns-system-result');
+    var systemResultsEl = document.getElementById('dns-system-results');
     var specifiedEl = document.getElementById('dns-specified-result');
+    var specifiedGroupEl = document.getElementById('dns-specified-group');
     var differencesEl = document.getElementById('dns-diag-differences');
+    var conclusionEl = document.getElementById('dns-diag-conclusion');
+    var resolverSourceEl = document.getElementById('dns-resolver-source');
+    var resolverDetailsEl = document.getElementById('dns-resolver-details');
     var typeButtons = Array.from(document.querySelectorAll('#dns-type-segments [data-type]'));
     var selectedType = 'A';
     var i18n = function (key) { return typeof window.__ === 'function' ? window.__(key) : key; };
@@ -19,6 +23,35 @@
             if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
             return data;
         });
+    }
+
+    function dnsGet(path) {
+        if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
+        return fetch(path).then(async function (response) {
+            var data = await response.json().catch(function () { return {}; });
+            if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+            return data;
+        });
+    }
+
+    function sourceLabel(source) {
+        var key = 'dns_source_' + String(source || 'unknown');
+        var translated = i18n(key);
+        return translated === key ? String(source || '-') : translated;
+    }
+
+    function renderResolverInfo(info) {
+        info = info || {};
+        var servers = Array.isArray(info.servers) ? info.servers : [];
+        resolverSourceEl.textContent = sourceLabel(info.source);
+        resolverSourceEl.classList.toggle('dns-source-badge--fallback', !!info.fallback);
+        var facts = [];
+        if (info.device) facts.push('<span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_device')) + '</small><strong>' + NetwatchShared.escapeHtml(info.device) + '</strong></span>');
+        if (info.connection) facts.push('<span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_connection')) + '</small><strong>' + NetwatchShared.escapeHtml(info.connection) + '</strong></span>');
+        facts.push('<span class="dns-resolver-addresses"><small>DNS</small><strong>' + (servers.length ? servers.map(function (server) { return '<code>' + NetwatchShared.escapeHtml(server) + '</code>'; }).join('') : '--') + '</strong></span>');
+        if (info.note) facts.push('<span class="dns-resolver-note"><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_notice')) + '</small><strong>' + NetwatchShared.escapeHtml(info.note) + '</strong></span>');
+        resolverDetailsEl.classList.remove('placeholder');
+        resolverDetailsEl.innerHTML = facts.join('');
     }
 
     function dnssecLabel(status) {
@@ -33,7 +66,7 @@
         return translated === key ? String(code || '-') : translated;
     }
 
-    function renderResult(target, title, result) {
+    function resultHTML(title, result) {
         var answers = Array.isArray(result.answers) ? result.answers : [];
         var answerHTML;
         if (result.error) {
@@ -45,8 +78,22 @@
                 return '<tr><td><span class="dns-answer-type">' + NetwatchShared.escapeHtml(answer.type) + '</span>' + NetwatchShared.escapeHtml(answer.value) + '</td><td>' + Number(answer.ttl || 0) + 's</td></tr>';
             }).join('') + '</tbody></table>';
         }
-        target.innerHTML = '<div class="dns-result-head"><div><strong>' + NetwatchShared.escapeHtml(title) + '</strong><span>' + NetwatchShared.escapeHtml(result.server || '-') + '</span></div><span class="dns-status dns-status--' + (result.status === 'NOERROR' ? 'ok' : 'warning') + '">' + NetwatchShared.escapeHtml(result.status || 'ERROR') + '</span></div>' +
+        return '<div class="dns-result-head"><div><strong>' + NetwatchShared.escapeHtml(title) + '</strong><span>' + NetwatchShared.escapeHtml(result.server || '-') + '</span></div><span class="dns-status dns-status--' + (result.status === 'NOERROR' ? 'ok' : 'warning') + '">' + NetwatchShared.escapeHtml(result.status || 'ERROR') + '</span></div>' +
             '<div class="dns-result-meta"><span>' + NetwatchShared.escapeHtml((result.transport || '-').toUpperCase()) + '</span><span>' + Number(result.duration_ms || 0) + ' ms</span><span>' + NetwatchShared.escapeHtml(dnssecLabel(result.dnssec_status)) + '</span></div>' + answerHTML;
+    }
+
+    function renderSystemResults(results) {
+        systemResultsEl.innerHTML = results.map(function (result, index) {
+            return '<article class="dns-result-panel">' + resultHTML(i18n('dns_diag_resolver') + ' ' + (index + 1), result) + '</article>';
+        }).join('');
+    }
+
+    function renderConclusion(code) {
+        var key = 'dns_conclusion_' + String(code || 'system_ok');
+        var translated = i18n(key);
+        conclusionEl.className = 'dns-diag-conclusion dns-diag-conclusion--' + NetwatchShared.escapeHtml(code || 'system_ok');
+        conclusionEl.textContent = translated === key ? String(code || '') : translated;
+        conclusionEl.hidden = false;
     }
 
     function renderDifferences(differences, compared) {
@@ -84,15 +131,19 @@
         statusEl.textContent = i18n('dns_diag_running');
         resultsEl.hidden = true;
         differencesEl.hidden = true;
+        conclusionEl.hidden = true;
         try {
             var data = await dnsPost('/api/v1/diagnostics/dns', { name: name, type: selectedType, server: serverInput.value.trim() });
-            renderResult(systemEl, i18n('dns_diag_system'), data.system || {});
+            renderResolverInfo(data.resolver_info || {});
+            var systemResults = Array.isArray(data.system_resolvers) && data.system_resolvers.length ? data.system_resolvers : [data.system || {}];
+            renderSystemResults(systemResults);
             if (data.specified) {
-                specifiedEl.hidden = false;
-                renderResult(specifiedEl, i18n('dns_diag_specified'), data.specified);
+                specifiedGroupEl.hidden = false;
+                specifiedEl.innerHTML = resultHTML(i18n('dns_diag_specified'), data.specified);
             } else {
-                specifiedEl.hidden = true;
+                specifiedGroupEl.hidden = true;
             }
+            renderConclusion(data.conclusion_code);
             renderDifferences(data.differences || [], !!data.specified);
             resultsEl.hidden = false;
             statusEl.textContent = (data.name || name) + ' / ' + (data.type || selectedType) + ' / ' + (data.sampled_at || data.generated_at || '');
@@ -101,5 +152,11 @@
         } finally {
             runButton.disabled = false;
         }
+    });
+
+    dnsGet('/api/v1/diagnostics/dns').then(renderResolverInfo).catch(function (error) {
+        resolverSourceEl.textContent = i18n('dns_diag_unavailable');
+        resolverSourceEl.classList.add('dns-source-badge--fallback');
+        resolverDetailsEl.textContent = error.message;
     });
 })();

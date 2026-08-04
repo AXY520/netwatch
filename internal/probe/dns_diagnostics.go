@@ -3,12 +3,16 @@ package probe
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
+
+	"netwatch/internal/lzcsdk"
 )
 
 type DNSDiagnosticRequest struct {
@@ -37,12 +41,62 @@ type DNSQueryResult struct {
 }
 
 type DNSDiagnosticResult struct {
-	GeneratedAt string          `json:"generated_at"`
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	System      DNSQueryResult  `json:"system"`
-	Specified   *DNSQueryResult `json:"specified,omitempty"`
-	Differences []string        `json:"differences"`
+	GeneratedAt     string                `json:"generated_at"`
+	Name            string                `json:"name"`
+	Type            string                `json:"type"`
+	ResolverInfo    SystemDNSResolverInfo `json:"resolver_info"`
+	System          DNSQueryResult        `json:"system"`
+	SystemResolvers []DNSQueryResult      `json:"system_resolvers"`
+	Specified       *DNSQueryResult       `json:"specified,omitempty"`
+	Differences     []string              `json:"differences"`
+	ConclusionCode  string                `json:"conclusion_code"`
+}
+
+type SystemDNSResolverInfo struct {
+	GeneratedAt string   `json:"generated_at"`
+	Source      string   `json:"source"`
+	Device      string   `json:"device,omitempty"`
+	Connection  string   `json:"connection,omitempty"`
+	Servers     []string `json:"servers"`
+	Fallback    bool     `json:"fallback"`
+	Note        string   `json:"note,omitempty"`
+}
+
+func GetSystemDNSResolverInfo(ctx context.Context) (SystemDNSResolverInfo, error) {
+	info := SystemDNSResolverInfo{GeneratedAt: localTimestamp(), Servers: []string{}}
+	if nmcliTransportAvailable() {
+		candidates, err := listHostDNSCandidates(ctx)
+		if err == nil {
+			if target, ok := pickHostDNSTarget(candidates, ""); ok {
+				servers := splitDNSServers(target.DNS)
+				if runtime, runtimeErr := readNetworkDeviceRuntimeConfig(ctx, target.Device); runtimeErr == nil {
+					if runtimeServers := splitDNSServers(runtime.DNS); len(runtimeServers) > 0 {
+						servers = runtimeServers
+					}
+				}
+				if len(servers) > 0 {
+					info.Source = "networkmanager"
+					if lzcsdk.Available() {
+						info.Source = "lazycat_sdk"
+					}
+					info.Device = target.Device
+					info.Connection = target.Connection
+					info.Servers = servers
+					return info, nil
+				}
+			}
+		}
+	}
+
+	server, err := containerDNSServer()
+	if err != nil {
+		return info, err
+	}
+	info.Source = "container_resolv_conf"
+	info.Servers = []string{server}
+	info.Fallback = true
+	info.Note = "无法读取宿主真实网卡 DNS，当前使用容器 resolver"
+	return info, nil
 }
 
 func RunDNSDiagnostic(ctx context.Context, request DNSDiagnosticRequest) (DNSDiagnosticResult, error) {
@@ -50,41 +104,59 @@ func RunDNSDiagnostic(ctx context.Context, request DNSDiagnosticRequest) (DNSDia
 	if name == "" {
 		return DNSDiagnosticResult{}, errors.New("name required")
 	}
-	if _, ok := dns.IsDomainName(name); !ok {
-		return DNSDiagnosticResult{}, errors.New("invalid domain name")
-	}
 	queryType := strings.ToUpper(strings.TrimSpace(request.Type))
 	if queryType == "" {
 		queryType = "A"
 	}
-	qtype, ok := map[string]uint16{"A": dns.TypeA, "AAAA": dns.TypeAAAA, "CNAME": dns.TypeCNAME}[queryType]
+	qtype, ok := map[string]uint16{
+		"A": dns.TypeA, "AAAA": dns.TypeAAAA, "CNAME": dns.TypeCNAME,
+		"MX": dns.TypeMX, "TXT": dns.TypeTXT, "NS": dns.TypeNS,
+		"SOA": dns.TypeSOA, "PTR": dns.TypePTR,
+	}[queryType]
 	if !ok {
-		return DNSDiagnosticResult{}, errors.New("type must be A, AAAA, or CNAME")
+		return DNSDiagnosticResult{}, errors.New("type must be A, AAAA, CNAME, MX, TXT, NS, SOA, or PTR")
 	}
-	systemServer, err := systemDNSServer()
+	if queryType == "PTR" && net.ParseIP(name) != nil {
+		reverse, err := dns.ReverseAddr(name)
+		if err != nil {
+			return DNSDiagnosticResult{}, errors.New("invalid IP address")
+		}
+		name = reverse
+	} else if _, ok := dns.IsDomainName(name); !ok {
+		return DNSDiagnosticResult{}, errors.New("invalid domain name")
+	}
+	name = dns.Fqdn(name)
+	resolverInfo, err := GetSystemDNSResolverInfo(ctx)
 	if err != nil {
 		return DNSDiagnosticResult{}, err
 	}
+	systemResults := queryDNSResolvers(ctx, resolverInfo.Servers, name, qtype)
+	if len(systemResults) == 0 {
+		return DNSDiagnosticResult{}, errors.New("system DNS server unavailable")
+	}
 	result := DNSDiagnosticResult{
-		GeneratedAt: localTimestamp(),
-		Name:        dns.Fqdn(name),
-		Type:        queryType,
-		System:      queryDNSServer(ctx, systemServer, dns.Fqdn(name), qtype),
-		Differences: []string{},
+		GeneratedAt:     localTimestamp(),
+		Name:            name,
+		Type:            queryType,
+		ResolverInfo:    resolverInfo,
+		System:          systemResults[0],
+		SystemResolvers: systemResults,
+		Differences:     []string{},
 	}
 	if strings.TrimSpace(request.Server) != "" {
 		specified, err := normalizeDNSServer(request.Server)
 		if err != nil {
 			return DNSDiagnosticResult{}, err
 		}
-		query := queryDNSServer(ctx, specified, dns.Fqdn(name), qtype)
+		query := queryDNSServer(ctx, specified, name, qtype)
 		result.Specified = &query
 		result.Differences = compareDNSResults(result.System, query)
 	}
+	result.ConclusionCode = dnsConclusion(result.SystemResolvers, result.Specified, result.Differences)
 	return result, nil
 }
 
-func systemDNSServer() (string, error) {
+func containerDNSServer() (string, error) {
 	config, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err != nil || len(config.Servers) == 0 {
 		return "", errors.New("system DNS server unavailable")
@@ -94,6 +166,43 @@ func systemDNSServer() (string, error) {
 		port = "53"
 	}
 	return net.JoinHostPort(config.Servers[0], port), nil
+}
+
+func splitDNSServers(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
+	})
+	seen := make(map[string]struct{})
+	servers := make([]string, 0, 3)
+	for _, field := range fields {
+		server, err := normalizeDNSServer(field)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[server]; ok {
+			continue
+		}
+		seen[server] = struct{}{}
+		servers = append(servers, server)
+		if len(servers) == 3 {
+			break
+		}
+	}
+	return servers
+}
+
+func queryDNSResolvers(ctx context.Context, servers []string, name string, qtype uint16) []DNSQueryResult {
+	results := make([]DNSQueryResult, len(servers))
+	var wg sync.WaitGroup
+	for index, server := range servers {
+		wg.Add(1)
+		go func(index int, server string) {
+			defer wg.Done()
+			results[index] = queryDNSServer(ctx, server, name, qtype)
+		}(index, server)
+	}
+	wg.Wait()
+	return results
 }
 
 func normalizeDNSServer(value string) (string, error) {
@@ -170,10 +279,49 @@ func dnsAnswer(record dns.RR) (DNSDiagnosticAnswer, bool) {
 		answer.Value = value.AAAA.String()
 	case *dns.CNAME:
 		answer.Value = value.Target
+	case *dns.MX:
+		answer.Value = fmt.Sprintf("%d %s", value.Preference, value.Mx)
+	case *dns.TXT:
+		answer.Value = strings.Join(value.Txt, "")
+	case *dns.NS:
+		answer.Value = value.Ns
+	case *dns.SOA:
+		answer.Value = fmt.Sprintf("%s %s serial=%d refresh=%d retry=%d expire=%d minttl=%d", value.Ns, value.Mbox, value.Serial, value.Refresh, value.Retry, value.Expire, value.Minttl)
+	case *dns.PTR:
+		answer.Value = value.Ptr
 	default:
 		return DNSDiagnosticAnswer{}, false
 	}
 	return answer, true
+}
+
+func dnsConclusion(system []DNSQueryResult, specified *DNSQueryResult, differences []string) string {
+	successes := 0
+	hasAnswers := false
+	for _, result := range system {
+		if result.Status == "NOERROR" && result.Error == "" {
+			successes++
+			if len(result.Answers) > 0 {
+				hasAnswers = true
+			}
+		}
+	}
+	if successes == 0 {
+		if specified != nil && specified.Status == "NOERROR" && specified.Error == "" {
+			return "specified_only_ok"
+		}
+		return "system_failed"
+	}
+	if successes < len(system) {
+		return "system_partial"
+	}
+	if specified != nil && len(differences) > 0 {
+		return "responses_differ"
+	}
+	if !hasAnswers {
+		return "no_answers"
+	}
+	return "system_ok"
 }
 
 func classifyDNSError(err error) (string, string) {

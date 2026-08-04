@@ -50,7 +50,7 @@ func TestHandleTraceRejectsUnsupportedMethods(t *testing.T) {
 
 func TestHandleDNSDiagnosticRejectsInvalidPayload(t *testing.T) {
 	handler := newTestHandler(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/diagnostics/dns", strings.NewReader(`{"name":"example.com","type":"MX"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/diagnostics/dns", strings.NewReader(`{"name":"example.com","type":"SRV"}`))
 	rec := httptest.NewRecorder()
 	handler.handleDNSDiagnostic(rec, req)
 	if rec.Code != http.StatusBadRequest {

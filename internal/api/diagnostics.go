@@ -16,6 +16,17 @@ func (h *Handler) handleTimeseries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDNSDiagnostic(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		result, err := probe.GetSystemDNSResolverInfo(ctx)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
+		writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, time.Minute)
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return

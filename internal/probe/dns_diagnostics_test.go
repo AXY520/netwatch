@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -57,6 +58,57 @@ func TestCompareDNSResults(t *testing.T) {
 	differences := compareDNSResults(system, specified)
 	if len(differences) != 3 || differences[0] != "status" || differences[1] != "dnssec" || differences[2] != "answers" {
 		t.Fatalf("differences = %v", differences)
+	}
+}
+
+func TestSplitDNSServersNormalizesDeduplicatesAndLimits(t *testing.T) {
+	got := splitDNSServers("192.0.2.1, 192.0.2.1 2001:db8::1;198.51.100.2,203.0.113.9")
+	want := []string{"192.0.2.1:53", "[2001:db8::1]:53", "198.51.100.2:53"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("servers = %v, want %v", got, want)
+	}
+}
+
+func TestDNSAnswerParsesExtendedRecordTypes(t *testing.T) {
+	header := func(recordType uint16) dns.RR_Header {
+		return dns.RR_Header{Name: "example.test.", Rrtype: recordType, Class: dns.ClassINET, Ttl: 60}
+	}
+	tests := []struct {
+		record dns.RR
+		want   string
+	}{
+		{&dns.MX{Hdr: header(dns.TypeMX), Preference: 10, Mx: "mail.example.test."}, "10 mail.example.test."},
+		{&dns.TXT{Hdr: header(dns.TypeTXT), Txt: []string{"v=spf1 ", "-all"}}, "v=spf1 -all"},
+		{&dns.NS{Hdr: header(dns.TypeNS), Ns: "ns1.example.test."}, "ns1.example.test."},
+		{&dns.SOA{Hdr: header(dns.TypeSOA), Ns: "ns1.example.test.", Mbox: "hostmaster.example.test.", Serial: 7, Refresh: 8, Retry: 9, Expire: 10, Minttl: 11}, "ns1.example.test. hostmaster.example.test. serial=7 refresh=8 retry=9 expire=10 minttl=11"},
+		{&dns.PTR{Hdr: header(dns.TypePTR), Ptr: "host.example.test."}, "host.example.test."},
+	}
+	for _, test := range tests {
+		answer, ok := dnsAnswer(test.record)
+		if !ok || answer.Value != test.want {
+			t.Errorf("answer for %T = %+v, %v; want %q", test.record, answer, ok, test.want)
+		}
+	}
+}
+
+func TestDNSConclusion(t *testing.T) {
+	ok := DNSQueryResult{Status: "NOERROR", Answers: []DNSDiagnosticAnswer{{Type: "A", Value: "192.0.2.1"}}}
+	empty := DNSQueryResult{Status: "NOERROR"}
+	failed := DNSQueryResult{Status: "ERROR", Error: "timeout"}
+	if got := dnsConclusion([]DNSQueryResult{ok}, nil, nil); got != "system_ok" {
+		t.Fatalf("system ok conclusion = %q", got)
+	}
+	if got := dnsConclusion([]DNSQueryResult{ok, failed}, nil, nil); got != "system_partial" {
+		t.Fatalf("partial conclusion = %q", got)
+	}
+	if got := dnsConclusion([]DNSQueryResult{failed}, &ok, nil); got != "specified_only_ok" {
+		t.Fatalf("specified-only conclusion = %q", got)
+	}
+	if got := dnsConclusion([]DNSQueryResult{empty}, nil, nil); got != "no_answers" {
+		t.Fatalf("no-answer conclusion = %q", got)
+	}
+	if got := dnsConclusion([]DNSQueryResult{ok}, &ok, []string{"answers"}); got != "responses_differ" {
+		t.Fatalf("different conclusion = %q", got)
 	}
 }
 

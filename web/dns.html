@@ -19,7 +19,7 @@
         <header class="traffic-topbar">
             <div class="traffic-header-copy">
                 <div class="logo">NET<span>WATCH</span></div>
-                <div class="note traffic-page-subtitle" data-i18n="dns_diag_page_subtitle">系统 DNS 与指定服务器对比</div>
+                <div class="note traffic-page-subtitle" data-i18n="dns_diag_page_subtitle">真实网卡 DNS 查询与解析对比</div>
             </div>
             <div class="controls">
                 <a class="button-link btn-with-icon" href="/events.html"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span data-i18n="events_center_btn">事件中心</span></a>
@@ -28,6 +28,14 @@
         </header>
 
         <main class="dns-diag-layout">
+            <section id="dns-resolver-inventory" class="dns-resolver-inventory" aria-live="polite">
+                <div class="dns-inventory-heading">
+                    <span data-i18n="dns_diag_active_resolvers">当前网卡 DNS</span>
+                    <span id="dns-resolver-source" class="dns-source-badge">--</span>
+                </div>
+                <div id="dns-resolver-details" class="dns-resolver-details placeholder" data-i18n="dns_diag_loading_resolvers">正在读取真实网卡 DNS</div>
+            </section>
+
             <form id="dns-diag-form" class="dns-diag-toolbar">
                 <label class="dns-diag-name-field">
                     <span data-i18n="dns_diag_domain">域名</span>
@@ -39,6 +47,11 @@
                         <button type="button" class="active" data-type="A" aria-pressed="true">A</button>
                         <button type="button" data-type="AAAA" aria-pressed="false">AAAA</button>
                         <button type="button" data-type="CNAME" aria-pressed="false">CNAME</button>
+                        <button type="button" data-type="MX" aria-pressed="false">MX</button>
+                        <button type="button" data-type="TXT" aria-pressed="false">TXT</button>
+                        <button type="button" data-type="NS" aria-pressed="false">NS</button>
+                        <button type="button" data-type="SOA" aria-pressed="false">SOA</button>
+                        <button type="button" data-type="PTR" aria-pressed="false">PTR</button>
                     </div>
                 </fieldset>
                 <label class="dns-diag-server-field">
@@ -49,10 +62,17 @@
             </form>
 
             <div id="dns-diag-status" class="dns-diag-status placeholder" data-i18n="dns_diag_idle">等待查询</div>
+            <section id="dns-diag-conclusion" class="dns-diag-conclusion" hidden></section>
             <section id="dns-diag-differences" class="dns-diag-differences" hidden></section>
             <section id="dns-diag-results" class="dns-diag-results" hidden>
-                <article class="dns-result-panel" id="dns-system-result"></article>
-                <article class="dns-result-panel" id="dns-specified-result" hidden></article>
+                <div class="dns-result-group">
+                    <h2 data-i18n="dns_diag_system_group">真实网卡 DNS</h2>
+                    <div id="dns-system-results" class="dns-system-results"></div>
+                </div>
+                <div class="dns-result-group" id="dns-specified-group" hidden>
+                    <h2 data-i18n="dns_diag_specified_group">对比 DNS</h2>
+                    <article class="dns-result-panel" id="dns-specified-result"></article>
+                </div>
             </section>
         </main>
     </div>
