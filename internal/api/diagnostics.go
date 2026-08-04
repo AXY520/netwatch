@@ -19,7 +19,7 @@ func (h *Handler) handleDNSDiagnostic(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
-		result, err := probe.GetSystemDNSResolverInfo(ctx)
+		result, err := probe.GetSystemDNSResolverInfo(ctx, r.URL.Query().Get("device"))
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 			return

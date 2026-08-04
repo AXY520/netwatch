@@ -4409,6 +4409,17 @@ button.icon-button,
     background: var(--card-bg);
     overflow: hidden;
 }
+.dns-resolver-main { display: grid; grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1.45fr); min-width: 0; }
+.dns-device-picker {
+    display: grid;
+    align-content: center;
+    gap: 0.4rem;
+    padding: 0.85rem 1rem;
+    border-right: 1px solid var(--border-subtle);
+}
+.dns-device-picker > span { color: var(--text-muted); font-size: 0.7rem; }
+.dns-device-picker select { width: 100%; min-width: 0; font-family: var(--font-number); font-size: 0.78rem; }
+.dns-device-picker select:disabled { opacity: 0.72; }
 .dns-inventory-heading {
     display: flex;
     flex-direction: column;
@@ -4428,7 +4439,7 @@ button.icon-button,
 .dns-source-badge--fallback { color: var(--accent-amber); }
 .dns-resolver-details {
     display: grid;
-    grid-template-columns: repeat(3, minmax(130px, auto));
+    grid-template-columns: repeat(3, minmax(110px, auto));
     align-items: center;
     gap: 0.9rem 1.4rem;
     min-width: 0;
@@ -4493,6 +4504,7 @@ button.icon-button,
     display: grid;
     gap: 1rem;
 }
+.dns-diag-results--compare { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
 .dns-result-group { display: grid; gap: 0.55rem; min-width: 0; }
 .dns-result-group[hidden] { display: none !important; }
 .dns-result-group h2 {
@@ -4504,42 +4516,52 @@ button.icon-button,
 }
 .dns-system-results {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
     gap: 0.85rem;
 }
 .dns-result-panel {
     min-width: 0;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-control);
-    background: var(--card-bg);
+    background: color-mix(in srgb, var(--card-bg) 88%, var(--input-bg));
     overflow: hidden;
 }
 .dns-result-panel[hidden] { display: none !important; }
 .dns-result-head {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.75rem;
-    padding: 0.9rem 1rem;
+    min-height: 72px;
+    padding: 0.85rem 1rem;
     border-bottom: 1px solid var(--border-subtle);
 }
-.dns-result-head > div { display: grid; gap: 0.2rem; min-width: 0; }
-.dns-result-head span { color: var(--text-muted); font-family: var(--font-number); font-size: 0.75rem; overflow-wrap: anywhere; }
-.dns-status { flex: 0 0 auto; font-family: var(--font-number); font-size: 0.74rem; }
+.dns-result-head > div { display: grid; gap: 0.28rem; min-width: 0; }
+.dns-result-head strong { font-family: var(--font-number); font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
+.dns-result-kicker { color: var(--text-muted); font-size: 0.7rem; }
+.dns-status { flex: 0 0 auto; padding-left: 0.8rem; border-left: 1px solid var(--border-subtle); font-family: var(--font-number); font-size: 0.72rem; }
 .dns-status--ok { color: var(--accent-green) !important; }
 .dns-status--warning { color: var(--accent-amber) !important; }
-.dns-result-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 0.7rem 1rem; color: var(--text-muted); font-size: 0.75rem; }
-.dns-result-meta span + span::before { content: "/"; margin-right: 0.75rem; color: var(--border-color); }
-.dns-answer-table { margin: 0; }
-.dns-answer-table td:first-child { overflow-wrap: anywhere; }
-.dns-answer-type { display: inline-block; min-width: 4.4rem; margin-right: 0.5rem; color: var(--accent-cyan); font-family: var(--font-number); font-size: 0.72rem; }
-.dns-result-empty, .dns-result-error { min-height: 150px; display: flex; align-items: center; justify-content: center; padding: 1rem; color: var(--text-muted); }
+.dns-result-metrics { display: grid; grid-template-columns: 0.7fr 0.7fr 1.6fr; border-bottom: 1px solid var(--border-subtle); }
+.dns-result-metrics > span { display: grid; gap: 0.22rem; min-width: 0; padding: 0.72rem 1rem; }
+.dns-result-metrics > span + span { border-left: 1px solid var(--border-subtle); }
+.dns-result-metrics small { color: var(--text-muted); font-size: 0.66rem; }
+.dns-result-metrics strong { font-family: var(--font-number); font-size: 0.75rem; font-weight: 500; overflow-wrap: anywhere; }
+.dns-answer-list { display: grid; }
+.dns-answer-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: start; gap: 0.7rem; padding: 0.78rem 1rem; }
+.dns-answer-row + .dns-answer-row { border-top: 1px solid var(--border-subtle); }
+.dns-answer-row code { color: var(--text-primary); font-size: 0.78rem; line-height: 1.45; overflow-wrap: anywhere; white-space: normal; }
+.dns-answer-type { color: var(--accent-cyan); font-family: var(--font-number); font-size: 0.7rem; }
+.dns-answer-ttl { color: var(--text-muted); font-family: var(--font-number); font-size: 0.68rem; white-space: nowrap; }
+.dns-result-empty, .dns-result-error { min-height: 112px; display: flex; align-items: center; justify-content: center; padding: 1.1rem; color: var(--text-muted); }
 .dns-result-error { flex-direction: column; gap: 0.35rem; color: var(--accent-red); text-align: center; overflow-wrap: anywhere; }
 
 @media (max-width: 920px) {
     .dns-diag-toolbar { grid-template-columns: 1fr 1fr; }
     .dns-diag-toolbar > button { width: 100%; }
+    .dns-resolver-main { grid-template-columns: 1fr; }
+    .dns-device-picker { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
     .dns-resolver-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dns-diag-results--compare { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
     .dns-resolver-inventory, .dns-diag-toolbar { grid-template-columns: 1fr; }
@@ -4549,4 +4571,8 @@ button.icon-button,
     .dns-type-segments button:nth-child(5) { border-left: 0; border-top: 1px solid var(--border-color); }
     .dns-type-segments button:nth-child(n+6) { border-top: 1px solid var(--border-color); }
     .dns-system-results { grid-template-columns: 1fr; }
+    .dns-result-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .dns-result-metrics > span { padding: 0.65rem 0.7rem; }
+    .dns-answer-row { grid-template-columns: 42px minmax(0, 1fr); }
+    .dns-answer-ttl { grid-column: 2; }
 }

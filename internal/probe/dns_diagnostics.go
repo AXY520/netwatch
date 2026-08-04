@@ -19,6 +19,7 @@ type DNSDiagnosticRequest struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Server string `json:"server,omitempty"`
+	Device string `json:"device,omitempty"`
 }
 
 type DNSDiagnosticAnswer struct {
@@ -53,27 +54,32 @@ type DNSDiagnosticResult struct {
 }
 
 type SystemDNSResolverInfo struct {
-	GeneratedAt string   `json:"generated_at"`
-	Source      string   `json:"source"`
-	Device      string   `json:"device,omitempty"`
-	Connection  string   `json:"connection,omitempty"`
-	Servers     []string `json:"servers"`
-	Fallback    bool     `json:"fallback"`
-	Note        string   `json:"note,omitempty"`
+	GeneratedAt string                 `json:"generated_at"`
+	Source      string                 `json:"source"`
+	Device      string                 `json:"device,omitempty"`
+	Connection  string                 `json:"connection,omitempty"`
+	Servers     []string               `json:"servers"`
+	Candidates  []DNSResolverCandidate `json:"candidates,omitempty"`
+	Fallback    bool                   `json:"fallback"`
+	Note        string                 `json:"note,omitempty"`
 }
 
-func GetSystemDNSResolverInfo(ctx context.Context) (SystemDNSResolverInfo, error) {
+type DNSResolverCandidate struct {
+	Device     string   `json:"device"`
+	Type       string   `json:"type"`
+	Connection string   `json:"connection,omitempty"`
+	Servers    []string `json:"servers"`
+}
+
+func GetSystemDNSResolverInfo(ctx context.Context, preferredDevice string) (SystemDNSResolverInfo, error) {
 	info := SystemDNSResolverInfo{GeneratedAt: localTimestamp(), Servers: []string{}}
 	if nmcliTransportAvailable() {
 		candidates, err := listHostDNSCandidates(ctx)
 		if err == nil {
-			if target, ok := pickHostDNSTarget(candidates, ""); ok {
-				servers := splitDNSServers(target.DNS)
-				if runtime, runtimeErr := readNetworkDeviceRuntimeConfig(ctx, target.Device); runtimeErr == nil {
-					if runtimeServers := splitDNSServers(runtime.DNS); len(runtimeServers) > 0 {
-						servers = runtimeServers
-					}
-				}
+			resolvedCandidates := resolveDNSCandidates(ctx, candidates)
+			info.Candidates = resolvedCandidates
+			if target, ok := pickHostDNSTarget(candidates, preferredDevice); ok {
+				servers := candidateDNSServers(resolvedCandidates, target.Device)
 				if len(servers) > 0 {
 					info.Source = "networkmanager"
 					if lzcsdk.Available() {
@@ -85,7 +91,13 @@ func GetSystemDNSResolverInfo(ctx context.Context) (SystemDNSResolverInfo, error
 					return info, nil
 				}
 			}
+			if strings.TrimSpace(preferredDevice) != "" {
+				return info, errors.New("selected network device unavailable or has no DNS servers")
+			}
 		}
+	}
+	if strings.TrimSpace(preferredDevice) != "" {
+		return info, errors.New("selected network device unavailable or has no DNS servers")
 	}
 
 	server, err := containerDNSServer()
@@ -97,6 +109,34 @@ func GetSystemDNSResolverInfo(ctx context.Context) (SystemDNSResolverInfo, error
 	info.Fallback = true
 	info.Note = "无法读取宿主真实网卡 DNS，当前使用容器 resolver"
 	return info, nil
+}
+
+func resolveDNSCandidates(ctx context.Context, candidates []HostDNSCandidate) []DNSResolverCandidate {
+	resolved := make([]DNSResolverCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		servers := splitDNSServers(candidate.DNS)
+		if runtime, err := readNetworkDeviceRuntimeConfig(ctx, candidate.Device); err == nil {
+			if runtimeServers := splitDNSServers(runtime.DNS); len(runtimeServers) > 0 {
+				servers = runtimeServers
+			}
+		}
+		if len(servers) == 0 {
+			continue
+		}
+		resolved = append(resolved, DNSResolverCandidate{
+			Device: candidate.Device, Type: candidate.Type, Connection: candidate.Connection, Servers: servers,
+		})
+	}
+	return resolved
+}
+
+func candidateDNSServers(candidates []DNSResolverCandidate, device string) []string {
+	for _, candidate := range candidates {
+		if candidate.Device == device {
+			return candidate.Servers
+		}
+	}
+	return nil
 }
 
 func RunDNSDiagnostic(ctx context.Context, request DNSDiagnosticRequest) (DNSDiagnosticResult, error) {
@@ -126,7 +166,7 @@ func RunDNSDiagnostic(ctx context.Context, request DNSDiagnosticRequest) (DNSDia
 		return DNSDiagnosticResult{}, errors.New("invalid domain name")
 	}
 	name = dns.Fqdn(name)
-	resolverInfo, err := GetSystemDNSResolverInfo(ctx)
+	resolverInfo, err := GetSystemDNSResolverInfo(ctx, request.Device)
 	if err != nil {
 		return DNSDiagnosticResult{}, err
 	}

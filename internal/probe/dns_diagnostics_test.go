@@ -69,6 +69,21 @@ func TestSplitDNSServersNormalizesDeduplicatesAndLimits(t *testing.T) {
 	}
 }
 
+func TestCandidateDNSServersSelectsRequestedDevice(t *testing.T) {
+	candidates := []DNSResolverCandidate{
+		{Device: "eth0", Servers: []string{"192.0.2.1:53"}},
+		{Device: "wlan0", Servers: []string{"198.51.100.1:53", "198.51.100.2:53"}},
+	}
+	got := candidateDNSServers(candidates, "wlan0")
+	want := []string{"198.51.100.1:53", "198.51.100.2:53"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("servers = %v, want %v", got, want)
+	}
+	if got := candidateDNSServers(candidates, "missing0"); got != nil {
+		t.Fatalf("missing device servers = %v, want nil", got)
+	}
+}
+
 func TestDNSAnswerParsesExtendedRecordTypes(t *testing.T) {
 	header := func(recordType uint16) dns.RR_Header {
 		return dns.RR_Header{Name: "example.test.", Rrtype: recordType, Class: dns.ClassINET, Ttl: 60}

@@ -33,7 +33,13 @@
                     <span data-i18n="dns_diag_active_resolvers">当前网卡 DNS</span>
                     <span id="dns-resolver-source" class="dns-source-badge">--</span>
                 </div>
-                <div id="dns-resolver-details" class="dns-resolver-details placeholder" data-i18n="dns_diag_loading_resolvers">正在读取真实网卡 DNS</div>
+                <div class="dns-resolver-main">
+                    <label class="dns-device-picker">
+                        <span data-i18n="dns_diag_select_device">诊断网卡</span>
+                        <select id="dns-device-select" aria-label="诊断网卡"></select>
+                    </label>
+                    <div id="dns-resolver-details" class="dns-resolver-details placeholder" data-i18n="dns_diag_loading_resolvers">正在读取真实网卡 DNS</div>
+                </div>
             </section>
 
             <form id="dns-diag-form" class="dns-diag-toolbar">
