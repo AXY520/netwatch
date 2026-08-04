@@ -42,6 +42,57 @@
         return translated === key ? String(source || '-') : translated;
     }
 
+    function normalizeResolverServer(value) {
+        value = String(value || '').trim();
+        if (!value) return '';
+        if (/^\[[^\]]+\]:\d+$/.test(value) || /^[^:]+:\d+$/.test(value)) return value;
+        if (value.indexOf(':') >= 0) return '[' + value.replace(/^\[|\]$/g, '') + ']:53';
+        return value + ':53';
+    }
+
+    function candidateServers(candidate) {
+        if (Array.isArray(candidate.servers)) return candidate.servers.filter(Boolean);
+        return String(candidate.dns || '').split(/[\s,;]+/).map(normalizeResolverServer).filter(Boolean).slice(0, 3);
+    }
+
+    async function loadResolverInfo(device) {
+        var path = '/api/v1/diagnostics/dns' + (device ? '?device=' + encodeURIComponent(device) : '');
+        var diagnosticError = null;
+        var info = await dnsGet(path).catch(function (error) {
+            diagnosticError = error;
+            return null;
+        });
+        if (info && Array.isArray(info.candidates) && info.candidates.length) return info;
+        var hostPath = '/api/v1/network/dns' + (device ? '?device=' + encodeURIComponent(device) : '');
+        var hostInfo = await dnsGet(hostPath).catch(function () { return null; });
+        if (!hostInfo || !Array.isArray(hostInfo.candidates)) {
+            if (diagnosticError) throw diagnosticError;
+            return info || {};
+        }
+        var candidates = hostInfo.candidates.map(function (candidate) {
+            return {
+                device: candidate.device,
+                type: candidate.type,
+                connection: candidate.connection,
+                servers: candidateServers(candidate)
+            };
+        }).filter(function (candidate) { return candidate.device && candidate.servers.length; });
+        if (!info) {
+            var selectedDevice = hostInfo.device || device || (candidates[0] && candidates[0].device) || '';
+            var selected = candidates.find(function (candidate) { return candidate.device === selectedDevice; }) || candidates[0] || {};
+            info = {
+                generated_at: '',
+                source: 'lazycat_sdk',
+                device: selected.device || selectedDevice,
+                connection: selected.connection || hostInfo.connection || '',
+                servers: selected.servers || candidateServers({ dns: hostInfo.runtime_dns || hostInfo.dns }),
+                fallback: false
+            };
+        }
+        info.candidates = candidates;
+        return info;
+    }
+
     function renderResolverInfo(info) {
         info = info || {};
         var servers = Array.isArray(info.servers) ? info.servers : [];
@@ -98,7 +149,8 @@
                 return '<div class="dns-answer-row"><span class="dns-answer-type">' + NetwatchShared.escapeHtml(answer.type) + '</span><code>' + NetwatchShared.escapeHtml(answer.value) + '</code><span class="dns-answer-ttl">TTL ' + Number(answer.ttl || 0) + 's</span></div>';
             }).join('') + '</div>';
         }
-        return '<header class="dns-result-head"><div><span class="dns-result-kicker">' + NetwatchShared.escapeHtml(title) + '</span><strong>' + NetwatchShared.escapeHtml(result.server || '-') + '</strong></div><span class="dns-status dns-status--' + (result.status === 'NOERROR' ? 'ok' : 'warning') + '">' + NetwatchShared.escapeHtml(result.status || 'ERROR') + '</span></header>' +
+        return '<header class="dns-result-head"><strong>' + NetwatchShared.escapeHtml(title) + '</strong><span class="dns-status dns-status--' + (result.status === 'NOERROR' ? 'ok' : 'warning') + '">' + NetwatchShared.escapeHtml(result.status || 'ERROR') + '</span></header>' +
+            '<div class="dns-result-address"><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_server_address')) + '</small><code>' + NetwatchShared.escapeHtml(result.server || '-') + '</code></div>' +
             '<div class="dns-result-metrics"><span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_latency')) + '</small><strong>' + Number(result.duration_ms || 0) + ' ms</strong></span><span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_transport')) + '</small><strong>' + NetwatchShared.escapeHtml((result.transport || '-').toUpperCase()) + '</strong></span><span><small>DNSSEC</small><strong>' + NetwatchShared.escapeHtml(dnssecLabel(result.dnssec_status)) + '</strong></span></div>' + answerHTML;
     }
 
@@ -180,7 +232,7 @@
         var device = deviceSelectEl.value;
         resolverDetailsEl.classList.add('placeholder');
         resolverDetailsEl.textContent = i18n('dns_diag_loading_resolvers');
-        dnsGet('/api/v1/diagnostics/dns?device=' + encodeURIComponent(device)).then(function (info) {
+        loadResolverInfo(device).then(function (info) {
             renderResolverInfo(info);
             resultsEl.hidden = true;
             conclusionEl.hidden = true;
@@ -191,7 +243,7 @@
         });
     });
 
-    dnsGet('/api/v1/diagnostics/dns').then(renderResolverInfo).catch(function (error) {
+    loadResolverInfo('').then(renderResolverInfo).catch(function (error) {
         resolverSourceEl.textContent = i18n('dns_diag_unavailable');
         resolverSourceEl.classList.add('dns-source-badge--fallback');
         resolverDetailsEl.textContent = error.message;

@@ -572,6 +572,12 @@ button.icon-button,
         [aria-busy="true"] .observation-status { color: var(--accent-cyan); }
         .observation-status[data-state="stale"],
         .observation-status[data-state="error"] { color: var(--accent-amber); }
+        .observation-status[data-state="stale"] {
+            max-width: none;
+            overflow: visible;
+            text-overflow: clip;
+            white-space: normal;
+        }
 
         .compact-btn {
             padding: .34rem .7rem;
@@ -4533,16 +4539,17 @@ button.icon-button,
     justify-content: space-between;
     align-items: center;
     gap: 0.75rem;
-    min-height: 72px;
-    padding: 0.85rem 1rem;
+    min-height: 52px;
+    padding: 0.72rem 0.9rem;
     border-bottom: 1px solid var(--border-subtle);
 }
-.dns-result-head > div { display: grid; gap: 0.28rem; min-width: 0; }
-.dns-result-head strong { font-family: var(--font-number); font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
-.dns-result-kicker { color: var(--text-muted); font-size: 0.7rem; }
+.dns-result-head strong { font-size: 0.8rem; font-weight: 600; }
 .dns-status { flex: 0 0 auto; padding-left: 0.8rem; border-left: 1px solid var(--border-subtle); font-family: var(--font-number); font-size: 0.72rem; }
 .dns-status--ok { color: var(--accent-green) !important; }
 .dns-status--warning { color: var(--accent-amber) !important; }
+.dns-result-address { display: grid; gap: 0.3rem; padding: 0.85rem 0.9rem 0.95rem; border-bottom: 1px solid var(--border-subtle); background: var(--card-bg); }
+.dns-result-address small { color: var(--text-muted); font-size: 0.66rem; }
+.dns-result-address code { color: var(--accent-cyan); font-size: 0.88rem; font-weight: 600; overflow-wrap: anywhere; }
 .dns-result-metrics { display: grid; grid-template-columns: 0.7fr 0.7fr 1.6fr; border-bottom: 1px solid var(--border-subtle); }
 .dns-result-metrics > span { display: grid; gap: 0.22rem; min-width: 0; padding: 0.72rem 1rem; }
 .dns-result-metrics > span + span { border-left: 1px solid var(--border-subtle); }

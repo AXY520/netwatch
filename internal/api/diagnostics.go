@@ -17,7 +17,7 @@ func (h *Handler) handleTimeseries(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleDNSDiagnostic(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		result, err := probe.GetSystemDNSResolverInfo(ctx, r.URL.Query().Get("device"))
 		if err != nil {

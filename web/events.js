@@ -22,6 +22,8 @@
     }
 
     function eventKindLabel(kind) {
+        if (kind === 'app_bridge_appeared') kind = 'app_enabled';
+        if (kind === 'app_bridge_disappeared') kind = 'app_disabled';
         var key = 'event_kind_' + String(kind || 'unknown');
         var translated = i18n(key);
         return translated === key ? String(kind || '-') : translated;
@@ -31,6 +33,19 @@
         var key = 'event_source_' + String(source || 'unknown');
         var translated = i18n(key);
         return translated === key ? String(source || '-') : translated;
+    }
+
+    function displayEvent(event) {
+        var out = Object.assign({}, event || {});
+        if (out.kind === 'app_bridge_appeared') out.kind = 'app_enabled';
+        if (out.kind === 'app_bridge_disappeared') out.kind = 'app_disabled';
+        if (out.kind === 'app_enabled' || out.kind === 'app_disabled') {
+            out.title = eventKindLabel(out.kind);
+            if (/^lzc-br-/i.test(String(out.summary || '').trim())) {
+                out.summary = i18n('unknown_app');
+            }
+        }
+        return out;
     }
 
     function formatEventTime(value) {
@@ -55,7 +70,8 @@
             timeline.innerHTML = '<div class="events-empty"><strong>' + NetwatchShared.escapeHtml(i18n('events_empty')) + '</strong></div>';
             return;
         }
-        timeline.innerHTML = events.map(function (event) {
+        timeline.innerHTML = events.map(function (rawEvent) {
+            var event = displayEvent(rawEvent);
             var severity = event.severity === 'warning' ? 'warning' : 'info';
             var count = Number(event.count) || 1;
             var countHtml = count > 1 ? '<span class="event-count">x' + count + '</span>' : '';

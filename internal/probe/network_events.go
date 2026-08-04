@@ -49,12 +49,15 @@ type networkEventStore struct {
 	trafficBaselineReady bool
 	trafficSampledAt     time.Time
 	trafficCounters      map[string]AppBridgeStats
+	trafficMetadataAt    time.Time
+	trafficMetadata      map[string]AppBridgeStats
 }
 
 func newNetworkEventStore(dataDir string) *networkEventStore {
 	store := &networkEventStore{
 		path:            filepath.Join(dataDir, "network_events.json"),
 		trafficCounters: make(map[string]AppBridgeStats),
+		trafficMetadata: make(map[string]AppBridgeStats),
 	}
 	if body, err := os.ReadFile(store.path); err == nil {
 		_ = json.Unmarshal(body, &store.events)
@@ -260,7 +263,58 @@ func (s *Service) recordAppTrafficEvents() {
 		return
 	}
 	threshold := s.notify.snapshotConfig().AbnormalTrafficThreshold
-	s.events.observeAppTraffic(CollectAppTrafficCounters(), time.Now(), threshold)
+	s.events.observeAppTraffic(s.appTrafficEventStats(), time.Now(), threshold)
+}
+
+func (s *Service) appTrafficEventStats() []AppBridgeStats {
+	counters := CollectAppTrafficCounters()
+	s.events.mu.RLock()
+	metadataAt := s.events.trafficMetadataAt
+	metadata := make(map[string]AppBridgeStats, len(s.events.trafficMetadata))
+	for bridge, item := range s.events.trafficMetadata {
+		metadata[bridge] = item
+	}
+	s.events.mu.RUnlock()
+	refreshMetadata := time.Since(metadataAt) >= time.Minute
+	if !refreshMetadata {
+		for _, item := range counters {
+			if _, ok := metadata[item.Bridge]; !ok {
+				refreshMetadata = true
+				break
+			}
+		}
+	}
+	if refreshMetadata {
+		metadata = make(map[string]AppBridgeStats)
+		for _, item := range CollectAppTraffic().Bridges {
+			metadata[item.Bridge] = item
+		}
+		s.events.mu.Lock()
+		s.events.trafficMetadataAt = time.Now()
+		s.events.trafficMetadata = metadata
+		s.events.mu.Unlock()
+	}
+	for index := range counters {
+		if item, ok := metadata[counters[index].Bridge]; ok {
+			counters[index].AppID = item.AppID
+			counters[index].AppTitle = item.AppTitle
+			counters[index].Project = item.Project
+		}
+	}
+	return counters
+}
+
+func appTrafficEventName(item AppBridgeStats) string {
+	if strings.TrimSpace(item.AppTitle) != "" {
+		return strings.TrimSpace(item.AppTitle)
+	}
+	if strings.TrimSpace(item.AppID) != "" {
+		return strings.TrimSpace(item.AppID)
+	}
+	if strings.TrimSpace(item.Project) != "" {
+		return strings.TrimSpace(item.Project)
+	}
+	return "未知应用"
 }
 
 func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.Time, thresholdMbps int) {
@@ -282,19 +336,21 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 	s.trafficSampledAt = now
 	s.mu.Unlock()
 
-	for bridge := range current {
+	for bridge, item := range current {
 		if _, ok := previous[bridge]; !ok {
+			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
-				Kind: "app_bridge_appeared", Severity: "info", Source: "app_traffic_observer", Title: "应用网桥已出现",
-				Summary: bridge, Details: map[string]any{"bridge": bridge}, DedupeKey: "app_bridge:" + bridge,
+				Kind: "app_enabled", Severity: "info", Source: "app_traffic_observer", Title: "应用已启用",
+				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project}, DedupeKey: "app_lifecycle:" + bridge,
 			})
 		}
 	}
-	for bridge := range previous {
+	for bridge, item := range previous {
 		if _, ok := current[bridge]; !ok {
+			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
-				Kind: "app_bridge_disappeared", Severity: "warning", Source: "app_traffic_observer", Title: "应用网桥已消失",
-				Summary: bridge, Details: map[string]any{"bridge": bridge}, DedupeKey: "app_bridge:" + bridge,
+				Kind: "app_disabled", Severity: "warning", Source: "app_traffic_observer", Title: "应用已停用",
+				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project}, DedupeKey: "app_lifecycle:" + bridge,
 			})
 		}
 	}
@@ -314,8 +370,8 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 		}
 		s.append(NetworkEvent{
 			Kind: "app_traffic_high", Severity: "warning", Source: "app_traffic_observer", Title: "应用流量超过阈值",
-			Summary:   fmt.Sprintf("%s: %.1f Mbps", bridge, mbps),
-			Details:   map[string]any{"bridge": bridge, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
+			Summary:   fmt.Sprintf("%s: %.1f Mbps", appTrafficEventName(item), mbps),
+			Details:   map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
 			DedupeKey: "app_traffic_high:" + bridge,
 		})
 	}

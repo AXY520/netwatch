@@ -177,8 +177,6 @@ function updateWebsiteObservationStatus(data, status, error) {
     if (status === 'fresh' && count === 0) status = data && data.generated_at ? 'empty' : 'loading';
     NetwatchShared.setObservationStatus(els.websiteStatus, {
         state: status,
-        count: count,
-        countLabel: i18n('sites_unit') || ' 个网站',
         generatedAt: data && data.generated_at,
         stale: !!(data && data.stale),
         ageSeconds: data && data.age_seconds,
@@ -378,8 +376,6 @@ function renderEgressLookups(data) {
     globalEl.innerHTML = lookup ? itemHTML(lookup, { translateGeo: true }) : '<div class="egress-item"><small>' + i18n('no_data') + '</small></div>';
     if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
         state: data.generated_at ? 'fresh' : 'empty',
-        count: (data.lookups || []).length,
-        countLabel: i18n('results_unit'),
         generatedAt: data.generated_at,
         staleAfterSeconds: 900
     });
@@ -611,8 +607,6 @@ async function initEgressLookups() {
     var load = async function (force) {
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
             state: state.egressData ? 'refreshing' : 'loading',
-            count: state.egressData && Array.isArray(state.egressData.lookups) ? state.egressData.lookups.length : null,
-            countLabel: i18n('results_unit'),
             generatedAt: state.egressData && state.egressData.generated_at
         });
         btn.disabled = true;
@@ -624,8 +618,6 @@ async function initEgressLookups() {
         } catch (e) {
             if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
                 state: 'error',
-                count: state.egressData && Array.isArray(state.egressData.lookups) ? state.egressData.lookups.length : null,
-                countLabel: i18n('results_unit'),
                 generatedAt: state.egressData && state.egressData.generated_at,
                 error: e.message
             });

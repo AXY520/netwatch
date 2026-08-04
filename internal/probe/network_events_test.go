@@ -77,22 +77,22 @@ func TestRecordSummaryEventsCollapsesIPv6PrivacyAddressesToPrefix(t *testing.T) 
 func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", RxBytes: 100, TxBytes: 100}}, start, 10)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", RxBytes: 100, TxBytes: 100}}, start, 10)
 	store.observeAppTraffic([]AppBridgeStats{
-		{Bridge: "lzc-br-a", RxBytes: 20_000_100, TxBytes: 20_000_100},
-		{Bridge: "lzc-br-b", RxBytes: 0, TxBytes: 0},
+		{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", RxBytes: 20_000_100, TxBytes: 20_000_100},
+		{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", RxBytes: 0, TxBytes: 0},
 	}, start.Add(10*time.Second), 10)
 	events := store.query(NetworkEventQuery{Limit: 10})
 	if len(events) != 2 {
 		t.Fatalf("events = %+v", events)
 	}
 	kinds := NetworkEventKinds(events)
-	if kinds[0] != "app_bridge_appeared" || kinds[1] != "app_traffic_high" {
+	if kinds[0] != "app_enabled" || kinds[1] != "app_traffic_high" {
 		t.Fatalf("kinds = %v", kinds)
 	}
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b"}}, start.Add(20*time.Second), 10)
-	events = store.query(NetworkEventQuery{Kind: "app_bridge_disappeared", Limit: 10})
-	if len(events) != 1 || events[0].Summary != "lzc-br-a" {
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙"}}, start.Add(20*time.Second), 10)
+	events = store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10})
+	if len(events) != 1 || events[0].Summary != "应用甲" || events[0].Title != "应用已停用" {
 		t.Fatalf("disappearance events = %+v", events)
 	}
 }
