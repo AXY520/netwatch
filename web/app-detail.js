@@ -54,7 +54,7 @@
                 <section class="card"><div class="card-title"><span>容器</span><span class="placeholder">${(data.containers || []).length}</span></div><div class="table-scroll"><table class="traffic-mini-table"><thead><tr><th>名称</th><th>镜像</th><th>状态</th></tr></thead><tbody>${containers || '<tr><td colspan="3">暂无容器信息</td></tr>'}</tbody></table></div></section>
                 <section class="card"><div class="card-title"><span>端口占用</span><span class="placeholder">${(data.ports || []).length}</span></div><div class="table-scroll"><table class="traffic-mini-table"><thead><tr><th>协议</th><th>监听地址</th><th>状态</th><th>归属</th></tr></thead><tbody>${ports || '<tr><td colspan="4">未发现监听端口</td></tr>'}</tbody></table></div></section>
                 <section class="card"><div class="card-title"><span>最近异常事件</span><span class="placeholder">${(data.events || []).length}</span></div><ul class="app-detail-events">${events || '<li class="placeholder">近期没有应用相关异常</li>'}</ul></section>
-                <section class="card"><div class="card-title"><span>连接目标</span></div><div class="app-detail-empty"><strong>当前未采集</strong><p>${value(data.connection_note)}</p></div></section>
+                <section class="card"><div class="card-title"><span>连接目标</span></div><div class="app-detail-empty"><strong>按需连接快照</strong><p>${value(data.connection_note)}</p><a class="button-link btn-with-icon app-detail-connections-link" href="/connections.html?${new URLSearchParams({bridge: bridge.bridge || '', app_id: data.app_id || '', project: data.project || ''}).toString()}"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>查看当前连接</span></a></div></section>
             </section>`;
     }
     async function load() {

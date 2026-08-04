@@ -55,7 +55,7 @@ func (s *Service) GetAppNetworkDetail(ctx context.Context, bridge, appID, projec
 		GeneratedAt: localTimestamp(), AppID: appID, Project: project,
 		Containers: []ContainerRuntimeInfo{}, Ports: []HostPortEntry{}, History: []AppTrafficPoint{},
 		Events: []NetworkEvent{}, ConnectionTargets: []string{},
-		ConnectionNote: "远端连接目标尚未采集，将在连接追踪视图中提供",
+		ConnectionNote: "连接目标仅在用户打开连接快照时按需采集，不会后台轮询或持久化",
 	}
 	for _, c := range containers {
 		detail.Containers = append(detail.Containers, ContainerRuntimeInfo{ID: c.ID, Name: c.Name, Image: c.Image, State: c.State})

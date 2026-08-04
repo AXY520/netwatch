@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0b">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
+    <title>NETWATCH // 应用连接快照</title>
+    <script>var savedTheme=localStorage.getItem('theme')||(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',savedTheme);</script>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+    <div id="toast" class="toast"></div>
+    <div class="container connections-page">
+        <header class="traffic-topbar">
+            <div class="traffic-header-copy"><div class="logo">NET<span>WATCH</span></div><div class="note">应用连接快照</div></div>
+            <div class="controls">
+                <a id="connections-back" class="button-link btn-with-icon" href="/traffic.html"><span class="ui-icon ui-icon--back" aria-hidden="true"></span><span>返回应用详情</span></a>
+                <label class="connections-reveal"><input id="connections-reveal" type="checkbox"><span>显示完整公网地址</span></label>
+                <button id="connections-refresh" class="btn-with-icon" type="button"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span><span>采集快照</span></button>
+            </div>
+        </header>
+        <main class="connections-layout">
+            <section class="connections-summary"><div><span>采集方式</span><strong>按需单次读取</strong></div><div><span>保存策略</span><strong>不持久化</strong></div><div><span>返回上限</span><strong>200 条</strong></div><div><span>公网地址</span><strong id="connections-privacy">默认脱敏</strong></div></section>
+            <section class="card"><div class="card-title"><span>连接列表</span><span id="connections-status" class="placeholder">等待采集</span></div><div id="connections-note" class="traffic-note" hidden></div><div class="table-scroll"><table class="traffic-mini-table connections-table"><thead><tr><th>协议</th><th>方向</th><th>本地地址</th><th>远端目标</th><th>状态</th><th>容器</th><th>归属</th></tr></thead><tbody id="connections-body"><tr><td colspan="7" class="placeholder">点击“采集快照”读取当前连接</td></tr></tbody></table></div></section>
+        </main>
+    </div>
+    <script src="/shared.js" defer></script><script src="/api.js" defer></script><script src="/connections.js" defer></script>
+</body>
+</html>

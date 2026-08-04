@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"netwatch/internal/probe"
@@ -29,6 +30,25 @@ func (h *Handler) handleAppNetworkDetail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleAppConnectionsSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	bridge, appID, project := r.URL.Query().Get("bridge"), r.URL.Query().Get("app_id"), r.URL.Query().Get("project")
+	if bridge == "" && appID == "" && project == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "application identifier required"})
+		return
+	}
+	if bridge != "" && !strings.HasPrefix(bridge, "lzc-br-") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bridge"})
+		return
+	}
+	limit := clampQueryLimit(r.URL.Query().Get("limit"), 200, 200)
+	reveal := r.URL.Query().Get("reveal") == "true" || r.URL.Query().Get("reveal") == "1"
+	writeJSON(w, http.StatusOK, probe.CollectAppConnectionSnapshot(r.Context(), bridge, appID, project, limit, reveal))
 }
 
 func (h *Handler) handleAppTraffic(w http.ResponseWriter, _ *http.Request) {

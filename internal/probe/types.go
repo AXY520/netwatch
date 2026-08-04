@@ -173,6 +173,33 @@ type AppNetworkRate struct {
 	TotalBPS    float64 `json:"total_bps"`
 }
 
+type AppConnectionEntry struct {
+	Protocol            string `json:"protocol"`
+	IPVersion           string `json:"ip_version"`
+	LocalAddress        string `json:"local_address"`
+	LocalPort           int    `json:"local_port"`
+	RemoteAddress       string `json:"remote_address"`
+	RemotePort          int    `json:"remote_port"`
+	State               string `json:"state"`
+	Direction           string `json:"direction"`
+	ContainerID         string `json:"container_id,omitempty"`
+	ContainerName       string `json:"container_name,omitempty"`
+	AppID               string `json:"app_id,omitempty"`
+	Project             string `json:"project,omitempty"`
+	NetworkMode         string `json:"network_mode,omitempty"`
+	AttributionReliable bool   `json:"attribution_reliable"`
+}
+
+type AppConnectionSnapshot struct {
+	GeneratedAt string               `json:"generated_at"`
+	Supported   bool                 `json:"supported"`
+	Revealed    bool                 `json:"revealed"`
+	Truncated   bool                 `json:"truncated"`
+	Limit       int                  `json:"limit"`
+	Connections []AppConnectionEntry `json:"connections"`
+	Note        string               `json:"note,omitempty"`
+}
+
 type AppNetworkDetail struct {
 	GeneratedAt         string                 `json:"generated_at"`
 	Mode                string                 `json:"mode"`

@@ -58,6 +58,26 @@ func TestHandleDNSDiagnosticRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestHandleAppConnectionsSnapshotRequiresApplication(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/connections/snapshot", nil)
+	rec := httptest.NewRecorder()
+	handler.handleAppConnectionsSnapshot(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleAppConnectionsSnapshotRejectsInvalidBridge(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/connections/snapshot?bridge=docker0", nil)
+	rec := httptest.NewRecorder()
+	handler.handleAppConnectionsSnapshot(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 func TestHandleLocalUploadReportsReceivedBytes(t *testing.T) {
 	handler := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/local/upload", strings.NewReader("abc"))
