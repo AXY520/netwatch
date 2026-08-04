@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -146,6 +147,14 @@ type BridgeAppInfo struct {
 	CreatedAt      int64  // earliest container start timestamp, creation time as fallback
 }
 
+const bridgeMapCacheTTL = 5 * time.Second
+
+var bridgeMapCache struct {
+	sync.Mutex
+	at   time.Time
+	data map[string]BridgeAppInfo
+}
+
 // ContainerRuntimeInfo is the small runtime slice netwatch needs from Docker.
 // Docker's list endpoint does not include HostConfig.NetworkMode or the real
 // host PID, so ListContainerRuntime joins /containers/json with per-container
@@ -174,6 +183,13 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	if !Available() {
 		return nil, errors.New("docker socket not mounted")
 	}
+	bridgeMapCache.Lock()
+	if time.Since(bridgeMapCache.at) < bridgeMapCacheTTL && bridgeMapCache.data != nil {
+		cached := cloneBridgeMap(bridgeMapCache.data)
+		bridgeMapCache.Unlock()
+		return cached, nil
+	}
+	bridgeMapCache.Unlock()
 
 	networks, err := listNetworks(ctx)
 	if err != nil {
@@ -235,7 +251,19 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 		}
 		out[bridge] = info
 	}
+	bridgeMapCache.Lock()
+	bridgeMapCache.at = time.Now()
+	bridgeMapCache.data = cloneBridgeMap(out)
+	bridgeMapCache.Unlock()
 	return out, nil
+}
+
+func cloneBridgeMap(source map[string]BridgeAppInfo) map[string]BridgeAppInfo {
+	cloned := make(map[string]BridgeAppInfo, len(source))
+	for bridge, info := range source {
+		cloned[bridge] = info
+	}
+	return cloned
 }
 
 // ListContainerRuntime returns inspected container metadata for all containers.

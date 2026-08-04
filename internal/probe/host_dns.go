@@ -286,48 +286,18 @@ func fillHostDNSInfo(info *HostDNSInfo, c HostDNSCandidate) {
 }
 
 func listHostDNSCandidates(ctx context.Context) ([]HostDNSCandidate, error) {
-	out, err := nmcli(ctx, []string{"-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"}, 5*time.Second)
+	inventory, err := listHostNetworkDeviceInventory(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var cands []HostDNSCandidate
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := splitNMCLIFields(line)
-		if len(fields) < 4 {
-			continue
-		}
-		dev, typ, state, conn := fields[0], fields[1], fields[2], fields[3]
-		if !strings.HasPrefix(state, "connected") || conn == "" {
-			continue
-		}
-		typLower := strings.ToLower(typ)
-		// Uplink-ish: ethernet, wifi, or netwatch-managed bridge.
-		if typLower != "ethernet" && typLower != "wifi" && typLower != "bridge" {
-			continue
-		}
-		if typLower == "bridge" && !isManagedHostBridgeName(dev) {
-			// Only expose netwatch bridges (nw-*), not docker/br-*).
-			continue
-		}
-		if isUnsafeNetworkDevice(dev) && !isManagedHostBridgeName(dev) {
-			continue
-		}
-		// Skip bridge *ports* (enslaved physical NICs) — DNS lives on the bridge.
-		if connectionIsBridgePort(ctx, conn) {
-			continue
-		}
-		c := HostDNSCandidate{Device: dev, Type: typ, Connection: conn}
-		if snap, err := readHostDNSSnapshot(ctx, dev, conn); err == nil {
+	cands := make([]HostDNSCandidate, 0, len(inventory))
+	for _, item := range inventory {
+		c := HostDNSCandidate{Device: item.Device, Type: item.Type, Connection: item.Connection, DNS: item.Runtime.DNS}
+		if snap, err := readHostDNSSnapshot(ctx, item.Device, item.Connection); err == nil {
 			c.Method = dnsMethodFromSnapshot(snap)
 			c.DNS = snap.DNS
-			if c.DNS == "" {
-				if runtime, err := readNetworkDeviceRuntimeConfig(ctx, dev); err == nil {
-					c.DNS = runtime.DNS
-				}
+			if item.Runtime.DNS != "" {
+				c.DNS = item.Runtime.DNS
 			}
 		}
 		cands = append(cands, c)

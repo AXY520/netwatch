@@ -76,7 +76,7 @@ func GetSystemDNSResolverInfo(ctx context.Context, preferredDevice string) (Syst
 	if nmcliTransportAvailable() {
 		candidates, err := listHostDNSCandidates(ctx)
 		if err == nil {
-			resolvedCandidates := resolveDNSCandidates(ctx, candidates)
+			resolvedCandidates := resolveDNSCandidates(candidates)
 			info.Candidates = resolvedCandidates
 			if target, ok := pickHostDNSTarget(candidates, preferredDevice); ok {
 				servers := candidateDNSServers(resolvedCandidates, target.Device)
@@ -111,15 +111,10 @@ func GetSystemDNSResolverInfo(ctx context.Context, preferredDevice string) (Syst
 	return info, nil
 }
 
-func resolveDNSCandidates(ctx context.Context, candidates []HostDNSCandidate) []DNSResolverCandidate {
+func resolveDNSCandidates(candidates []HostDNSCandidate) []DNSResolverCandidate {
 	resolved := make([]DNSResolverCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		servers := splitDNSServers(candidate.DNS)
-		if runtime, err := readNetworkDeviceRuntimeConfig(ctx, candidate.Device); err == nil {
-			if runtimeServers := splitDNSServers(runtime.DNS); len(runtimeServers) > 0 {
-				servers = runtimeServers
-			}
-		}
 		if len(servers) == 0 {
 			continue
 		}

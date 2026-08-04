@@ -50,23 +50,8 @@ function setNetworkConfigFormEnabled(enabled) {
         if (select && window.syncCustomSelect) window.syncCustomSelect(select);
     });
     // Bridge create needs a NIC; dissolve depends on existing managed bridges.
-    setHostBridgeCreateEnabled(enabled);
-}
-
-function setHostBridgeCreateEnabled(enabled) {
-    var e = typeof hostBridgeEls === 'function' ? hostBridgeEls() : {};
-    if (!e.section) return;
-    var pending = !!(hostBridgeState && hostBridgeState.pending && hostBridgeState.pending.pending);
-    var canCreate = !!enabled && !pending && hostBridgeState.enabled !== false;
-    [e.suffix, e.method, e.address, e.gateway, e.dns, e.preflight, e.create].forEach(function (el) {
-        if (el) el.disabled = !canCreate;
-    });
-    if (!canCreate && e.create) {
-        // keep create visible unless pending UI hides it
-    }
-    if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
-    if (!pending) {
-        updateHostBridgeMethodState();
+    if (typeof window.__app.setHostBridgeCreateEnabled === 'function') {
+        window.__app.setHostBridgeCreateEnabled(enabled);
     }
 }
 
@@ -524,7 +509,6 @@ function rollbackNetworkConfig() { finishNetworkConfig('rollback'); }
 
 
 window.__app.networkConfigEls = networkConfigEls;
-window.__app.setHostBridgeCreateEnabled = setHostBridgeCreateEnabled;
 window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;
@@ -537,4 +521,5 @@ window.__app.rollbackNetworkConfig = rollbackNetworkConfig;
 window.__app.networkMutationCoordinator = networkMutationCoordinator;
 window.__app.ensureNetworkConfigOption = ensureNetworkConfigOption;
 window.__app.fillNetworkConfigForm = fillNetworkConfigForm;
+window.__app.pinnedNetworkConfigDevice = pinnedNetworkConfigDevice;
 })();

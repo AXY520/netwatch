@@ -57,12 +57,10 @@
 
     function renderKinds(kinds) {
         var current = kindFilter.value;
-        kindFilter.innerHTML = '<option value="">' + NetwatchShared.escapeHtml(i18n('events_all_kinds')) + '</option>' +
-            (kinds || []).map(function (kind) {
-                return '<option value="' + NetwatchShared.escapeHtml(kind) + '">' + NetwatchShared.escapeHtml(eventKindLabel(kind)) + '</option>';
-            }).join('');
-        kindFilter.value = current;
-        if (window.syncCustomSelect) window.syncCustomSelect(kindFilter);
+        var options = [{ value: '', label: i18n('events_all_kinds') }].concat((kinds || []).map(function (kind) {
+            return { value: kind, label: eventKindLabel(kind) };
+        }));
+        NetwatchShared.setSelectOptions(kindFilter, options, current, false);
     }
 
     function renderEvents(events) {

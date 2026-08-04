@@ -10,6 +10,7 @@ var currentNetworkConfigTab = window.__app.currentNetworkConfigTab;
 var renderNetworkConfigDeviceOptions = window.__app.renderNetworkConfigDeviceOptions;
 var ensureNetworkConfigOption = window.__app.ensureNetworkConfigOption;
 var appendNetworkMutationVerification = window.__app.appendNetworkMutationVerification;
+var pinnedNetworkConfigDevice = window.__app.pinnedNetworkConfigDevice;
 
 var hostDNSCountdownTimer = null;
 var hostDNSLoadSeq = 0;
@@ -359,6 +360,8 @@ function bindHostDNSUI() {
 
 window.__app.hostDNSState = hostDNSState;
 window.__app.hostDNSEls = hostDNSEls;
+window.__app.setHostDNSOutput = setHostDNSOutput;
+window.__app.fillHostDNSFormFromInfo = fillHostDNSFormFromInfo;
 window.__app.loadHostDNS = loadHostDNS;
 window.__app.loadHostDNSPending = loadHostDNSPending;
 window.__app.bindHostDNSUI = bindHostDNSUI;

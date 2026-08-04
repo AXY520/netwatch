@@ -42,55 +42,9 @@
         return translated === key ? String(source || '-') : translated;
     }
 
-    function normalizeResolverServer(value) {
-        value = String(value || '').trim();
-        if (!value) return '';
-        if (/^\[[^\]]+\]:\d+$/.test(value) || /^[^:]+:\d+$/.test(value)) return value;
-        if (value.indexOf(':') >= 0) return '[' + value.replace(/^\[|\]$/g, '') + ']:53';
-        return value + ':53';
-    }
-
-    function candidateServers(candidate) {
-        if (Array.isArray(candidate.servers)) return candidate.servers.filter(Boolean);
-        return String(candidate.dns || '').split(/[\s,;]+/).map(normalizeResolverServer).filter(Boolean).slice(0, 3);
-    }
-
     async function loadResolverInfo(device) {
         var path = '/api/v1/diagnostics/dns' + (device ? '?device=' + encodeURIComponent(device) : '');
-        var diagnosticError = null;
-        var info = await dnsGet(path).catch(function (error) {
-            diagnosticError = error;
-            return null;
-        });
-        if (info && Array.isArray(info.candidates) && info.candidates.length) return info;
-        var hostPath = '/api/v1/network/dns' + (device ? '?device=' + encodeURIComponent(device) : '');
-        var hostInfo = await dnsGet(hostPath).catch(function () { return null; });
-        if (!hostInfo || !Array.isArray(hostInfo.candidates)) {
-            if (diagnosticError) throw diagnosticError;
-            return info || {};
-        }
-        var candidates = hostInfo.candidates.map(function (candidate) {
-            return {
-                device: candidate.device,
-                type: candidate.type,
-                connection: candidate.connection,
-                servers: candidateServers(candidate)
-            };
-        }).filter(function (candidate) { return candidate.device && candidate.servers.length; });
-        if (!info) {
-            var selectedDevice = hostInfo.device || device || (candidates[0] && candidates[0].device) || '';
-            var selected = candidates.find(function (candidate) { return candidate.device === selectedDevice; }) || candidates[0] || {};
-            info = {
-                generated_at: '',
-                source: 'lazycat_sdk',
-                device: selected.device || selectedDevice,
-                connection: selected.connection || hostInfo.connection || '',
-                servers: selected.servers || candidateServers({ dns: hostInfo.runtime_dns || hostInfo.dns }),
-                fallback: false
-            };
-        }
-        info.candidates = candidates;
-        return info;
+        return dnsGet(path);
     }
 
     function renderResolverInfo(info) {
@@ -100,22 +54,14 @@
         resolverSourceEl.textContent = sourceLabel(info.source);
         resolverSourceEl.classList.toggle('dns-source-badge--fallback', !!info.fallback);
         if (resolverCandidates.length) {
-            var currentOptions = Array.from(deviceSelectEl.options).map(function (option) { return option.value; }).join('\n');
-            var nextOptions = resolverCandidates.map(function (candidate) { return candidate.device; }).join('\n');
-            if (currentOptions !== nextOptions) {
-                deviceSelectEl.innerHTML = resolverCandidates.map(function (candidate) {
-                    var type = String(candidate.type || '').toLowerCase();
-                    var label = candidate.connection || candidate.device;
-                    return '<option value="' + NetwatchShared.escapeHtml(candidate.device) + '">' + NetwatchShared.escapeHtml(label + ' · ' + candidate.device + (type ? ' · ' + type : '')) + '</option>';
-                }).join('');
-            }
-            deviceSelectEl.value = info.device || resolverCandidates[0].device;
-            deviceSelectEl.disabled = resolverCandidates.length < 2;
+            NetwatchShared.setSelectOptions(deviceSelectEl, resolverCandidates.map(function (candidate) {
+                var type = String(candidate.type || '').toLowerCase();
+                var label = candidate.connection || candidate.device;
+                return { value: candidate.device, label: label + ' · ' + candidate.device + (type ? ' · ' + type : '') };
+            }), info.device || resolverCandidates[0].device, resolverCandidates.length < 2);
         } else {
-            deviceSelectEl.innerHTML = '<option value="">' + NetwatchShared.escapeHtml(i18n('dns_diag_auto_device')) + '</option>';
-            deviceSelectEl.disabled = true;
+            NetwatchShared.setSelectOptions(deviceSelectEl, [{ value: '', label: i18n('dns_diag_auto_device') }], '', true);
         }
-        if (window.syncCustomSelect) window.syncCustomSelect(deviceSelectEl);
         var facts = [];
         if (info.connection) facts.push('<span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_connection')) + '</small><strong>' + NetwatchShared.escapeHtml(info.connection) + '</strong></span>');
         var selectedCandidate = resolverCandidates.find(function (candidate) { return candidate.device === info.device; });

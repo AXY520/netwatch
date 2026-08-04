@@ -21,6 +21,31 @@ window.NetwatchShared = (function () {
         }, ms);
     }
 
+    function setSelectOptions(select, options, selectedValue, disabled) {
+        if (!select) return '';
+        options = Array.isArray(options) ? options : [];
+        var fragment = document.createDocumentFragment();
+        options.forEach(function (item) {
+            item = item || {};
+            var option = document.createElement('option');
+            option.value = String(item.value == null ? '' : item.value);
+            option.textContent = String(item.label == null ? option.value : item.label);
+            option.disabled = !!item.disabled;
+            Object.keys(item.dataset || {}).forEach(function (key) {
+                option.dataset[key] = String(item.dataset[key]);
+            });
+            fragment.appendChild(option);
+        });
+        select.replaceChildren(fragment);
+        var requested = selectedValue == null ? '' : String(selectedValue);
+        var hasRequested = options.some(function (item) { return String(item && item.value == null ? '' : item.value) === requested; });
+        if (hasRequested) select.value = requested;
+        else if (options.length) select.value = String(options[0].value == null ? '' : options[0].value);
+        select.disabled = disabled == null ? options.length === 0 : !!disabled;
+        if (window.syncCustomSelect) window.syncCustomSelect(select);
+        return select.value;
+    }
+
     function parseObservationTime(value) {
         if (!value) return null;
         var normalized = String(value).trim().replace(' ', 'T');
@@ -499,6 +524,7 @@ window.NetwatchShared = (function () {
 
     return {
         escapeHtml: escapeHtml,
+        setSelectOptions: setSelectOptions,
         applyThemeToggleIcon: applyThemeToggleIcon,
         showToast: showToast,
         observationTimestampLabel: observationTimestampLabel,

@@ -238,11 +238,48 @@ func (s *Service) rollbackNetworkConfig(ctx context.Context, id, action string) 
 }
 
 func listNetworkConfigDevices(ctx context.Context) ([]NetworkConfigDevice, error) {
+	inventory, err := listHostNetworkDeviceInventory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	devices := make([]NetworkConfigDevice, 0, len(inventory))
+	for _, item := range inventory {
+		dev := NetworkConfigDevice{
+			Device: item.Device, Type: item.Type, State: item.State, Connection: item.Connection,
+			IPv4Method: item.Snapshot.Method, IPv4: item.Snapshot.Addresses,
+			Gateway: item.Snapshot.Gateway, DNS: item.Snapshot.DNS,
+		}
+		if item.Runtime.IPv4 != "" {
+			dev.IPv4 = item.Runtime.IPv4
+		}
+		if item.Runtime.Gateway != "" {
+			dev.Gateway = item.Runtime.Gateway
+		}
+		if item.Runtime.DNS != "" {
+			dev.DNS = item.Runtime.DNS
+		}
+		devices = append(devices, dev)
+	}
+	return devices, nil
+}
+
+type hostNetworkDeviceInventoryItem struct {
+	Device     string
+	Type       string
+	State      string
+	Connection string
+	Snapshot   networkConfigSnapshot
+	Runtime    networkDeviceRuntimeConfig
+}
+
+// listHostNetworkDeviceInventory is the single source of truth for connected
+// host devices that may be configured or used as DNS resolver sources.
+func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInventoryItem, error) {
 	out, err := nmcli(ctx, []string{"-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"}, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	var devices []NetworkConfigDevice
+	var devices []hostNetworkDeviceInventoryItem
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -252,9 +289,10 @@ func listNetworkConfigDevices(ctx context.Context) ([]NetworkConfigDevice, error
 		if len(fields) < 4 {
 			continue
 		}
-		dev := NetworkConfigDevice{Device: fields[0], Type: fields[1], State: fields[2], Connection: fields[3]}
-		isManagedBridge := dev.Type == "bridge" && isManagedHostBridgeName(dev.Device)
-		if (dev.Type != "ethernet" && dev.Type != "wifi" && !isManagedBridge) || !strings.HasPrefix(dev.State, "connected") || dev.Connection == "" {
+		dev := hostNetworkDeviceInventoryItem{Device: fields[0], Type: fields[1], State: fields[2], Connection: fields[3]}
+		typeLower := strings.ToLower(dev.Type)
+		isManagedBridge := typeLower == "bridge" && isManagedHostBridgeName(dev.Device)
+		if (typeLower != "ethernet" && typeLower != "wifi" && !isManagedBridge) || !strings.HasPrefix(dev.State, "connected") || dev.Connection == "" {
 			continue
 		}
 		if isUnsafeNetworkDevice(dev.Device) && !isManagedBridge {
@@ -265,21 +303,10 @@ func listNetworkConfigDevices(ctx context.Context) ([]NetworkConfigDevice, error
 			continue
 		}
 		if snap, err := readNetworkConfigSnapshot(ctx, dev.Connection); err == nil {
-			dev.IPv4Method = snap.Method
-			dev.IPv4 = snap.Addresses
-			dev.Gateway = snap.Gateway
-			dev.DNS = snap.DNS
+			dev.Snapshot = snap
 		}
 		if runtime, err := readNetworkDeviceRuntimeConfig(ctx, dev.Device); err == nil {
-			if runtime.IPv4 != "" {
-				dev.IPv4 = runtime.IPv4
-			}
-			if runtime.Gateway != "" {
-				dev.Gateway = runtime.Gateway
-			}
-			if runtime.DNS != "" {
-				dev.DNS = runtime.DNS
-			}
+			dev.Runtime = runtime
 		}
 		devices = append(devices, dev)
 	}

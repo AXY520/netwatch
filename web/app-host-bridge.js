@@ -6,12 +6,12 @@ var i18n = window.__app.i18n;
 var netwatchGet = window.__app.netwatchGet;
 var netwatchPost = window.__app.netwatchPost;
 var networkConfigEls = window.__app.networkConfigEls;
-var setHostBridgeCreateEnabled = window.__app.setHostBridgeCreateEnabled;
 var networkMutationCoordinator = window.__app.networkMutationCoordinator;
 var ensureNetworkConfigOption = window.__app.ensureNetworkConfigOption;
 var fillNetworkConfigForm = window.__app.fillNetworkConfigForm;
 var updateNetworkConfigApplyState = window.__app.updateNetworkConfigApplyState;
 var loadNetworkConfigPending = window.__app.loadNetworkConfigPending;
+var pinnedNetworkConfigDevice = window.__app.pinnedNetworkConfigDevice;
 
 // --- Host bridge (tab inside network config window) ---
 
@@ -46,7 +46,7 @@ function hostBridgeEls() {
 function clearNetworkConfigLogs() {
     // Drop create/dissolve/apply logs when the window is closed so they don't linger.
     setHostBridgeOutput('');
-    setHostDNSOutput('');
+    if (typeof window.__app.setHostDNSOutput === 'function') window.__app.setHostDNSOutput('');
     var ne = typeof networkConfigEls === 'function' ? networkConfigEls() : {};
     if (ne.output) {
         ne.output.hidden = true;
@@ -66,6 +66,18 @@ function clearNetworkConfigLogs() {
         de.status.textContent = '';
         de.status.dataset.kind = '';
     }
+}
+
+function setHostBridgeCreateEnabled(enabled) {
+    var e = hostBridgeEls();
+    if (!e.section) return;
+    var pending = !!(hostBridgeState.pending && hostBridgeState.pending.pending);
+    var canCreate = !!enabled && !pending && hostBridgeState.enabled !== false;
+    [e.suffix, e.method, e.address, e.gateway, e.dns, e.preflight, e.create].forEach(function (el) {
+        if (el) el.disabled = !canCreate;
+    });
+    if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
+    if (!pending) updateHostBridgeMethodState();
 }
 
 function setHostBridgeOutput(text) {
@@ -578,28 +590,27 @@ function renderNetworkConfigDeviceOptions(opts) {
     }
     e.device.__devices = devices;
     if (!devices.length) {
-        e.device.innerHTML = '';
-        e.device.disabled = true;
+        NetwatchShared.setSelectOptions(e.device, [], '', true);
         // Keep IP/bridge create locked when no eligible NIC; DNS confirm stays CSS-exempt.
         if (tab !== 'dns') setNetworkConfigFormEnabled(false);
-        if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         if (e.status && tab === 'bridge') {
             e.status.textContent = i18n('host_bridge_no_ethernet') || i18n('network_config_no_device');
         }
         return;
     }
-    e.device.innerHTML = devices.map(function (d, idx) {
+    var options = devices.map(function (d, idx) {
         var label = d.device + ' · ' + d.type + (d.connection ? ' · ' + d.connection : '');
-        return '<option value="' + NetwatchShared.escapeHtml(d.device) + '" data-index="' + idx + '">' + NetwatchShared.escapeHtml(label) + '</option>';
-    }).join('');
-    e.device.disabled = false;
+        return { value: d.device, label: label, dataset: { index: idx } };
+    });
+    var selectedValue;
     if (pin && devices.some(function (d) { return d.device === pin; })) {
-        e.device.value = pin;
+        selectedValue = pin;
     } else if (prev && devices.some(function (d) { return d.device === prev; })) {
-        e.device.value = prev;
+        selectedValue = prev;
     } else {
-        e.device.value = devices[0].device;
+        selectedValue = devices[0].device;
     }
+    NetwatchShared.setSelectOptions(e.device, options, selectedValue, false);
     if (tab === 'dns') {
         // Shared body may be is-empty after bridge enslaves NIC — re-enable device only.
         e.device.disabled = false;
@@ -617,7 +628,6 @@ function renderNetworkConfigDeviceOptions(opts) {
         fillHostBridgeFormForDevice(e.device.value);
     }
     // dns form fill is handled by loadHostDNS / onNetworkConfigDeviceChange
-    if (window.syncCustomSelect) window.syncCustomSelect(e.device);
 }
 
 function onNetworkConfigDeviceChange() {
@@ -646,7 +656,7 @@ function onNetworkConfigDeviceChange() {
     if (tab === 'dns') {
         // Instant local paint from candidate cache, then confirm with API for that device.
         if (selected) {
-            fillHostDNSFormFromInfo({
+            if (typeof window.__app.fillHostDNSFormFromInfo === 'function') window.__app.fillHostDNSFormFromInfo({
                 device: selected.device,
                 connection: selected.connection || '',
                 type: selected.type || '',
@@ -771,4 +781,5 @@ window.__app.currentNetworkConfigTab = currentNetworkConfigTab;
 window.__app.renderNetworkConfigDeviceOptions = renderNetworkConfigDeviceOptions;
 window.__app.onNetworkConfigDeviceChange = onNetworkConfigDeviceChange;
 window.__app.appendNetworkMutationVerification = appendNetworkMutationVerification;
+window.__app.setHostBridgeCreateEnabled = setHostBridgeCreateEnabled;
 })();

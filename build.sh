@@ -5,6 +5,7 @@ GOARCH="${GOARCH:-amd64}"
 
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   go test ./...
+  node scripts/web-module-smoke.js
 fi
 rm -rf dist
 mkdir -p dist
