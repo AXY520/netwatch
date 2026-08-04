@@ -21,6 +21,18 @@ function getPinnedNetworkConfigDevice() {
         : '';
 }
 
+function setSharedNetworkConfigFormEnabled(enabled) {
+    if (typeof window.__app.setNetworkConfigFormEnabled === 'function') {
+        window.__app.setNetworkConfigFormEnabled(enabled);
+    }
+}
+
+function applySharedPendingNetworkConfig(pending) {
+    if (typeof window.__app.applyPendingNetworkConfigToForm === 'function') {
+        window.__app.applyPendingNetworkConfigToForm(pending);
+    }
+}
+
 // --- Host bridge (tab inside network config window) ---
 
 var hostBridgeCountdownTimer = null;
@@ -600,7 +612,7 @@ function renderNetworkConfigDeviceOptions(opts) {
     if (!devices.length) {
         NetwatchShared.setSelectOptions(e.device, [], '', true);
         // Keep IP/bridge create locked when no eligible NIC; DNS confirm stays CSS-exempt.
-        if (tab !== 'dns') setNetworkConfigFormEnabled(false);
+        if (tab !== 'dns') setSharedNetworkConfigFormEnabled(false);
         if (e.status && tab === 'bridge') {
             e.status.textContent = i18n('host_bridge_no_ethernet') || i18n('network_config_no_device');
         }
@@ -625,11 +637,11 @@ function renderNetworkConfigDeviceOptions(opts) {
         var body = document.querySelector('.network-config-body');
         // Do not clear is-empty globally (IP/bridge create should stay locked).
     } else {
-        setNetworkConfigFormEnabled(true);
+        setSharedNetworkConfigFormEnabled(true);
     }
     var selected = devices.find(function (d) { return d.device === e.device.value; }) || devices[0];
     if (pin && state.networkConfigPendingData && state.networkConfigPendingData.pending) {
-        applyPendingNetworkConfigToForm(state.networkConfigPendingData);
+        applySharedPendingNetworkConfig(state.networkConfigPendingData);
     } else if (tab === 'ip') {
         fillNetworkConfigForm(selected);
     } else if (tab === 'bridge' && typeof fillHostBridgeFormForDevice === 'function') {

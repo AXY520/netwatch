@@ -509,6 +509,7 @@ function rollbackNetworkConfig() { finishNetworkConfig('rollback'); }
 
 
 window.__app.networkConfigEls = networkConfigEls;
+window.__app.setNetworkConfigFormEnabled = setNetworkConfigFormEnabled;
 window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;
@@ -521,5 +522,6 @@ window.__app.rollbackNetworkConfig = rollbackNetworkConfig;
 window.__app.networkMutationCoordinator = networkMutationCoordinator;
 window.__app.ensureNetworkConfigOption = ensureNetworkConfigOption;
 window.__app.fillNetworkConfigForm = fillNetworkConfigForm;
+window.__app.applyPendingNetworkConfigToForm = applyPendingNetworkConfigToForm;
 window.__app.pinnedNetworkConfigDevice = pinnedNetworkConfigDevice;
 })();
