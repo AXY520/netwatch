@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"netwatch/internal/logger"
@@ -272,14 +273,30 @@ type hostNetworkDeviceInventoryItem struct {
 	Runtime    networkDeviceRuntimeConfig
 }
 
+const hostNetworkDeviceInventoryTTL = 2 * time.Second
+
+var hostNetworkDeviceInventoryCache struct {
+	sync.Mutex
+	at      time.Time
+	devices []hostNetworkDeviceInventoryItem
+}
+
 // listHostNetworkDeviceInventory is the single source of truth for connected
 // host devices that may be configured or used as DNS resolver sources.
 func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInventoryItem, error) {
+	hostNetworkDeviceInventoryCache.Lock()
+	if time.Since(hostNetworkDeviceInventoryCache.at) < hostNetworkDeviceInventoryTTL && hostNetworkDeviceInventoryCache.devices != nil {
+		devices := append([]hostNetworkDeviceInventoryItem(nil), hostNetworkDeviceInventoryCache.devices...)
+		hostNetworkDeviceInventoryCache.Unlock()
+		return devices, nil
+	}
+	hostNetworkDeviceInventoryCache.Unlock()
+
 	out, err := nmcli(ctx, []string{"-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"}, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	var devices []hostNetworkDeviceInventoryItem
+	var candidates []hostNetworkDeviceInventoryItem
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -298,18 +315,51 @@ func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInv
 		if isUnsafeNetworkDevice(dev.Device) && !isManagedBridge {
 			continue
 		}
-		// Skip NICs already enslaved as bridge ports (e.g. after VM bridge create).
-		if !isManagedBridge && connectionIsBridgePort(ctx, dev.Connection) {
-			continue
-		}
-		if snap, err := readNetworkConfigSnapshot(ctx, dev.Connection); err == nil {
-			dev.Snapshot = snap
-		}
-		if runtime, err := readNetworkDeviceRuntimeConfig(ctx, dev.Device); err == nil {
-			dev.Runtime = runtime
-		}
-		devices = append(devices, dev)
+		candidates = append(candidates, dev)
 	}
+
+	resolved := make([]hostNetworkDeviceInventoryItem, len(candidates))
+	keep := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+	for index := range candidates {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			dev := candidates[index]
+			isManagedBridge := strings.EqualFold(dev.Type, "bridge") && isManagedHostBridgeName(dev.Device)
+			if !isManagedBridge && connectionIsBridgePort(ctx, dev.Connection) {
+				return
+			}
+			var detailWG sync.WaitGroup
+			detailWG.Add(2)
+			go func() {
+				defer detailWG.Done()
+				if snap, err := readNetworkConfigSnapshot(ctx, dev.Connection); err == nil {
+					dev.Snapshot = snap
+				}
+			}()
+			go func() {
+				defer detailWG.Done()
+				if runtime, err := readNetworkDeviceRuntimeConfig(ctx, dev.Device); err == nil {
+					dev.Runtime = runtime
+				}
+			}()
+			detailWG.Wait()
+			resolved[index] = dev
+			keep[index] = true
+		}(index)
+	}
+	wg.Wait()
+	devices := make([]hostNetworkDeviceInventoryItem, 0, len(resolved))
+	for index, dev := range resolved {
+		if keep[index] {
+			devices = append(devices, dev)
+		}
+	}
+	hostNetworkDeviceInventoryCache.Lock()
+	hostNetworkDeviceInventoryCache.at = time.Now()
+	hostNetworkDeviceInventoryCache.devices = append([]hostNetworkDeviceInventoryItem(nil), devices...)
+	hostNetworkDeviceInventoryCache.Unlock()
 	return devices, nil
 }
 

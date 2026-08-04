@@ -322,6 +322,7 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 			counters[index].AppID = item.AppID
 			counters[index].AppTitle = item.AppTitle
 			counters[index].Project = item.Project
+			counters[index].Icon = item.Icon
 		}
 		if item, ok := runtime[counters[index].Bridge]; ok {
 			if counters[index].AppID == "" {
@@ -394,7 +395,7 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: appEnabledEventTimestamp(item, previousAt, now), Kind: "app_enabled", Severity: "info", Source: "app_traffic_observer", Title: "应用已启用",
-				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
+				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
 			})
 		}
 	}
@@ -404,7 +405,7 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: now.Format(time.DateTime), Kind: "app_disabled", Severity: "warning", Source: "app_traffic_observer", Title: "应用已停用",
-				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
+				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
 			})
 		}
 	}
@@ -425,7 +426,7 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 		s.append(NetworkEvent{
 			Timestamp: now.Format(time.DateTime), Kind: "app_traffic_high", Severity: "warning", Source: "app_traffic_observer", Title: "应用流量超过阈值",
 			Summary:   fmt.Sprintf("%s: %.1f Mbps", appTrafficEventName(item), mbps),
-			Details:   map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
+			Details:   map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
 			DedupeKey: "app_traffic_high:" + bridge,
 		})
 	}
