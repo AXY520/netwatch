@@ -25,6 +25,7 @@ function initAppTraffic() {
     var btn = document.getElementById('app-traffic-refresh-btn');
     var sortButtons = Array.from(document.querySelectorAll('#app-traffic-table [data-sort-key]'));
     var latestTrafficData = null;
+    var lastSuccessfulData = null;
     if (!tbody) return;
     var getAppTrafficName = function (item) {
         return String(item.app_title || item.app_id || item.project || item.bridge || '').toLowerCase();
@@ -108,23 +109,46 @@ function initAppTraffic() {
                 '</tr>';
             }).join('');
         }
-        if (statusEl) statusEl.textContent = data.generated_at ? i18n('sampled_at') + ' ' + data.generated_at : '';
-        if (noteEl && data.note) noteEl.textContent = data.note;
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: list.length ? (list.some(function (item) { return item.stale; }) ? 'stale' : 'fresh') : 'empty',
+            count: list.length,
+            countLabel: i18n('apps_unit'),
+            generatedAt: data.generated_at,
+            stale: list.some(function (item) { return item.stale; }),
+            staleAfterSeconds: Math.max(180, Number(state.settings.traffic_sampling_interval_sec || 60) * 3),
+            title: data.note || ''
+        });
+        if (noteEl) noteEl.textContent = data.note || '';
     };
     var load = async function () {
         if (btn) btn.disabled = true;
-        if (statusEl) statusEl.textContent = i18n('sampling') + '...';
+        var previousList = lastSuccessfulData && Array.isArray(lastSuccessfulData.bridges) ? lastSuccessfulData.bridges.filter(function (b) { return !NetwatchShared.isNetwatchBridge(b); }) : [];
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: lastSuccessfulData ? 'refreshing' : 'loading',
+            count: lastSuccessfulData ? previousList.length : null,
+            countLabel: i18n('apps_unit'),
+            generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at
+        });
+        document.getElementById('app-traffic-section')?.setAttribute('aria-busy', 'true');
         try {
             var ctrlEnabled = !!(state.settings && state.settings.container_control_enabled);
             if (ctrlEnabled && window.__app.fetchContainers) {
                 await window.__app.fetchContainers().catch(function () {});
             }
             var trafficData = await netwatchGet('/api/v1/network/app-traffic');
+            lastSuccessfulData = trafficData;
             renderTraffic(trafficData);
         } catch (e) {
-            if (statusEl) statusEl.textContent = i18n('sampling_failed') + ': ' + e.message;
+            if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+                state: 'error',
+                count: lastSuccessfulData ? previousList.length : null,
+                countLabel: i18n('apps_unit'),
+                generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at,
+                error: e.message
+            });
         } finally {
             if (btn) btn.disabled = false;
+            document.getElementById('app-traffic-section')?.removeAttribute('aria-busy');
         }
     };
     window.__app.refreshAppTraffic = load;
@@ -292,7 +316,7 @@ function initNICRealtime() {
         if (!nics.length) {
             applyNicRealtimeLayout(listEl, 1);
             listEl.innerHTML = '<div class="nic-realtime-item"><small>' + i18n('no_monitored_nics') + '</small></div>';
-            if (statusEl) statusEl.textContent = i18n('no_data');
+            if (statusEl) NetwatchShared.setObservationStatus(statusEl, { state: 'empty', count: 0, countLabel: i18n('interfaces_unit'), generatedAt: data && data.timestamp });
             return;
         }
         // Fixed positions: wired → wifi → bridge → proxy tun → other; name ASC. Never sort by rate.
@@ -334,19 +358,27 @@ function initNICRealtime() {
                 '<div class="nic-realtime-total">' + i18n('cumulative') + ' ↓ ' + NetwatchShared.formatBytes(n.rx_total) +
                 ' / ↑ ' + NetwatchShared.formatBytes(n.tx_total) + '</div></div>';
         }).join('');
-        if (statusEl) statusEl.textContent = i18n('sampled_at') + ' ' + (data.timestamp || '');
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: data.stale ? 'stale' : 'fresh',
+            count: nics.length,
+            countLabel: i18n('interfaces_unit'),
+            generatedAt: data.timestamp,
+            stale: !!data.stale,
+            ageSeconds: data.age_seconds,
+            staleAfterSeconds: 15
+        });
     };
     var tick = async function (manual) {
         if (manual === undefined) manual = false;
         try {
             if (manual && els.nicRealtimeRefreshBtn) els.nicRealtimeRefreshBtn.disabled = true;
-            if (statusEl && manual) statusEl.textContent = i18n('waiting_for_sample');
+            if (statusEl && manual) NetwatchShared.setObservationStatus(statusEl, { state: 'refreshing' });
             // force=1: backend double-samples so first paint already has bps
             var path = manual ? '/api/v1/network/realtime?force=1' : '/api/v1/network/realtime';
             var realtimeData = await netwatchGet(path);
             window.renderNICRealtime(realtimeData);
-        } catch (_) {
-            if (statusEl) statusEl.textContent = i18n('sampling_failed');
+        } catch (error) {
+            if (statusEl) NetwatchShared.setObservationStatus(statusEl, { state: 'error', error: error && error.message });
         } finally {
             if (manual && els.nicRealtimeRefreshBtn) els.nicRealtimeRefreshBtn.disabled = false;
         }

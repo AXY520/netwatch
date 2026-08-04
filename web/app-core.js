@@ -97,6 +97,7 @@ var els = {
     natNote: document.getElementById('nat-note'),
     nicRealtimeRefreshBtn: document.getElementById('nic-realtime-refresh-btn'),
     interfacesRefreshBtn: document.getElementById('interfaces-refresh-btn'),
+    interfacesStatus: document.getElementById('interfaces-status'),
     nicRealtimeStatus: document.getElementById('nic-realtime-status'),
     backdrop: document.getElementById('window-backdrop'),
     traceBackdrop: document.getElementById('trace-window-backdrop'),
@@ -553,6 +554,13 @@ function renderNetworkInfo(networkInfo) {
         var ipv6List = (iface.ipv6 || []).filter(function (s) { return !/^fe80:/i.test(s); });
         return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + mainLabel + subtitle + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
     }).join('') || '<tr><td colspan="5" class="placeholder">' + i18n('no_target_nic') + '</td></tr>';
+    NetwatchShared.setObservationStatus(els.interfacesStatus, {
+        state: interfaces.length ? 'fresh' : 'empty',
+        count: interfaces.length,
+        countLabel: i18n('interfaces_unit'),
+        generatedAt: networkInfo.generated_at,
+        staleAfterSeconds: Math.max(90, Number(state.refreshInterval || 10) * 6)
+    });
 }
 window.__app.renderNetworkInfo = renderNetworkInfo;
 
@@ -579,7 +587,12 @@ function renderNATInfo(nat) {
     var explain = natExplain[nat.type];
     if (els.natMeta) els.natMeta.textContent = explain ? (explain[0] + ' / ' + explain[1]) : '';
     if (els.natNote) els.natNote.textContent = explain ? explain[2] : '';
-    if (els.natStatus) els.natStatus.textContent = nat.type ? i18n('complete') : i18n('waiting');
+    NetwatchShared.setObservationStatus(els.natStatus, {
+        state: nat.type ? 'fresh' : (nat.error ? 'error' : 'empty'),
+        generatedAt: nat.generated_at,
+        staleAfterSeconds: 900,
+        error: nat.error
+    });
 }
 window.__app.renderNATInfo = renderNATInfo;
 

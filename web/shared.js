@@ -21,6 +21,54 @@ window.NetwatchShared = (function () {
         }, ms);
     }
 
+    function parseObservationTime(value) {
+        if (!value) return null;
+        var normalized = String(value).trim().replace(' ', 'T');
+        var parsed = new Date(normalized);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function observationAgeLabel(value, ageSeconds) {
+        var tr = typeof window.__ === 'function' ? window.__ : function (key) { return key; };
+        var seconds = Number(ageSeconds);
+        if (!Number.isFinite(seconds) || seconds < 0) {
+            var parsed = parseObservationTime(value);
+            seconds = parsed ? Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 1000)) : NaN;
+        }
+        if (!Number.isFinite(seconds)) return value ? String(value) : '';
+        if (seconds < 10) return tr('updated_just_now');
+        if (seconds < 60) return seconds + ' ' + tr('seconds_ago');
+        if (seconds < 3600) return Math.floor(seconds / 60) + ' ' + tr('minutes_ago');
+        if (seconds < 86400) return Math.floor(seconds / 3600) + ' ' + tr('hours_ago');
+        return Math.floor(seconds / 86400) + ' ' + tr('days_ago');
+    }
+
+    function setObservationStatus(el, options) {
+        if (!el) return;
+        options = options || {};
+        var tr = typeof window.__ === 'function' ? window.__ : function (key) { return key; };
+        var state = options.state || 'fresh';
+        var parts = [];
+        if (options.count !== undefined && options.count !== null) {
+            parts.push(String(options.count) + (options.countLabel || ' 项'));
+        }
+        var age = observationAgeLabel(options.generatedAt, options.ageSeconds);
+        var parsedAt = parseObservationTime(options.generatedAt);
+        var inferredAge = parsedAt ? Math.max(0, Math.floor((Date.now() - parsedAt.getTime()) / 1000)) : 0;
+        if (state === 'fresh' && (options.stale || (options.staleAfterSeconds && inferredAge > options.staleAfterSeconds))) state = 'stale';
+        if (state === 'loading') parts.push(tr('first_loading'));
+        else if (state === 'refreshing') parts.push(tr('refreshing'));
+        else if (state === 'error') parts.push(tr('refresh_failed'));
+        else if (state === 'unsupported') parts.push(tr('capability_unsupported'));
+        else if (state === 'empty') parts.push(tr('no_data'));
+        else if (state === 'stale' || options.stale) parts.push(tr('data_stale'));
+        if (age) parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + age : age);
+        el.textContent = parts.join(' · ');
+        el.dataset.state = state;
+        if (options.title || options.error) el.title = options.title || options.error;
+        else el.removeAttribute('title');
+    }
+
     var _modalScrollY = 0;
     function lockModalScroll() {
         _modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -456,6 +504,8 @@ window.NetwatchShared = (function () {
         escapeHtml: escapeHtml,
         applyThemeToggleIcon: applyThemeToggleIcon,
         showToast: showToast,
+        observationAgeLabel: observationAgeLabel,
+        setObservationStatus: setObservationStatus,
         lockModalScroll: lockModalScroll,
         unlockModalScroll: unlockModalScroll,
         confirmDialog: confirmDialog,

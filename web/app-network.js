@@ -164,12 +164,27 @@ function renderSummary(summary) {
     state.refreshInterval = summary.refresh_interval_sec || 10;
     state.settings.refresh_interval_sec = state.refreshInterval;
     state.lastRefreshTime = Date.now();
-    if (els.websiteStatus) els.websiteStatus.textContent = '';
     window.__app.updateConnectivityTable(els.domesticTable, (summary.website_connectivity && summary.website_connectivity.domestic) || []);
     window.__app.updateConnectivityTable(els.globalTable, (summary.website_connectivity && summary.website_connectivity.global) || []);
+    updateWebsiteObservationStatus(summary.website_connectivity || {}, 'fresh');
     window.__app.renderNetworkInfo(summary.network_info || {});
     if (window.__app.renderNATInfo) window.__app.renderNATInfo((summary.network_info && summary.network_info.nat) || {});
     refreshProxyDisplay();
+}
+
+function updateWebsiteObservationStatus(data, status, error) {
+    var count = ((data && data.domestic) || []).length + ((data && data.global) || []).length;
+    if (status === 'fresh' && count === 0) status = data && data.generated_at ? 'empty' : 'loading';
+    NetwatchShared.setObservationStatus(els.websiteStatus, {
+        state: status,
+        count: count,
+        countLabel: i18n('sites_unit') || ' 个网站',
+        generatedAt: data && data.generated_at,
+        stale: !!(data && data.stale),
+        ageSeconds: data && data.age_seconds,
+        staleAfterSeconds: Math.max(90, Number(state.refreshInterval || 10) * 6),
+        error: error && error.message
+    });
 }
 
 
@@ -256,10 +271,24 @@ async function refreshInterfacesOnly() {
     if (!els.interfacesRefreshBtn || state.interfacesRefreshing) return;
     state.interfacesRefreshing = true;
     els.interfacesRefreshBtn.disabled = true;
+    var previousInfo = state.summary && state.summary.network_info;
+    NetwatchShared.setObservationStatus(els.interfacesStatus, {
+        state: previousInfo ? 'refreshing' : 'loading',
+        count: previousInfo && Array.isArray(previousInfo.interfaces) ? previousInfo.interfaces.length : null,
+        countLabel: i18n('interfaces_unit'),
+        generatedAt: previousInfo && previousInfo.generated_at
+    });
     try {
         await refreshNetworkDetailCards();
     } catch (error) {
         console.error(error);
+        NetwatchShared.setObservationStatus(els.interfacesStatus, {
+            state: 'error',
+            count: previousInfo && Array.isArray(previousInfo.interfaces) ? previousInfo.interfaces.length : null,
+            countLabel: i18n('interfaces_unit'),
+            generatedAt: previousInfo && previousInfo.generated_at,
+            error: error.message
+        });
         NetwatchShared.showToast(i18n('refresh_failed') + ': ' + error.message, 'error');
     } finally {
         state.interfacesRefreshing = false;
@@ -269,7 +298,9 @@ async function refreshInterfacesOnly() {
 
 async function runWebsiteRefresh() {
     els.websiteRefreshBtn.disabled = true;
-    els.websiteStatus.textContent = i18n('checking') + '...';
+    var previous = (state.summary && state.summary.website_connectivity) || {};
+    updateWebsiteObservationStatus(previous, previous.generated_at ? 'refreshing' : 'loading');
+    document.querySelector('.connectivity-card')?.setAttribute('aria-busy', 'true');
     try {
         var websiteData = window.NetwatchAPI
             ? await window.NetwatchAPI.post('/api/v1/connectivity/websites/run')
@@ -280,7 +311,7 @@ async function runWebsiteRefresh() {
             })();
         window.__app.updateConnectivityTable(els.domesticTable, websiteData.domestic || []);
         window.__app.updateConnectivityTable(els.globalTable, websiteData.global || []);
-        els.websiteStatus.textContent = '';
+        updateWebsiteObservationStatus(websiteData, 'fresh');
         if (state.summary) {
             state.summary.website_connectivity = websiteData;
             if (websiteData.generated_at && (!state.summary.generated_at || state.summary.generated_at < websiteData.generated_at)) {
@@ -289,17 +320,19 @@ async function runWebsiteRefresh() {
         }
     } catch (error) {
         console.error(error);
-        els.websiteStatus.textContent = i18n('check_failed');
+        updateWebsiteObservationStatus(previous, 'error', error);
         NetwatchShared.showToast(i18n('check_failed'), 'error');
     } finally {
         els.websiteRefreshBtn.disabled = false;
+        document.querySelector('.connectivity-card')?.removeAttribute('aria-busy');
     }
 }
 
 async function runNATRefresh() {
     if (!els.natRefreshBtn) return;
     els.natRefreshBtn.disabled = true;
-    if (els.natStatus) els.natStatus.textContent = i18n('checking') + '...';
+    var previousNAT = state.summary && state.summary.network_info && state.summary.network_info.nat;
+    NetwatchShared.setObservationStatus(els.natStatus, { state: previousNAT && previousNAT.generated_at ? 'refreshing' : 'loading', generatedAt: previousNAT && previousNAT.generated_at });
     try {
         var nat = window.NetwatchAPI
             ? await window.NetwatchAPI.post('/api/v1/network/nat/run')
@@ -314,7 +347,7 @@ async function runNATRefresh() {
         if (window.__app.renderNATInfo) window.__app.renderNATInfo(nat);
     } catch (error) {
         console.error(error);
-        if (els.natStatus) els.natStatus.textContent = i18n('check_failed');
+        NetwatchShared.setObservationStatus(els.natStatus, { state: 'error', generatedAt: previousNAT && previousNAT.generated_at, error: error.message });
         NetwatchShared.showToast(i18n('check_failed') + ': ' + error.message, 'error');
     } finally {
         els.natRefreshBtn.disabled = false;
@@ -343,7 +376,13 @@ function renderEgressLookups(data) {
         domesticEl.innerHTML = domestic.ip ? itemHTML({ provider: domestic.source || 'domestic', ip: domestic.ip, duration_ms: 0, country: '', region: domestic.location, city: '', isp: domestic.isp, error: domestic.error }) : '<div class="egress-item"><small>' + i18n('no_data') + '</small></div>';
     }
     globalEl.innerHTML = lookup ? itemHTML(lookup, { translateGeo: true }) : '<div class="egress-item"><small>' + i18n('no_data') + '</small></div>';
-    if (statusEl) statusEl.textContent = data.generated_at ? i18n('queried_at') + ' ' + data.generated_at : i18n('waiting');
+    if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+        state: data.generated_at ? 'fresh' : 'empty',
+        count: (data.lookups || []).length,
+        countLabel: i18n('results_unit'),
+        generatedAt: data.generated_at,
+        staleAfterSeconds: 900
+    });
     renderDomesticIPSnapshot(data.domestic_ip || {});
     refreshProxyDisplay();
 }
@@ -570,7 +609,12 @@ async function initEgressLookups() {
     if (!btn) return;
     var statusEl = document.getElementById('egress-status');
     var load = async function (force) {
-        if (statusEl) statusEl.textContent = force ? i18n('querying') + '...' : i18n('loading') + '...';
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: state.egressData ? 'refreshing' : 'loading',
+            count: state.egressData && Array.isArray(state.egressData.lookups) ? state.egressData.lookups.length : null,
+            countLabel: i18n('results_unit'),
+            generatedAt: state.egressData && state.egressData.generated_at
+        });
         btn.disabled = true;
         try {
             var egressData = force
@@ -578,7 +622,13 @@ async function initEgressLookups() {
                 : await netwatchGet('/api/v1/network/egress-lookups');
             renderEgressLookups(egressData);
         } catch (e) {
-            if (statusEl) statusEl.textContent = i18n('load_failed') + ': ' + e.message;
+            if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+                state: 'error',
+                count: state.egressData && Array.isArray(state.egressData.lookups) ? state.egressData.lookups.length : null,
+                countLabel: i18n('results_unit'),
+                generatedAt: state.egressData && state.egressData.generated_at,
+                error: e.message
+            });
         } finally {
             btn.disabled = false;
         }

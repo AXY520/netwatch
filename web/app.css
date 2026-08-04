@@ -558,6 +558,20 @@ button.icon-button,
         .card-title .title-tools .placeholder {
             margin-left: 0;
         }
+        .observation-status {
+            max-width: 24rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: var(--font-number);
+            font-variant-numeric: tabular-nums;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .observation-status[data-state="refreshing"],
+        [aria-busy="true"] .observation-status { color: var(--accent-cyan); }
+        .observation-status[data-state="stale"],
+        .observation-status[data-state="error"] { color: var(--accent-amber); }
 
         .compact-btn {
             padding: .34rem .7rem;
@@ -1218,6 +1232,17 @@ button.icon-button,
         .dashboard-collapsible.collapsed .dashboard-panel-content {
             display: none;
         }
+        .dashboard-collapsible.collapsed .card-title {
+            margin-bottom: 1rem;
+        }
+        .dashboard-collapsible.collapsed .title-tools > :not(.observation-status):not(.dashboard-collapse-btn) {
+            display: none;
+        }
+        .dashboard-collapsible[aria-busy="true"] .dashboard-panel-content,
+        .connectivity-card[aria-busy="true"] .connectivity-split {
+            opacity: .68;
+            transition: opacity 160ms ease;
+        }
         .dashboard-collapse-icon {
             width: 0.55rem;
             height: 0.55rem;
@@ -1521,6 +1546,12 @@ button.icon-button,
             max-width: 100%;
             font-weight: 600;
         }
+        .connectivity-table-fixed tbody tr { height: 3.35rem; }
+        .connectivity-group { display: flex; min-width: 0; flex-direction: column; }
+        .connectivity-group .connectivity-table-fixed { flex: 1 1 auto; }
+        #app-traffic-table tbody tr { height: 3.25rem; }
+        .host-port-group-list { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+        .host-port-item { min-height: 3.15rem; display: flex; flex-direction: column; justify-content: center; }
 
         .identity-row {
             display: flex;
@@ -2640,6 +2671,25 @@ button.icon-button,
                 flex: 1 1 8rem;
                 min-width: 0;
             }
+            .observation-status {
+                max-width: 100%;
+                white-space: normal;
+                overflow: visible;
+                text-overflow: clip;
+                line-height: 1.35;
+            }
+            .dashboard-collapsible.collapsed .card-title {
+                display: flex;
+                align-items: flex-start;
+            }
+            .dashboard-collapsible.collapsed .card-title .title-tools {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                width: 100%;
+            }
+            .dashboard-collapsible.collapsed .observation-status {
+                text-align: left;
+            }
             .card-title .title-tools button,
             .card-title .title-tools .button-link {
                 flex: 0 0 auto;
@@ -2660,6 +2710,8 @@ button.icon-button,
                 height: 16px;
             }
             .connectivity-split { gap: 1rem; }
+            .connectivity-table-fixed tbody tr { height: 3rem; }
+            .host-port-group-list { grid-template-columns: 1fr; }
             .table-subtitle { margin-bottom: .55rem; }
             .data-table, .data-table thead, .data-table tbody, .data-table tr, .data-table th, .data-table td { display: block; width: 100%; }
             .data-table thead { display: none; }

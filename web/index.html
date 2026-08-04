@@ -58,7 +58,7 @@
                 <div class="card-title">
                     <span data-i18n="website_latency_chk">网站延迟检测</span>
                     <div class="title-tools">
-                        <span id="website-status" class="placeholder"></span>
+                        <span id="website-status" class="placeholder observation-status"></span>
                         <button id="website-refresh-btn" class="icon-button" title="手动检测" aria-label="手动检测" data-i18n-title="manual_check_btn" data-i18n-aria-label="manual_check_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
                 </div>
@@ -180,6 +180,7 @@
                 <div class="card-title">
                     <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
                     <div class="title-tools">
+                        <span id="interfaces-status" class="placeholder observation-status"></span>
                         <button id="open-network-config-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--netcfg" aria-hidden="true"></span><span data-i18n="network_config_btn">修改配置</span></button>
                         <button type="button" id="interfaces-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                     </div>
@@ -194,7 +195,7 @@
                 <div class="card-title">
                     <span data-i18n="app_traffic_title">应用流量</span>
                     <div class="title-tools">
-                        <span id="app-traffic-status" class="placeholder" data-i18n="waiting_for_sample">等待采样</span>
+                        <span id="app-traffic-status" class="placeholder observation-status" data-i18n="waiting_for_sample">等待采样</span>
                         <a class="button-link btn-with-icon" id="traffic-analysis-link" href="/traffic.html" hidden><span class="ui-icon ui-icon--traffic" aria-hidden="true"></span><span data-i18n="traffic_analysis_btn">流量分析</span></a>
                         <button id="traffic-settings-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
                         <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
@@ -215,7 +216,7 @@
                     <span id="host-ports-title" class="host-ports-title" data-i18n="host_ports_title">端口占用</span>
                     <div class="title-tools">
                         <label class="host-port-search"><span class="sr-only" data-i18n="port_search_label">搜索端口</span><input id="host-ports-search" type="search" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="端口号" data-i18n-placeholder="port_search_placeholder" autocomplete="off"></label>
-                        <span id="host-ports-status" class="placeholder" data-i18n="waiting">等待查询</span>
+                        <span id="host-ports-status" class="placeholder observation-status" data-i18n="waiting">等待查询</span>
                         <button id="host-ports-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                         <button type="button" class="icon-button dashboard-collapse-btn" data-collapse-section="host_ports" title="折叠板块" aria-label="折叠板块" aria-expanded="true" data-i18n-title="collapse_panel" data-i18n-aria-label="collapse_panel"><span class="dashboard-collapse-icon" aria-hidden="true"></span></button>
                     </div>

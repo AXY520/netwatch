@@ -22,6 +22,7 @@ function initHostPorts() {
     var sharedBackdrop = document.getElementById('window-backdrop');
     var searchInput = document.getElementById('host-ports-search');
     var latestPortsData = null;
+    var lastSuccessfulData = null;
     var clickCount = 0;
     var clickTimer = null;
     if (!listEl) return;
@@ -157,7 +158,8 @@ function initHostPorts() {
 
     var render = function (data) {
         latestPortsData = data || {};
-        var rows = compactPorts(Array.isArray(latestPortsData.ports) ? latestPortsData.ports : []);
+        var allRows = compactPorts(Array.isArray(latestPortsData.ports) ? latestPortsData.ports : []);
+        var rows = allRows.slice();
         var query = searchInput ? searchInput.value.trim() : '';
         var queryValid = query === '' || /^\d{1,5}$/.test(query);
         if (queryValid && query !== '') {
@@ -220,12 +222,27 @@ function initHostPorts() {
                 });
             });
         }
-        if (statusEl) statusEl.textContent = latestPortsData.generated_at ? i18n('sampled_at') + ' ' + latestPortsData.generated_at : '';
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: rows.length ? 'fresh' : 'empty',
+            count: allRows.length,
+            countLabel: i18n('ports_unit'),
+            generatedAt: latestPortsData.generated_at,
+            stale: !!latestPortsData.stale,
+            ageSeconds: latestPortsData.age_seconds,
+            staleAfterSeconds: 120,
+            title: latestPortsData.note || ''
+        });
     };
 
     var load = async function () {
         if (btn) btn.disabled = true;
-        if (statusEl) statusEl.textContent = i18n('sampling') + '...';
+        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+            state: lastSuccessfulData ? 'refreshing' : 'loading',
+            count: lastSuccessfulData && Array.isArray(lastSuccessfulData.ports) ? compactPorts(lastSuccessfulData.ports).length : null,
+            countLabel: i18n('ports_unit'),
+            generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at
+        });
+        document.getElementById('host-ports-section')?.setAttribute('aria-busy', 'true');
         try {
             var data = window.NetwatchAPI
                 ? await window.NetwatchAPI.get('/api/v1/network/ports')
@@ -234,11 +251,19 @@ function initHostPorts() {
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return resp.json();
                 })();
+            lastSuccessfulData = data;
             render(data);
         } catch (e) {
-            if (statusEl) statusEl.textContent = i18n('sampling_failed') + ': ' + e.message;
+            if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
+                state: 'error',
+                count: lastSuccessfulData && Array.isArray(lastSuccessfulData.ports) ? compactPorts(lastSuccessfulData.ports).length : null,
+                countLabel: i18n('ports_unit'),
+                generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at,
+                error: e.message
+            });
         } finally {
             if (btn) btn.disabled = false;
+            document.getElementById('host-ports-section')?.removeAttribute('aria-busy');
         }
     };
 
