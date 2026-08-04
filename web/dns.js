@@ -115,6 +115,7 @@
             deviceSelectEl.innerHTML = '<option value="">' + NetwatchShared.escapeHtml(i18n('dns_diag_auto_device')) + '</option>';
             deviceSelectEl.disabled = true;
         }
+        if (window.syncCustomSelect) window.syncCustomSelect(deviceSelectEl);
         var facts = [];
         if (info.connection) facts.push('<span><small>' + NetwatchShared.escapeHtml(i18n('dns_diag_connection')) + '</small><strong>' + NetwatchShared.escapeHtml(info.connection) + '</strong></span>');
         var selectedCandidate = resolverCandidates.find(function (candidate) { return candidate.device === info.device; });

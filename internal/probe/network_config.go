@@ -253,14 +253,15 @@ func listNetworkConfigDevices(ctx context.Context) ([]NetworkConfigDevice, error
 			continue
 		}
 		dev := NetworkConfigDevice{Device: fields[0], Type: fields[1], State: fields[2], Connection: fields[3]}
-		if (dev.Type != "ethernet" && dev.Type != "wifi") || !strings.HasPrefix(dev.State, "connected") || dev.Connection == "" {
+		isManagedBridge := dev.Type == "bridge" && isManagedHostBridgeName(dev.Device)
+		if (dev.Type != "ethernet" && dev.Type != "wifi" && !isManagedBridge) || !strings.HasPrefix(dev.State, "connected") || dev.Connection == "" {
 			continue
 		}
-		if isUnsafeNetworkDevice(dev.Device) {
+		if isUnsafeNetworkDevice(dev.Device) && !isManagedBridge {
 			continue
 		}
 		// Skip NICs already enslaved as bridge ports (e.g. after VM bridge create).
-		if connectionIsBridgePort(ctx, dev.Connection) {
+		if !isManagedBridge && connectionIsBridgePort(ctx, dev.Connection) {
 			continue
 		}
 		if snap, err := readNetworkConfigSnapshot(ctx, dev.Connection); err == nil {

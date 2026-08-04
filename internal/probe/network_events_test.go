@@ -77,10 +77,10 @@ func TestRecordSummaryEventsCollapsesIPv6PrivacyAddressesToPrefix(t *testing.T) 
 func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", RxBytes: 100, TxBytes: 100}}, start, 10)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, RxBytes: 100, TxBytes: 100}}, start, 10)
 	store.observeAppTraffic([]AppBridgeStats{
-		{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", RxBytes: 20_000_100, TxBytes: 20_000_100},
-		{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", RxBytes: 0, TxBytes: 0},
+		{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, RxBytes: 20_000_100, TxBytes: 20_000_100},
+		{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", ContainerCount: 1, RunningCount: 1, CreatedAt: start.Add(7 * time.Second).Unix(), RxBytes: 0, TxBytes: 0},
 	}, start.Add(10*time.Second), 10)
 	events := store.query(NetworkEventQuery{Limit: 10})
 	if len(events) != 2 {
@@ -90,9 +90,39 @@ func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
 	if kinds[0] != "app_enabled" || kinds[1] != "app_traffic_high" {
 		t.Fatalf("kinds = %v", kinds)
 	}
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙"}}, start.Add(20*time.Second), 10)
+	enabled := store.query(NetworkEventQuery{Kind: "app_enabled", Limit: 10})
+	if len(enabled) != 1 || enabled[0].Timestamp != start.Add(7*time.Second).Format(time.DateTime) {
+		t.Fatalf("enabled events = %+v", enabled)
+	}
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", ContainerCount: 1, RunningCount: 1}}, start.Add(20*time.Second), 10)
 	events = store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10})
 	if len(events) != 1 || events[0].Summary != "应用甲" || events[0].Title != "应用已停用" {
 		t.Fatalf("disappearance events = %+v", events)
+	}
+}
+
+func TestObserveAppTrafficUsesRunningStateInsteadOfBridgePresence(t *testing.T) {
+	store := newNetworkEventStore(t.TempDir())
+	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1}}, start, 0)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 0}}, start.Add(10*time.Second), 0)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, CreatedAt: start.Add(18 * time.Second).Unix()}}, start.Add(20*time.Second), 0)
+	events := store.query(NetworkEventQuery{Limit: 10})
+	if len(events) != 2 || events[0].Kind != "app_enabled" || events[1].Kind != "app_disabled" {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].Timestamp != start.Add(18*time.Second).Format(time.DateTime) || events[1].Timestamp != start.Add(10*time.Second).Format(time.DateTime) {
+		t.Fatalf("event timestamps = %+v", events)
+	}
+}
+
+func TestNetworkEventsHideLegacyLifecycleTimestamps(t *testing.T) {
+	store := newNetworkEventStore(t.TempDir())
+	store.append(NetworkEvent{Kind: "app_bridge_appeared", Title: "legacy bridge"})
+	store.append(NetworkEvent{Kind: "app_enabled", Title: "legacy lifecycle", Details: map[string]any{"bridge": "lzc-br-a"}})
+	store.append(NetworkEvent{Kind: "app_enabled", Title: "runtime lifecycle", Details: map[string]any{"lifecycle_source": "container_runtime_v2"}})
+	events := store.query(NetworkEventQuery{Limit: 10})
+	if len(events) != 1 || events[0].Title != "runtime lifecycle" {
+		t.Fatalf("events = %+v", events)
 	}
 }
