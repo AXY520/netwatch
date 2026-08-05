@@ -109,8 +109,25 @@ function closeTraceWindow() {
     NetwatchShared.unlockModalScroll();
 }
 
+function openDNSDiagWindow() {
+    if (els.dnsDiagWindow) els.dnsDiagWindow.classList.add('active');
+    if (els.dnsDiagBackdrop) els.dnsDiagBackdrop.classList.add('active');
+    NetwatchShared.lockModalScroll();
+    if (typeof window.initDNSDiagnostics === 'function') window.initDNSDiagnostics();
+    var input = document.getElementById('dns-diag-name');
+    if (input) setTimeout(function () { input.focus(); }, 0);
+}
+
+function closeDNSDiagWindow() {
+    if (els.dnsDiagWindow) els.dnsDiagWindow.classList.remove('active');
+    if (els.dnsDiagBackdrop) els.dnsDiagBackdrop.classList.remove('active');
+    NetwatchShared.unlockModalScroll();
+}
+
 window.__app.openTraceWindow = openTraceWindow;
 window.__app.closeTraceWindow = closeTraceWindow;
+window.__app.openDNSDiagWindow = openDNSDiagWindow;
+window.__app.closeDNSDiagWindow = closeDNSDiagWindow;
 
 function bindControls() {
     if (state.controlsBound) return;
@@ -177,6 +194,14 @@ function bindControls() {
     els.backdrop.addEventListener('click', closeCurrentWindow);
     if (els.closeTraceWindow) els.closeTraceWindow.addEventListener('click', closeTraceWindow);
     if (els.traceBackdrop) els.traceBackdrop.addEventListener('click', closeTraceWindow);
+    if (els.openDNSDiagWindow) els.openDNSDiagWindow.addEventListener('click', openDNSDiagWindow);
+    if (els.closeDNSDiagWindow) els.closeDNSDiagWindow.addEventListener('click', closeDNSDiagWindow);
+    if (els.dnsDiagBackdrop) els.dnsDiagBackdrop.addEventListener('click', closeDNSDiagWindow);
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && els.dnsDiagWindow && els.dnsDiagWindow.classList.contains('active')) {
+            closeDNSDiagWindow();
+        }
+    });
 
     var ipv6DetailBtn = document.getElementById('ipv6-detail-btn');
     if (ipv6DetailBtn && !ipv6DetailBtn.dataset.bound) {

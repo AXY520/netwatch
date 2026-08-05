@@ -22,6 +22,7 @@
     <div id="toast" class="toast"></div>
     <div id="window-backdrop" class="window-backdrop"></div>
     <div id="trace-window-backdrop" class="window-backdrop"></div>
+    <div id="dns-diag-window-backdrop" class="window-backdrop"></div>
     <div id="app-confirm-backdrop" class="window-backdrop app-confirm-backdrop"></div>
     <section class="floating-window app-confirm-window" id="app-confirm-window" role="dialog" aria-modal="true" aria-labelledby="app-confirm-title">
         <div class="window-head">
@@ -48,7 +49,6 @@
                 <button id="open-transfer-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--transfer" aria-hidden="true"></span><span data-i18n="transfer_btn">传输测速</span></button>
                 <a class="button-link btn-with-icon" href="/lan.html"><span class="ui-icon ui-icon--lan" aria-hidden="true"></span><span data-i18n="lan_devices_btn">局域网设备</span></a>
                 <a class="button-link btn-with-icon" href="/events.html"><span class="ui-icon ui-icon--bell" aria-hidden="true"></span><span data-i18n="events_center_btn">事件中心</span></a>
-                <a class="button-link btn-with-icon" href="/dns.html"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span><span data-i18n="dns_diag_btn">DNS 诊断</span></a>
                 <button id="refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
             </div>
         </header>
@@ -140,6 +140,9 @@
             <section class="card trace-card">
                 <div class="card-title">
                     <span data-i18n="trace_title">路径诊断</span>
+                    <div class="title-tools">
+                        <button id="open-dns-diag-window" class="icon-button" type="button" title="DNS 诊断" aria-label="DNS 诊断" data-i18n-title="dns_diag_btn" data-i18n-aria-label="dns_diag_btn"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span></button>
+                    </div>
                 </div>
                 <div class="trace-toolbar">
                     <input id="trace-host" placeholder="如 github.com" data-i18n-placeholder="trace_placeholder" />
@@ -384,6 +387,42 @@
         </div>
         <div id="trace-output" class="trace-results">
             <div class="trace-empty" data-i18n="trace_not_started">尚未开始追踪</div>
+        </div>
+    </section>
+
+    <section class="floating-window dns-diag-window" id="dns-diag-window" aria-labelledby="dns-diag-window-title">
+        <div class="window-head">
+            <div>
+                <div class="window-title" id="dns-diag-window-title" data-i18n="dns_diag_btn">DNS 诊断</div>
+                <div class="note" data-i18n="dns_diag_page_subtitle">真实网卡 DNS 查询与解析对比</div>
+            </div>
+            <div class="window-actions">
+                <button type="button" class="icon-button window-close-btn" id="close-dns-diag-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
+        </div>
+        <div class="dns-diag-window-body dns-diag-layout">
+            <section id="dns-resolver-inventory" class="dns-resolver-inventory" aria-live="polite">
+                <div class="dns-inventory-heading"><span data-i18n="dns_diag_active_resolvers">当前网卡 DNS</span><span id="dns-resolver-source" class="dns-source-badge">--</span></div>
+                <div class="dns-resolver-main">
+                    <label class="dns-device-picker"><span data-i18n="dns_diag_select_device">诊断网卡</span><select id="dns-device-select" aria-label="诊断网卡"></select></label>
+                    <div id="dns-resolver-details" class="dns-resolver-details placeholder" data-i18n="dns_diag_loading_resolvers">正在读取真实网卡 DNS</div>
+                </div>
+            </section>
+            <form id="dns-diag-form" class="dns-diag-toolbar">
+                <label class="dns-diag-name-field"><span data-i18n="dns_diag_domain">域名</span><input id="dns-diag-name" type="text" inputmode="url" autocomplete="off" placeholder="github.com" required></label>
+                <fieldset class="dns-diag-type-field"><legend data-i18n="dns_diag_record_type">记录类型</legend><div class="dns-type-segments" id="dns-type-segments">
+                    <button type="button" class="active" data-type="A" aria-pressed="true">A</button><button type="button" data-type="AAAA" aria-pressed="false">AAAA</button><button type="button" data-type="CNAME" aria-pressed="false">CNAME</button><button type="button" data-type="MX" aria-pressed="false">MX</button><button type="button" data-type="TXT" aria-pressed="false">TXT</button><button type="button" data-type="NS" aria-pressed="false">NS</button><button type="button" data-type="SOA" aria-pressed="false">SOA</button><button type="button" data-type="PTR" aria-pressed="false">PTR</button>
+                </div></fieldset>
+                <label class="dns-diag-server-field"><span data-i18n="dns_diag_server">对比服务器</span><input id="dns-diag-server" type="text" autocomplete="off" placeholder="223.5.5.5"></label>
+                <button id="dns-diag-run" type="submit" class="btn-with-icon"><span class="ui-icon ui-icon--trace" aria-hidden="true"></span><span data-i18n="dns_diag_run">查询</span></button>
+            </form>
+            <div id="dns-diag-status" class="dns-diag-status placeholder" data-i18n="dns_diag_idle">等待查询</div>
+            <section id="dns-diag-conclusion" class="dns-diag-conclusion" hidden></section>
+            <section id="dns-diag-differences" class="dns-diag-differences" hidden></section>
+            <section id="dns-diag-results" class="dns-diag-results" hidden>
+                <div class="dns-result-group"><h2 data-i18n="dns_diag_system_group">真实网卡 DNS</h2><div id="dns-system-results" class="dns-system-results"></div></div>
+                <div class="dns-result-group" id="dns-specified-group" hidden><h2 data-i18n="dns_diag_specified_group">对比 DNS</h2><article class="dns-result-panel" id="dns-specified-result"></article></div>
+            </section>
         </div>
     </section>
 
@@ -784,6 +823,7 @@
     <script src="/app-host-ports.js" defer></script>
     <script src="/app-speedtest.js" defer></script>
     <script src="/app-settings.js" defer></script>
+    <script src="/dns.js" defer></script>
     <script src="/app.js" defer></script>
 </body>
 </html>

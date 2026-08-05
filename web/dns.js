@@ -17,6 +17,9 @@
     var selectedType = 'A';
     var resolverCandidates = [];
     var i18n = function (key) { return typeof window.__ === 'function' ? window.__(key) : key; };
+    var initialized = false;
+
+    if (!form || !deviceSelectEl) return;
 
     function dnsPost(path, body) {
         if (window.NetwatchAPI) return window.NetwatchAPI.post(path, body);
@@ -131,7 +134,10 @@
         differencesEl.textContent = i18n('dns_diag_different') + ': ' + differences.map(function (item) { return i18n('dns_diff_' + item); }).join(', ');
     }
 
-    typeButtons.forEach(function (button) {
+    function initDNSDiagnostics() {
+        if (initialized) return;
+        initialized = true;
+        typeButtons.forEach(function (button) {
         button.addEventListener('click', function () {
             selectedType = button.dataset.type || 'A';
             typeButtons.forEach(function (item) {
@@ -140,9 +146,9 @@
                 item.setAttribute('aria-pressed', active ? 'true' : 'false');
             });
         });
-    });
+        });
 
-    form.addEventListener('submit', async function (event) {
+        form.addEventListener('submit', async function (event) {
         event.preventDefault();
         var name = nameInput.value.trim();
         if (!name) return;
@@ -173,9 +179,9 @@
         } finally {
             runButton.disabled = false;
         }
-    });
+        });
 
-    deviceSelectEl.addEventListener('change', function () {
+        deviceSelectEl.addEventListener('change', function () {
         var device = deviceSelectEl.value;
         resolverDetailsEl.classList.add('placeholder');
         resolverDetailsEl.textContent = i18n('dns_diag_loading_resolvers');
@@ -188,11 +194,15 @@
         }).catch(function (error) {
             resolverDetailsEl.textContent = error.message;
         });
-    });
+        });
 
-    loadResolverInfo('').then(renderResolverInfo).catch(function (error) {
-        resolverSourceEl.textContent = i18n('dns_diag_unavailable');
-        resolverSourceEl.classList.add('dns-source-badge--fallback');
-        resolverDetailsEl.textContent = error.message;
-    });
+        loadResolverInfo('').then(renderResolverInfo).catch(function (error) {
+            resolverSourceEl.textContent = i18n('dns_diag_unavailable');
+            resolverSourceEl.classList.add('dns-source-badge--fallback');
+            resolverDetailsEl.textContent = error.message;
+        });
+    }
+
+    window.initDNSDiagnostics = initDNSDiagnostics;
+    if (!document.getElementById('dns-diag-window')) initDNSDiagnostics();
 })();

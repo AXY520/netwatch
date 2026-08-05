@@ -4419,6 +4419,35 @@ button.icon-button,
 /* DNS diagnostics */
 .dns-diag-page { max-width: 1180px; }
 .dns-diag-layout { display: grid; gap: 0.85rem; }
+.dns-diag-window {
+    width: min(1120px, calc(100vw - 2rem));
+    max-width: 1120px;
+    height: min(86vh, 820px);
+    max-height: 820px;
+}
+.dns-diag-window-body {
+    min-height: 0;
+    padding: 0.8rem 0.9rem 1rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+.dns-diag-window .dns-resolver-inventory { grid-template-columns: 160px minmax(0, 1fr); }
+.dns-diag-window .dns-inventory-heading { padding: 0.75rem 0.85rem; }
+.dns-diag-window .dns-device-picker,
+.dns-diag-window .dns-resolver-details { padding: 0.7rem 0.8rem; }
+.dns-diag-window .dns-diag-toolbar {
+    grid-template-columns: minmax(180px, 1fr) minmax(300px, 1.6fr) minmax(180px, 0.9fr) auto;
+    padding: 0.75rem;
+}
+.dns-diag-window .dns-type-segments { grid-template-columns: repeat(4, minmax(44px, 1fr)); min-height: 38px; }
+.dns-diag-window .dns-type-segments button:nth-child(5) { border-left: 0; }
+.dns-diag-window .dns-type-segments button:nth-child(n+5) { border-top: 1px solid var(--border-color); }
+.dns-diag-window .dns-diag-toolbar > button { min-height: 38px; }
+.dns-diag-window .dns-system-results { gap: 0.65rem; }
+.dns-diag-window .dns-result-head { min-height: 44px; padding: 0.58rem 0.75rem; }
+.dns-diag-window .dns-result-address { padding: 0.65rem 0.75rem; }
+.dns-diag-window .dns-result-metrics > span { padding: 0.58rem 0.75rem; }
+.dns-diag-window .dns-answer-row { padding: 0.62rem 0.75rem; }
 .dns-resolver-inventory {
     display: grid;
     grid-template-columns: 190px minmax(0, 1fr);
@@ -4583,6 +4612,8 @@ button.icon-button,
     .dns-diag-results--compare { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
+    .dns-diag-window { width: calc(100vw - 1rem); height: min(92dvh, 860px); }
+    .dns-diag-window-body { padding: 0.65rem; }
     .dns-resolver-inventory, .dns-diag-toolbar { grid-template-columns: 1fr; }
     .dns-inventory-heading { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
     .dns-resolver-details { grid-template-columns: 1fr; }
