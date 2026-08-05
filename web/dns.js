@@ -111,6 +111,11 @@
     }
 
     function renderConclusion(code) {
+        if (!code || code === 'system_ok') {
+            conclusionEl.hidden = true;
+            conclusionEl.textContent = '';
+            return;
+        }
         var key = 'dns_conclusion_' + String(code || 'system_ok');
         var translated = i18n(key);
         conclusionEl.className = 'dns-diag-conclusion dns-diag-conclusion--' + NetwatchShared.escapeHtml(code || 'system_ok');
@@ -126,8 +131,8 @@
         }
         differencesEl.hidden = false;
         if (!differences || differences.length === 0) {
-            differencesEl.className = 'dns-diag-differences dns-diag-differences--same';
-            differencesEl.textContent = i18n('dns_diag_same');
+            differencesEl.hidden = true;
+            differencesEl.textContent = '';
             return;
         }
         differencesEl.className = 'dns-diag-differences dns-diag-differences--different';
@@ -153,6 +158,7 @@
         var name = nameInput.value.trim();
         if (!name) return;
         runButton.disabled = true;
+        statusEl.hidden = false;
         statusEl.textContent = i18n('dns_diag_running');
         resultsEl.hidden = true;
         differencesEl.hidden = true;
@@ -173,8 +179,10 @@
             renderConclusion(data.conclusion_code);
             renderDifferences(data.differences || [], !!data.specified);
             resultsEl.hidden = false;
-            statusEl.textContent = (data.name || name) + ' / ' + (data.type || selectedType) + ' / ' + (data.sampled_at || data.generated_at || '');
+            statusEl.textContent = '';
+            statusEl.hidden = true;
         } catch (error) {
+            statusEl.hidden = false;
             statusEl.textContent = i18n('dns_diag_failed') + ': ' + error.message;
         } finally {
             runButton.disabled = false;
@@ -184,6 +192,7 @@
         deviceSelectEl.addEventListener('change', function () {
         var device = deviceSelectEl.value;
         resolverDetailsEl.classList.add('placeholder');
+        statusEl.hidden = false;
         resolverDetailsEl.textContent = i18n('dns_diag_loading_resolvers');
         loadResolverInfo(device).then(function (info) {
             renderResolverInfo(info);

@@ -4437,12 +4437,22 @@ button.icon-button,
     height: min(86vh, 820px);
     max-height: 820px;
 }
+.dns-diag-window.active {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.dns-diag-window > .window-head { flex: 0 0 auto; }
 .dns-diag-window-body {
+    flex: 1 1 auto;
     min-height: 0;
     padding: 0.8rem 0.9rem 1rem;
     overflow: auto;
     overscroll-behavior: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
+.dns-diag-window-body::-webkit-scrollbar { display: none; }
 .dns-diag-window .dns-resolver-inventory { grid-template-columns: 160px minmax(0, 1fr); }
 .dns-diag-window .dns-inventory-heading { padding: 0.75rem 0.85rem; }
 .dns-diag-window .dns-device-picker,
