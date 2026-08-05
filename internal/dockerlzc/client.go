@@ -171,6 +171,7 @@ type ContainerRuntimeInfo struct {
 	Created     int64             `json:"created,omitempty"`
 	StartedAt   int64             `json:"started_at,omitempty"`
 	NetworkMode string            `json:"network_mode,omitempty"`
+	Networks    []string          `json:"networks,omitempty"`
 	PID         int               `json:"pid,omitempty"`
 	Running     bool              `json:"running,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
@@ -200,8 +201,19 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
 
-	// project → appid (and title) lookup from container labels
+	out := buildBridgeMapFromInventory(networks, containers)
+	bridgeMapCache.Lock()
+	bridgeMapCache.at = time.Now()
+	bridgeMapCache.data = cloneBridgeMap(out)
+	bridgeMapCache.Unlock()
+	return out, nil
+}
+
+func buildBridgeMapFromInventory(networks []networkSummary, containers []ContainerRuntimeInfo) map[string]BridgeAppInfo {
+	// Keep project identity separate from per-network runtime. During app
+	// recreation one project can temporarily own both an old and a new network.
 	projectInfo := map[string]BridgeAppInfo{}
+	networkInfo := map[string]BridgeAppInfo{}
 	for _, c := range containers {
 		project := c.Project
 		appid := c.AppID
@@ -236,6 +248,30 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 			info.CreatedAt = c.Created
 		}
 		projectInfo[project] = info
+		for _, network := range c.Networks {
+			networkRuntime := networkInfo[network]
+			if networkRuntime.AppID == "" {
+				networkRuntime.AppID = appid
+				networkRuntime.Project = project
+				networkRuntime.Title = appid
+			}
+			networkRuntime.ContainerCount++
+			if c.State == "running" {
+				networkRuntime.RunningCount++
+				if networkRuntime.StatusText == "" {
+					networkRuntime.StatusText = FormatContainerStarted(c.StartedAt)
+					if networkRuntime.StatusText == "" {
+						networkRuntime.StatusText = FormatDockerStatus(c.Status)
+					}
+				}
+			}
+			if c.StartedAt > 0 && (networkRuntime.CreatedAt == 0 || c.StartedAt < networkRuntime.CreatedAt) {
+				networkRuntime.CreatedAt = c.StartedAt
+			} else if networkRuntime.CreatedAt == 0 && c.Created > 0 {
+				networkRuntime.CreatedAt = c.Created
+			}
+			networkInfo[network] = networkRuntime
+		}
 	}
 
 	out := map[string]BridgeAppInfo{}
@@ -245,17 +281,18 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 			continue
 		}
 		project := n.Labels["com.docker.compose.project"]
-		info := projectInfo[project]
+		info := networkInfo[n.Name]
+		identity := projectInfo[project]
+		if info.AppID == "" {
+			info.AppID = identity.AppID
+			info.Title = identity.Title
+		}
 		if info.Project == "" {
 			info.Project = project
 		}
 		out[bridge] = info
 	}
-	bridgeMapCache.Lock()
-	bridgeMapCache.at = time.Now()
-	bridgeMapCache.data = cloneBridgeMap(out)
-	bridgeMapCache.Unlock()
-	return out, nil
+	return out
 }
 
 func cloneBridgeMap(source map[string]BridgeAppInfo) map[string]BridgeAppInfo {
@@ -305,6 +342,9 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 				info.Project = inspect.Config.Labels["com.docker.compose.project"]
 			}
 			info.NetworkMode = inspect.HostConfig.NetworkMode
+			for network := range inspect.NetworkSettings.Networks {
+				info.Networks = append(info.Networks, network)
+			}
 			info.PID = inspect.State.Pid
 			info.Running = inspect.State.Running
 			if inspect.State.Status != "" {
@@ -347,6 +387,9 @@ type containerInspect struct {
 	HostConfig struct {
 		NetworkMode string `json:"NetworkMode"`
 	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]json.RawMessage `json:"Networks"`
+	} `json:"NetworkSettings"`
 }
 
 type networkSummary struct {

@@ -102,3 +102,22 @@ func TestIsNetwatchApp(t *testing.T) {
 		t.Fatal("loose substring must not match")
 	}
 }
+
+func TestFilterSupersededAppBridges(t *testing.T) {
+	items := []AppBridgeStats{
+		{Bridge: "lzc-br-old", AppID: "app.a", ContainerCount: 0},
+		{Bridge: "lzc-br-current", AppID: "app.a", ContainerCount: 2},
+		{Bridge: "lzc-br-b1", AppID: "app.b", ContainerCount: 1},
+		{Bridge: "lzc-br-b2", AppID: "app.b", ContainerCount: 1},
+		{Bridge: "lzc-br-unknown", ContainerCount: 0},
+	}
+	got := filterSupersededAppBridges(items)
+	if len(got) != 4 {
+		t.Fatalf("filtered bridges = %+v", got)
+	}
+	for _, item := range got {
+		if item.Bridge == "lzc-br-old" {
+			t.Fatalf("superseded bridge was retained: %+v", got)
+		}
+	}
+}

@@ -116,6 +116,45 @@ func TestObserveAppTrafficUsesRunningStateInsteadOfBridgePresence(t *testing.T) 
 	}
 }
 
+func TestObserveAppTrafficGroupsLifecycleByApplication(t *testing.T) {
+	store := newNetworkEventStore(t.TempDir())
+	start := time.Date(2026, 8, 5, 9, 30, 0, 0, time.Local)
+	app := "cloud.lazycat.app.browser"
+	project := "cloudlazycatappbrowser"
+	store.observeAppTraffic([]AppBridgeStats{
+		{Bridge: "lzc-br-old", AppID: app, Project: project, ContainerCount: 0, RunningCount: 0},
+		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 2},
+	}, start, 0)
+
+	// Removing an unused old bridge must not look like an application stop.
+	store.observeAppTraffic([]AppBridgeStats{
+		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 2},
+	}, start.Add(time.Minute), 0)
+	if events := store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10}); len(events) != 0 {
+		t.Fatalf("old bridge removal produced false stop: %+v", events)
+	}
+
+	// The application stops only when its aggregated runtime reaches zero.
+	store.observeAppTraffic([]AppBridgeStats{
+		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 0},
+	}, start.Add(2*time.Minute), 0)
+	events := store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10})
+	if len(events) != 1 || events[0].DedupeKey != "app_lifecycle:app:"+app {
+		t.Fatalf("application stop events = %+v", events)
+	}
+}
+
+func TestObserveAppTrafficBridgeReplacementDoesNotToggleApplication(t *testing.T) {
+	store := newNetworkEventStore(t.TempDir())
+	start := time.Date(2026, 8, 5, 9, 30, 0, 0, time.Local)
+	app := "cloud.lazycat.app.browser"
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-old", AppID: app, ContainerCount: 1, RunningCount: 1}}, start, 0)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-new", AppID: app, ContainerCount: 1, RunningCount: 1}}, start.Add(time.Minute), 0)
+	if events := store.query(NetworkEventQuery{Limit: 10}); len(events) != 0 {
+		t.Fatalf("bridge replacement produced lifecycle events: %+v", events)
+	}
+}
+
 func TestNetworkEventsHideLegacyLifecycleTimestamps(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	store.append(NetworkEvent{Kind: "app_bridge_appeared", Title: "legacy bridge"})

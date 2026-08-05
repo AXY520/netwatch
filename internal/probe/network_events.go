@@ -51,15 +51,17 @@ type networkEventStore struct {
 	trafficBaselineReady bool
 	trafficSampledAt     time.Time
 	trafficCounters      map[string]AppBridgeStats
+	trafficAppRuntime    map[string]AppBridgeStats
 	trafficMetadataAt    time.Time
 	trafficMetadata      map[string]AppBridgeStats
 }
 
 func newNetworkEventStore(dataDir string) *networkEventStore {
 	store := &networkEventStore{
-		path:            filepath.Join(dataDir, "network_events.json"),
-		trafficCounters: make(map[string]AppBridgeStats),
-		trafficMetadata: make(map[string]AppBridgeStats),
+		path:              filepath.Join(dataDir, "network_events.json"),
+		trafficCounters:   make(map[string]AppBridgeStats),
+		trafficAppRuntime: make(map[string]AppBridgeStats),
+		trafficMetadata:   make(map[string]AppBridgeStats),
 	}
 	if body, err := os.ReadFile(store.path); err == nil {
 		_ = json.Unmarshal(body, &store.events)
@@ -166,7 +168,11 @@ func networkEventDisplayable(event NetworkEvent) bool {
 	if event.Kind != "app_enabled" && event.Kind != "app_disabled" {
 		return true
 	}
-	return event.Details != nil && event.Details["lifecycle_source"] == "container_runtime_v2"
+	if event.Details == nil {
+		return false
+	}
+	source := event.Details["lifecycle_source"]
+	return source == "container_runtime_v2" || source == "container_runtime_v3"
 }
 
 func parseEventTime(value string) (time.Time, bool) {
@@ -359,6 +365,42 @@ func appRuntimeKnown(item AppBridgeStats) bool {
 	return item.ContainerCount > 0 || item.RunningCount > 0
 }
 
+func aggregateAppTrafficRuntime(stats []AppBridgeStats) map[string]AppBridgeStats {
+	apps := make(map[string]AppBridgeStats)
+	for _, item := range stats {
+		key := appTrafficIdentityKey(item)
+		current, exists := apps[key]
+		if !exists {
+			apps[key] = item
+			continue
+		}
+		if current.AppID == "" {
+			current.AppID = item.AppID
+		}
+		if current.AppTitle == "" {
+			current.AppTitle = item.AppTitle
+		}
+		if current.Project == "" {
+			current.Project = item.Project
+		}
+		if current.Icon == "" {
+			current.Icon = item.Icon
+		}
+		if item.ContainerCount > current.ContainerCount {
+			current.ContainerCount = item.ContainerCount
+		}
+		if item.RunningCount > current.RunningCount {
+			current.RunningCount = item.RunningCount
+			current.Bridge = item.Bridge
+		}
+		if item.CreatedAt > 0 && (current.CreatedAt == 0 || item.CreatedAt < current.CreatedAt) {
+			current.CreatedAt = item.CreatedAt
+		}
+		apps[key] = current
+	}
+	return apps
+}
+
 func appEnabledEventTimestamp(item AppBridgeStats, previousAt, observedAt time.Time) string {
 	if item.CreatedAt <= 0 {
 		return observedAt.Format(time.DateTime)
@@ -375,37 +417,41 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 	for _, item := range stats {
 		current[item.Bridge] = item
 	}
+	currentApps := aggregateAppTrafficRuntime(stats)
 	s.mu.Lock()
 	if !s.trafficBaselineReady {
 		s.trafficBaselineReady = true
 		s.trafficSampledAt = now
 		s.trafficCounters = current
+		s.trafficAppRuntime = currentApps
 		s.mu.Unlock()
 		return
 	}
 	previous := s.trafficCounters
+	previousApps := s.trafficAppRuntime
 	previousAt := s.trafficSampledAt
 	s.trafficCounters = current
+	s.trafficAppRuntime = currentApps
 	s.trafficSampledAt = now
 	s.mu.Unlock()
 
-	for bridge, item := range current {
-		before, existed := previous[bridge]
+	for key, item := range currentApps {
+		before, existed := previousApps[key]
 		if appRuntimeKnown(item) && item.RunningCount > 0 && (!existed || (appRuntimeKnown(before) && before.RunningCount == 0)) {
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: appEnabledEventTimestamp(item, previousAt, now), Kind: "app_enabled", Severity: "info", Source: "app_traffic_observer", Title: "应用已启用",
-				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
+				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v3"}, DedupeKey: "app_lifecycle:" + key,
 			})
 		}
 	}
-	for bridge, item := range previous {
-		after, exists := current[bridge]
+	for key, item := range previousApps {
+		after, exists := currentApps[key]
 		if appRuntimeKnown(item) && item.RunningCount > 0 && (!exists || (appRuntimeKnown(after) && after.RunningCount == 0)) {
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: now.Format(time.DateTime), Kind: "app_disabled", Severity: "warning", Source: "app_traffic_observer", Title: "应用已停用",
-				Summary: appName, Details: map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v2"}, DedupeKey: "app_lifecycle:" + bridge,
+				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v3"}, DedupeKey: "app_lifecycle:" + key,
 			})
 		}
 	}

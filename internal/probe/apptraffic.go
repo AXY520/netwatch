@@ -252,6 +252,35 @@ func isExcludedApp(appID, title string) bool {
 	return false
 }
 
+func appTrafficIdentityKey(item AppBridgeStats) string {
+	if value := strings.TrimSpace(item.AppID); value != "" {
+		return "app:" + value
+	}
+	if value := strings.TrimSpace(item.Project); value != "" {
+		return "project:" + value
+	}
+	return "bridge:" + strings.TrimSpace(item.Bridge)
+}
+
+func filterSupersededAppBridges(items []AppBridgeStats) []AppBridgeStats {
+	hasAttachedBridge := make(map[string]bool)
+	for _, item := range items {
+		key := appTrafficIdentityKey(item)
+		if !strings.HasPrefix(key, "bridge:") && item.ContainerCount > 0 {
+			hasAttachedBridge[key] = true
+		}
+	}
+	filtered := make([]AppBridgeStats, 0, len(items))
+	for _, item := range items {
+		key := appTrafficIdentityKey(item)
+		if hasAttachedBridge[key] && item.ContainerCount == 0 {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
 func CollectAppTraffic() AppTrafficSnapshot {
 	sampledAt := localTimestamp()
 	snap := AppTrafficSnapshot{
@@ -370,6 +399,7 @@ func CollectAppTraffic() AppTrafficSnapshot {
 		}
 		snap.Bridges = append(snap.Bridges, stats)
 	}
+	snap.Bridges = filterSupersededAppBridges(snap.Bridges)
 
 	// 按总流量降序，便于前端排序展示
 	sort.Slice(snap.Bridges, func(i, j int) bool {
