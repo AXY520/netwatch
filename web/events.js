@@ -2,6 +2,7 @@
     var timeline = document.getElementById('events-timeline');
     var statusEl = document.getElementById('events-status');
     var refreshBtn = document.getElementById('events-refresh-btn');
+    var searchInput = document.getElementById('events-search-input');
     var severityFilter = document.getElementById('events-severity-filter');
     var kindFilter = document.getElementById('events-kind-filter');
     var rangeFilter = document.getElementById('events-range-filter');
@@ -41,6 +42,18 @@
         return translated === key ? String(source || '-') : translated;
     }
 
+    function mutationKindLabel(kind) {
+        var key = 'network_mutation_kind_' + String(kind || 'unknown');
+        var translated = i18n(key);
+        return translated === key ? String(kind || '-') : translated;
+    }
+
+    function mutationStateLabel(state) {
+        var key = 'network_mutation_state_' + String(state || 'unknown');
+        var translated = i18n(key);
+        return translated === key ? String(state || '-') : translated;
+    }
+
     function displayEvent(event) {
         var out = Object.assign({}, event || {});
         if (out.kind === 'app_bridge_appeared') out.kind = 'app_enabled';
@@ -50,6 +63,13 @@
             if (/^lzc-br-/i.test(String(out.summary || '').trim())) {
                 out.summary = i18n('unknown_app');
             }
+        }
+        if (/^network_mutation_/.test(String(out.kind || ''))) {
+            var details = out.details || {};
+            var mutationKind = details.mutation_kind || '';
+            var mutationState = details.state || String(out.kind).replace(/^network_mutation_/, '');
+            out.title = i18n('event_network_mutation_title') + mutationKindLabel(mutationKind);
+            out.summary = [details.target || '', mutationStateLabel(mutationState)].filter(Boolean).join(' / ');
         }
         return out;
     }
@@ -92,6 +112,34 @@
         return '';
     }
 
+    function searchableEventText(rawEvent) {
+        var event = displayEvent(rawEvent);
+        return [
+            event.title,
+            event.summary,
+            eventKindLabel(event.kind),
+            sourceLabel(event.source),
+            event.severity,
+            JSON.stringify(event.details || {})
+        ].join(' ').toLocaleLowerCase();
+    }
+
+    function filteredEvents() {
+        var terms = String(searchInput && searchInput.value || '').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        if (!terms.length) return latestEvents;
+        return latestEvents.filter(function (event) {
+            var haystack = searchableEventText(event);
+            return terms.every(function (term) { return haystack.indexOf(term) >= 0; });
+        });
+    }
+
+    function updateEventCount(visibleCount) {
+        var text = visibleCount === latestEvents.length
+            ? String(latestEvents.length)
+            : visibleCount + ' / ' + latestEvents.length;
+        statusEl.textContent = text + ' ' + i18n('events_count_unit');
+    }
+
     function renderEvents(events, icons) {
         icons = icons || {};
         if (!events || events.length === 0) {
@@ -117,6 +165,12 @@
                 '</div>' +
             '</article>';
         }).join('');
+    }
+
+    function renderLatestEvents() {
+        var events = filteredEvents();
+        renderEvents(events, cachedIcons);
+        updateEventCount(events.length);
     }
 
     function eventSignature(events) {
@@ -147,14 +201,14 @@
             var signature = eventSignature(latestEvents);
             if (forceRender || signature !== lastEventSignature) {
                 lastEventSignature = signature;
-                renderEvents(latestEvents, cachedIcons);
+                renderLatestEvents();
             }
-            statusEl.textContent = latestEvents.length + ' ' + i18n('events_count_unit');
+            updateEventCount(filteredEvents().length);
             trafficPromise.then(function (trafficData) {
                 if (sequence !== loadSequence || !trafficData) return;
                 cachedIcons = appIconMap(trafficData);
                 iconsLoaded = true;
-                renderEvents(latestEvents, cachedIcons);
+                renderLatestEvents();
             });
         } catch (error) {
             if (!silent) {
@@ -170,6 +224,7 @@
     severityFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
     kindFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
     rangeFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
+    searchInput.addEventListener('input', renderLatestEvents);
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) loadEvents(true, false);
     });

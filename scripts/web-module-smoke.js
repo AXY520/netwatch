@@ -10,6 +10,8 @@ const elementsByID = new Map();
 let activeTab = 'ip';
 const documentStub = {
     activeElement: null,
+    hidden: false,
+    addEventListener() {},
     getElementById: (id) => elementsByID.get(id) || null,
     querySelector: (selector) => {
         if (selector === '.network-config-tab.active') return { dataset: { tab: activeTab } };
@@ -142,6 +144,75 @@ async function main() {
     global.__app.setHostBridgeCreateEnabled(false);
     global.__app.setHostDNSOutput('');
     global.__app.pinnedNetworkConfigDevice = pinnedNetworkConfigDevice;
+
+    const listeners = {};
+    function eventElement(value = '') {
+        return {
+            value,
+            disabled: false,
+            textContent: '',
+            innerHTML: '',
+            options: [],
+            addEventListener(name, handler) { listeners[this.id + ':' + name] = handler; },
+            replaceChildren(fragment) { this.options = fragment.children; }
+        };
+    }
+    const eventIDs = {
+        'events-timeline': eventElement(),
+        'events-status': eventElement(),
+        'events-refresh-btn': eventElement(),
+        'events-search-input': eventElement(),
+        'events-severity-filter': eventElement(),
+        'events-kind-filter': eventElement(),
+        'events-range-filter': eventElement('all')
+    };
+    Object.entries(eventIDs).forEach(([id, element]) => {
+        element.id = id;
+        elementsByID.set(id, element);
+    });
+    const translations = {
+        event_network_mutation_title: '网络配置操作：',
+        network_mutation_kind_ip: '网卡配置',
+        network_mutation_state_rolling_back: '正在回滚',
+        event_kind_network_mutation_rolling_back: '网络配置正在回滚',
+        event_source_network_control: '网络控制',
+        events_info: '信息',
+        events_empty: '没有事件',
+        events_count_unit: '条事件',
+        events_all_kinds: '全部类型'
+    };
+    global.__ = (key) => translations[key] || key;
+    global.addEventListener = () => {};
+    global.setInterval = () => 1;
+    global.clearInterval = () => {};
+    global.NetwatchAPI = {
+        get: async (path) => path.includes('/app-traffic') ? { bridges: [] } : {
+            kinds: ['network_mutation_rolling_back'],
+            events: [{
+                id: 'evt-1',
+                timestamp: '2026-08-05 12:00:00',
+                kind: 'network_mutation_rolling_back',
+                severity: 'info',
+                source: 'network_control',
+                title: '网络配置操作：ip',
+                summary: 'wlp4s0 / rolling_back',
+                details: { mutation_kind: 'ip', target: 'wlp4s0', state: 'rolling_back' }
+            }]
+        }
+    };
+    load('web/events.js');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.match(eventIDs['events-timeline'].innerHTML, /网络配置操作：网卡配置/);
+    assert.match(eventIDs['events-timeline'].innerHTML, /wlp4s0 \/ 正在回滚/);
+    assert.doesNotMatch(eventIDs['events-timeline'].innerHTML, />rolling_back</);
+
+    eventIDs['events-search-input'].value = '回滚';
+    listeners['events-search-input:input']();
+    assert.match(eventIDs['events-timeline'].innerHTML, /wlp4s0/);
+    eventIDs['events-search-input'].value = '不存在的事件';
+    listeners['events-search-input:input']();
+    assert.match(eventIDs['events-timeline'].innerHTML, /没有事件/);
 }
 
 main().catch((error) => {
