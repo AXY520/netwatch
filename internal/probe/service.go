@@ -50,6 +50,8 @@ type Service struct {
 	nicDone               chan struct{}
 	appTrafficStop        chan struct{}
 	appTrafficDone        chan struct{}
+	appLifecycleStop      chan struct{}
+	appLifecycleDone      chan struct{}
 	backgroundMonitorStop chan struct{}
 	backgroundMonitorDone chan struct{}
 	lanInterfaceStop      chan struct{}
@@ -88,6 +90,8 @@ func NewService(cfg Config) *Service {
 		events:                newNetworkEventStore(cfg.DataDir),
 		appTrafficStop:        make(chan struct{}),
 		appTrafficDone:        make(chan struct{}),
+		appLifecycleStop:      make(chan struct{}),
+		appLifecycleDone:      make(chan struct{}),
 		backgroundMonitorStop: make(chan struct{}),
 		backgroundMonitorDone: make(chan struct{}),
 		lanInterfaceStop:      make(chan struct{}),
@@ -108,6 +112,7 @@ func NewService(cfg Config) *Service {
 	}
 	s.nicStats.start(s.nicStop, s.nicDone)
 	s.startAppTrafficSampling()
+	s.startAppLifecycleObserver()
 	s.startBackgroundMonitor()
 	s.startLANInterfaceMonitor()
 	s.startScheduledNotifier()
@@ -157,10 +162,12 @@ func (s *Service) Close() {
 		s.closeCancel()
 		close(s.nicStop)
 		close(s.appTrafficStop)
+		close(s.appLifecycleStop)
 		close(s.backgroundMonitorStop)
 		close(s.lanInterfaceStop)
 		<-s.nicDone
 		<-s.appTrafficDone
+		<-s.appLifecycleDone
 		<-s.backgroundMonitorDone
 		<-s.lanInterfaceDone
 	})

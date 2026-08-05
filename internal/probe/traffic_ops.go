@@ -7,6 +7,8 @@ import (
 	"netwatch/internal/logger"
 )
 
+const appLifecycleObservationInterval = 5 * time.Second
+
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -86,6 +88,23 @@ func (s *Service) startAppTrafficSampling() {
 			case <-s.appTrafficStop:
 				return
 			case <-time.After(sleep):
+			}
+		}
+	}()
+}
+
+func (s *Service) startAppLifecycleObserver() {
+	go func() {
+		defer close(s.appLifecycleDone)
+		ticker := time.NewTicker(appLifecycleObservationInterval)
+		defer ticker.Stop()
+		s.recordAppTrafficEvents()
+		for {
+			select {
+			case <-s.appLifecycleStop:
+				return
+			case <-ticker.C:
+				s.recordAppTrafficEvents()
 			}
 		}
 	}()

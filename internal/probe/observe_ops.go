@@ -332,7 +332,6 @@ func (s *Service) refreshFast(ctx context.Context) {
 	s.mu.Unlock()
 
 	s.recordSummaryEvents(previousSummary, finalSummary)
-	s.recordAppTrafficEvents()
 	s.recordTimeseries(finalSummary)
 	s.alert.check(finalSummary)
 	s.broadcast(finalSummary)

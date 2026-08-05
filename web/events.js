@@ -7,6 +7,11 @@
     var rangeFilter = document.getElementById('events-range-filter');
     var i18n = function (key) { return typeof window.__ === 'function' ? window.__(key) : key; };
     var loadSequence = 0;
+    var eventPoller = null;
+    var lastEventSignature = '';
+    var latestEvents = [];
+    var cachedIcons = {};
+    var iconsLoaded = false;
 
     function eventGet(path) {
         if (window.NetwatchAPI) return window.NetwatchAPI.get(path);
@@ -114,36 +119,65 @@
         }).join('');
     }
 
-    async function loadEvents() {
+    function eventSignature(events) {
+        return (events || []).map(function (event) {
+            return [event.id, event.timestamp, event.count, event.kind].join(':');
+        }).join('|');
+    }
+
+    async function loadEvents(silent, forceRender) {
+        silent = !!silent;
+        forceRender = !!forceRender;
         var sequence = ++loadSequence;
-        refreshBtn.disabled = true;
-        statusEl.textContent = i18n('loading');
+        if (!silent) {
+            refreshBtn.disabled = true;
+            statusEl.textContent = i18n('loading');
+        }
         var params = new URLSearchParams({ limit: '300' });
         if (severityFilter.value) params.set('severity', severityFilter.value);
         if (kindFilter.value) params.set('kind', kindFilter.value);
         var since = rangeStart(rangeFilter.value);
         if (since) params.set('since', since);
-        var trafficPromise = eventGet('/api/v1/network/app-traffic').catch(function () { return null; });
+        var trafficPromise = iconsLoaded ? Promise.resolve(null) : eventGet('/api/v1/network/app-traffic').catch(function () { return null; });
         try {
             var data = await eventGet('/api/v1/events/history?' + params.toString());
             if (sequence !== loadSequence) return;
             renderKinds(data.kinds || []);
-            renderEvents(data.events || [], {});
-            statusEl.textContent = (data.events || []).length + ' ' + i18n('events_count_unit');
+            latestEvents = data.events || [];
+            var signature = eventSignature(latestEvents);
+            if (forceRender || signature !== lastEventSignature) {
+                lastEventSignature = signature;
+                renderEvents(latestEvents, cachedIcons);
+            }
+            statusEl.textContent = latestEvents.length + ' ' + i18n('events_count_unit');
             trafficPromise.then(function (trafficData) {
-                if (sequence === loadSequence && trafficData) renderEvents(data.events || [], appIconMap(trafficData));
+                if (sequence !== loadSequence || !trafficData) return;
+                cachedIcons = appIconMap(trafficData);
+                iconsLoaded = true;
+                renderEvents(latestEvents, cachedIcons);
             });
         } catch (error) {
-            timeline.innerHTML = '<div class="events-empty events-error"><strong>' + NetwatchShared.escapeHtml(i18n('load_failed')) + '</strong><span>' + NetwatchShared.escapeHtml(error.message) + '</span></div>';
-            statusEl.textContent = i18n('load_failed');
+            if (!silent) {
+                timeline.innerHTML = '<div class="events-empty events-error"><strong>' + NetwatchShared.escapeHtml(i18n('load_failed')) + '</strong><span>' + NetwatchShared.escapeHtml(error.message) + '</span></div>';
+                statusEl.textContent = i18n('load_failed');
+            }
         } finally {
-            refreshBtn.disabled = false;
+            if (!silent) refreshBtn.disabled = false;
         }
     }
 
-    refreshBtn.addEventListener('click', loadEvents);
-    severityFilter.addEventListener('change', loadEvents);
-    kindFilter.addEventListener('change', loadEvents);
-    rangeFilter.addEventListener('change', loadEvents);
-    loadEvents();
+    refreshBtn.addEventListener('click', function () { loadEvents(false, true); });
+    severityFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
+    kindFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
+    rangeFilter.addEventListener('change', function () { lastEventSignature = ''; loadEvents(false, true); });
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) loadEvents(true, false);
+    });
+    eventPoller = setInterval(function () {
+        if (!document.hidden) loadEvents(true, false);
+    }, 5000);
+    window.addEventListener('pagehide', function () {
+        if (eventPoller) clearInterval(eventPoller);
+    }, { once: true });
+    loadEvents(false, true);
 })();
