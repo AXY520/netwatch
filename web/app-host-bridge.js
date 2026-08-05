@@ -596,8 +596,9 @@ function renderNetworkConfigDeviceOptions(opts) {
     }
     var pin = getPinnedNetworkConfigDevice();
     var prev = opts.preferredDevice || e.device.value || pin;
-    // Pending confirmation must always keep the target NIC visible/selected.
-    if (pin && !devices.some(function (d) { return d && d.device === pin; })) {
+    // Pending devices may remain visible for IP/DNS inspection, but must never
+    // bypass the bridge tab's wired-interface eligibility filter.
+    if (tab !== 'bridge' && pin && !devices.some(function (d) { return d && d.device === pin; })) {
         devices = devices.concat([{ device: pin, type: 'pending', connection: '' }]);
     }
     e.device.__devices = devices;

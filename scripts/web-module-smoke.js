@@ -132,6 +132,18 @@ async function main() {
     assert.equal(deviceSelect.disabled, false, 'pending transaction must keep shared device selector enabled');
     assert.equal(elementsByID.get('network-config-method').disabled, true, 'pending transaction must lock mutation fields');
 
+    global.__app.state.networkConfigPendingData = { pending: true, device: 'wlp4s0' };
+    global.__app.networkMutationCoordinator.setPending('ip', global.__app.state.networkConfigPendingData);
+    deviceSelect.__allDevices = [
+        { device: 'eth0', type: 'ethernet', connection: 'Wired', ipv4_method: 'auto' },
+        { device: 'wlp4s0', type: 'wifi', connection: 'Wi-Fi', ipv4_method: 'auto' }
+    ];
+    activeTab = 'bridge';
+    global.__app.renderNetworkConfigDeviceOptions();
+    assert.deepEqual(deviceSelect.__devices.map((device) => device.device), ['eth0'], 'bridge tab must not restore pending Wi-Fi devices');
+    assert.equal(deviceSelect.options.some((option) => option.value === 'wlp4s0'), false, 'bridge options must not contain wlp4s0 pending');
+
+    activeTab = 'ip';
     global.__app.networkMutationCoordinator.setPending('ip', null);
     global.__app.state.networkConfigPendingData = null;
     deviceSelect.__allDevices = [];
