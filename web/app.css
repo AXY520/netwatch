@@ -4434,15 +4434,16 @@ button.icon-button,
 .dns-diag-window {
     width: min(1120px, calc(100vw - 2rem));
     max-width: 1120px;
-    height: min(86vh, 820px);
-    max-height: 820px;
+    height: auto;
+    max-height: min(86vh, 820px);
+    max-height: min(86dvh, 820px);
 }
 .dns-diag-window.active {
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
-.dns-diag-window > .window-head { flex: 0 0 auto; }
+.dns-diag-window > .window-head { flex: 0 0 auto; margin-bottom: 0.75rem; }
 .dns-diag-window-body {
     flex: 1 1 auto;
     min-height: 0;
@@ -4634,7 +4635,7 @@ button.icon-button,
     .dns-diag-results--compare { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
-    .dns-diag-window { width: calc(100vw - 1rem); height: min(92dvh, 860px); }
+    .dns-diag-window { width: calc(100vw - 1rem); height: auto; max-height: 92dvh; }
     .dns-diag-window-body { padding: 0.65rem; }
     .dns-resolver-inventory, .dns-diag-toolbar { grid-template-columns: 1fr; }
     .dns-inventory-heading { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
