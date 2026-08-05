@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,14 @@ const socketPath = "/var/run/docker.sock"
 
 var client = &http.Client{
 	Timeout: 3 * time.Second,
+	Transport: &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			return net.DialTimeout("unix", socketPath, 1*time.Second)
+		},
+	},
+}
+
+var eventClient = &http.Client{
 	Transport: &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 1*time.Second)
@@ -147,12 +156,60 @@ type BridgeAppInfo struct {
 	CreatedAt      int64  // earliest container start timestamp, creation time as fallback
 }
 
-const bridgeMapCacheTTL = 5 * time.Second
+const bridgeMapCacheTTL = time.Minute
 
 var bridgeMapCache struct {
 	sync.Mutex
 	at   time.Time
 	data map[string]BridgeAppInfo
+}
+
+// InvalidateBridgeMapCache forces the next topology read to query Docker.
+// Docker event consumers call this before rebuilding application state.
+func InvalidateBridgeMapCache() {
+	bridgeMapCache.Lock()
+	bridgeMapCache.at = time.Time{}
+	bridgeMapCache.data = nil
+	bridgeMapCache.Unlock()
+}
+
+// Event is the minimal Docker event payload needed to detect topology changes.
+type Event struct {
+	Type   string `json:"Type"`
+	Action string `json:"Action"`
+	Time   int64  `json:"time"`
+}
+
+// WatchEvents blocks while streaming container and network events from Docker.
+// It returns when the context is cancelled or the stream disconnects.
+func WatchEvents(ctx context.Context, onEvent func(Event)) error {
+	filters := `{"type":["container","network"]}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/events?filters="+url.QueryEscape(filters), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := eventClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("docker events: %s", resp.Status)
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var event Event
+		if err := decoder.Decode(&event); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		if onEvent != nil {
+			onEvent(event)
+		}
+	}
 }
 
 // ContainerRuntimeInfo is the small runtime slice netwatch needs from Docker.

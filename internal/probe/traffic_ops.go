@@ -1,13 +1,19 @@
 package probe
 
 import (
+	"context"
 	"strings"
 	"time"
 
+	"netwatch/internal/dockerlzc"
 	"netwatch/internal/logger"
 )
 
-const appLifecycleObservationInterval = 5 * time.Second
+const (
+	appLifecycleEventDebounce     = 2 * time.Second
+	appLifecycleCalibrationPeriod = time.Minute
+	appTrafficCounterPeriod       = 5 * time.Second
+)
 
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
 	s.mu.RLock()
@@ -96,18 +102,105 @@ func (s *Service) startAppTrafficSampling() {
 func (s *Service) startAppLifecycleObserver() {
 	go func() {
 		defer close(s.appLifecycleDone)
-		ticker := time.NewTicker(appLifecycleObservationInterval)
-		defer ticker.Stop()
+		ctx, cancel := context.WithCancel(s.backgroundCtx())
+		defer cancel()
+		dockerChanges := make(chan struct{}, 1)
+		go watchDockerLifecycleEvents(ctx, dockerChanges)
+
+		calibration := time.NewTicker(appLifecycleCalibrationPeriod)
+		defer calibration.Stop()
+		trafficCounters := time.NewTicker(appTrafficCounterPeriod)
+		defer trafficCounters.Stop()
+		var debounce *time.Timer
+		var debounceC <-chan time.Time
+		scheduleObservation := func() {
+			if debounce == nil {
+				debounce = time.NewTimer(appLifecycleEventDebounce)
+			} else {
+				if !debounce.Stop() {
+					select {
+					case <-debounce.C:
+					default:
+					}
+				}
+				debounce.Reset(appLifecycleEventDebounce)
+			}
+			debounceC = debounce.C
+		}
+
+		dockerlzc.InvalidateBridgeMapCache()
 		s.recordAppTrafficEvents()
 		for {
 			select {
 			case <-s.appLifecycleStop:
+				if debounce != nil {
+					debounce.Stop()
+				}
 				return
-			case <-ticker.C:
+			case <-dockerChanges:
+				scheduleObservation()
+			case <-debounceC:
+				debounceC = nil
+				dockerlzc.InvalidateBridgeMapCache()
+				s.recordAppTrafficEvents()
+			case <-calibration.C:
+				if debounceC == nil {
+					dockerlzc.InvalidateBridgeMapCache()
+					s.recordAppTrafficEvents()
+				}
+			case <-trafficCounters.C:
 				s.recordAppTrafficEvents()
 			}
 		}
 	}()
+}
+
+func watchDockerLifecycleEvents(ctx context.Context, changes chan<- struct{}) {
+	backoff := time.Second
+	for ctx.Err() == nil {
+		err := dockerlzc.WatchEvents(ctx, func(event dockerlzc.Event) {
+			if !dockerLifecycleEventRelevant(event) {
+				return
+			}
+			select {
+			case changes <- struct{}{}:
+			default:
+			}
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		logger.Warn("docker event stream disconnected: %v", err)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+}
+
+func dockerLifecycleEventRelevant(event dockerlzc.Event) bool {
+	switch event.Type {
+	case "network":
+		switch event.Action {
+		case "create", "connect", "disconnect", "destroy":
+			return true
+		}
+	case "container":
+		switch event.Action {
+		case "create", "start", "stop", "die", "destroy", "restart", "pause", "unpause", "rename":
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) getTrafficSamplingConfig() (enabled bool, interval int, perApp map[string]int, persistent []string) {

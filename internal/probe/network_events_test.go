@@ -1,9 +1,29 @@
 package probe
 
 import (
+	"netwatch/internal/dockerlzc"
 	"testing"
 	"time"
 )
+
+func TestDockerLifecycleEventRelevant(t *testing.T) {
+	tests := []struct {
+		event dockerlzc.Event
+		want  bool
+	}{
+		{event: dockerlzc.Event{Type: "container", Action: "start"}, want: true},
+		{event: dockerlzc.Event{Type: "container", Action: "die"}, want: true},
+		{event: dockerlzc.Event{Type: "network", Action: "connect"}, want: true},
+		{event: dockerlzc.Event{Type: "container", Action: "exec_start"}, want: false},
+		{event: dockerlzc.Event{Type: "container", Action: "health_status: healthy"}, want: false},
+		{event: dockerlzc.Event{Type: "volume", Action: "create"}, want: false},
+	}
+	for _, test := range tests {
+		if got := dockerLifecycleEventRelevant(test.event); got != test.want {
+			t.Errorf("dockerLifecycleEventRelevant(%+v) = %v, want %v", test.event, got, test.want)
+		}
+	}
+}
 
 func TestNetworkEventStorePersistsAndDeduplicates(t *testing.T) {
 	dir := t.TempDir()
