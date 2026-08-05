@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -40,6 +41,9 @@ func (s *Service) GetSpeedConfig() SpeedConfig {
 func (s *Service) pushBroadbandHistory(result BroadbandSpeedResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if result.ID == "" {
+		result.ID = fmt.Sprintf("broadband-%d", time.Now().UnixNano())
+	}
 	s.broadbandHistory = append([]BroadbandSpeedResult{result}, s.broadbandHistory...)
 	if len(s.broadbandHistory) > maxHistoryItems {
 		s.broadbandHistory = s.broadbandHistory[:maxHistoryItems]
@@ -50,11 +54,43 @@ func (s *Service) pushBroadbandHistory(result BroadbandSpeedResult) {
 func (s *Service) pushLocalTransferHistory(result LocalTransferResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if result.ID == "" {
+		result.ID = fmt.Sprintf("local-%d", time.Now().UnixNano())
+	}
 	s.localTransferHistory = append([]LocalTransferResult{result}, s.localTransferHistory...)
 	if len(s.localTransferHistory) > maxHistoryItems {
 		s.localTransferHistory = s.localTransferHistory[:maxHistoryItems]
 	}
 	s.saveLocalTransferHistory()
+}
+
+func (s *Service) UpdateSpeedHistoryNote(kind, id, note string) bool {
+	id = strings.TrimSpace(id)
+	note = strings.TrimSpace(note)
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch kind {
+	case "broadband":
+		for i := range s.broadbandHistory {
+			if s.broadbandHistory[i].ID == id {
+				s.broadbandHistory[i].Note = note
+				s.saveBroadbandHistory()
+				return true
+			}
+		}
+	case "local":
+		for i := range s.localTransferHistory {
+			if s.localTransferHistory[i].ID == id {
+				s.localTransferHistory[i].Note = note
+				s.saveLocalTransferHistory()
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Service) startAppTrafficSampling() {

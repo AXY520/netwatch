@@ -317,6 +317,38 @@ func TestRecordLocalTransferResultClampsOutliers(t *testing.T) {
 	}
 }
 
+func TestHandleSpeedHistoryNoteUpdatesPersistedItem(t *testing.T) {
+	handler := newTestHandler(t)
+	handler.service.RecordLocalTransferResult(probe.LocalTransferResult{DownloadMbps: 100, UploadMbps: 50})
+	history := handler.service.GetLocalTransferHistory()
+	if len(history) != 1 || history[0].ID == "" {
+		t.Fatalf("history = %+v", history)
+	}
+
+	payload := strings.NewReader(`{"kind":"local","id":"` + history[0].ID + `","note":"办公室 Wi-Fi"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/history/note", payload)
+	rec := httptest.NewRecorder()
+	handler.handleSpeedHistoryNote(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	updated := handler.service.GetLocalTransferHistory()
+	if updated[0].Note != "办公室 Wi-Fi" {
+		t.Fatalf("updated history = %+v", updated)
+	}
+}
+
+func TestHandleSpeedHistoryNoteRejectsLongNote(t *testing.T) {
+	handler := newTestHandler(t)
+	payload := strings.NewReader(`{"kind":"local","id":"missing","note":"` + strings.Repeat("a", 201) + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/history/note", payload)
+	rec := httptest.NewRecorder()
+	handler.handleSpeedHistoryNote(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	service := probe.NewService(testConfig(t))

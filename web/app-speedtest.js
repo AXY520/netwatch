@@ -41,14 +41,62 @@ async function loadSpeedHistory() {
 
 function renderBroadbandHistory(items) {
     els.broadbandHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div><div style="text-align: right"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small><br><small>' + i18n('total_duration') + ' ' + window.__app.formatDurationMS(item.stage_durations && item.stage_durations.total_ms) + '</small></div></div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div><div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small><small>' + i18n('total_duration') + ' ' + window.__app.formatDurationMS(item.stage_durations && item.stage_durations.total_ms) + '</small></div></div>' + historyNoteHTML('broadband', item) + '</div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
 function renderTransferHistory(items) {
     els.transferHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + ' \u00B7 ' + i18n('total') + ' ' + window.__app.formatMB(item.payload_mb || ((item.download_mb || 0) + (item.upload_mb || 0))) + '</small></div><div style="text-align: right"><small>RTT ' + (item.rtt_min_ms || 0) + '/' + (item.rtt_avg_ms || item.round_trip_latency_ms || 0) + '/' + (item.rtt_max_ms || 0) + ' ms</small><br><small>' + i18n('duration') + ' ' + window.__app.formatDurationMS(item.duration_ms) + '</small></div></div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + ' \u00B7 ' + i18n('total') + ' ' + window.__app.formatMB(item.payload_mb || ((item.download_mb || 0) + (item.upload_mb || 0))) + '</small></div><div class="history-item-metrics"><small>RTT ' + (item.rtt_min_ms || 0) + '/' + (item.rtt_avg_ms || item.round_trip_latency_ms || 0) + '/' + (item.rtt_max_ms || 0) + ' ms</small><small>' + i18n('duration') + ' ' + window.__app.formatDurationMS(item.duration_ms) + '</small></div></div>' + historyNoteHTML('local', item) + '</div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
+}
+
+function historyNoteHTML(kind, item) {
+    var note = String(item.note || '');
+    return '<div class="history-note" data-kind="' + kind + '" data-id="' + NetwatchShared.escapeHtml(item.id || '') + '"><span class="history-note-text' + (note ? '' : ' placeholder') + '">' + NetwatchShared.escapeHtml(note || i18n('speed_history_add_note')) + '</span><button type="button" class="history-note-edit" data-note="' + NetwatchShared.escapeHtml(note) + '">' + i18n('speed_history_note') + '</button></div>';
+}
+
+async function saveSpeedHistoryNote(kind, id, note) {
+    var payload = { kind: kind, id: id, note: note };
+    if (window.NetwatchAPI) return window.NetwatchAPI.post('/api/v1/speed/history/note', payload);
+    var response = await fetch('/api/v1/speed/history/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    var data = await response.json().catch(function () { return {}; });
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    return data;
+}
+
+function bindSpeedHistoryNotes() {
+    [els.broadbandHistory, els.transferHistory].forEach(function (container) {
+        if (!container || container.dataset.noteBound) return;
+        container.dataset.noteBound = '1';
+        container.addEventListener('click', function (event) {
+            var edit = event.target.closest && event.target.closest('.history-note-edit');
+            if (!edit) return;
+            var row = edit.closest('.history-note');
+            if (!row) return;
+            var note = edit.dataset.note || '';
+            row.innerHTML = '<input class="history-note-input" maxlength="200" value="' + NetwatchShared.escapeHtml(note) + '" placeholder="' + NetwatchShared.escapeHtml(i18n('speed_history_note_placeholder')) + '"><button type="button" class="history-note-save">' + i18n('save_btn') + '</button><button type="button" class="history-note-cancel">' + i18n('close_btn') + '</button>';
+            var input = row.querySelector('.history-note-input');
+            input.focus();
+        });
+        container.addEventListener('click', async function (event) {
+            var row = event.target.closest && event.target.closest('.history-note');
+            if (!row) return;
+            if (event.target.closest('.history-note-cancel')) {
+                await loadSpeedHistory();
+                return;
+            }
+            if (!event.target.closest('.history-note-save')) return;
+            var input = row.querySelector('.history-note-input');
+            try {
+                await saveSpeedHistoryNote(row.dataset.kind, row.dataset.id, input ? input.value.trim() : '');
+                await loadSpeedHistory();
+            } catch (error) {
+                if (input) input.setCustomValidity(error.message || i18n('save_failed'));
+                if (input) input.reportValidity();
+            }
+        });
+    });
 }
 
 function resetBroadbandDetails() {
@@ -494,4 +542,5 @@ window.__app.startBroadbandTest = startBroadbandTest;
 window.__app.cancelBroadbandTest = cancelBroadbandTest;
 window.__app.runTransferTest = runTransferTest;
 window.__app.cancelTransferTest = cancelTransferTest;
+bindSpeedHistoryNotes();
 })();

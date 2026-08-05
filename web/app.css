@@ -2433,10 +2433,17 @@ button.icon-button,
             font-family: var(--font-ui);
             font-size: 0.85rem;
             color: var(--text-main);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            display: grid;
+            gap: 0.48rem;
         }
+
+        .history-item-main { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+        .history-item-metrics { display: grid; gap: 0.15rem; text-align: right; }
+        .history-note { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+        .history-note-text { flex: 1 1 auto; min-width: 0; color: var(--text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+        .history-note-text.placeholder { opacity: 0.65; }
+        .history-note-edit, .history-note-save, .history-note-cancel { min-height: 26px; padding: 0.2rem 0.48rem; font-size: 0.7rem; }
+        .history-note-input { flex: 1 1 auto; min-width: 0; height: 30px; font-size: 0.75rem; }
 
         .history-item-info {
             display: flex;
@@ -2624,7 +2631,10 @@ button.icon-button,
                 margin-top: .55rem;
             }
             .history-list { max-height: none; }
-            .history-item { flex-direction: column; align-items: flex-start; gap: .4rem; }
+            .history-item { gap: .4rem; }
+            .history-item-main { align-items: flex-start; }
+            .history-note { flex-wrap: wrap; }
+            .history-note-input { flex-basis: 100%; }
             .identity-row { flex-direction: column; gap: 0.25rem; }
             .identity-label { flex: none; }
             .identity-value { text-align: left; }

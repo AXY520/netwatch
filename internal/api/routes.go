@@ -42,6 +42,7 @@ func (h *Handler) registerSpeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/speed/broadband/run", h.handleBroadbandRun)
 	mux.HandleFunc("/api/v1/speed/broadband/history", h.handleBroadbandHistory)
 	mux.HandleFunc("/api/v1/speed/local/history", h.handleLocalHistory)
+	mux.HandleFunc("/api/v1/speed/history/note", h.handleSpeedHistoryNote)
 	mux.HandleFunc("/api/v1/speed/local/result", h.handleLocalResult)
 	mux.HandleFunc("/api/v1/speed/local/ping", h.handleLocalPing)
 	mux.HandleFunc("/api/v1/speed/local/download", h.handleLocalDownload)

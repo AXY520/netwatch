@@ -2,6 +2,7 @@ package probe
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -12,6 +13,23 @@ func (s *Service) loadHistory() {
 	_ = os.MkdirAll(s.cfg.DataDir, 0o755)
 	s.loadJSON(filepath.Join(s.cfg.DataDir, "broadband_history.json"), &s.broadbandHistory)
 	s.loadJSON(filepath.Join(s.cfg.DataDir, "local_transfer_history.json"), &s.localTransferHistory)
+	changed := false
+	for i := range s.broadbandHistory {
+		if s.broadbandHistory[i].ID == "" {
+			s.broadbandHistory[i].ID = fmt.Sprintf("broadband-legacy-%d", i)
+			changed = true
+		}
+	}
+	for i := range s.localTransferHistory {
+		if s.localTransferHistory[i].ID == "" {
+			s.localTransferHistory[i].ID = fmt.Sprintf("local-legacy-%d", i)
+			changed = true
+		}
+	}
+	if changed {
+		s.saveBroadbandHistory()
+		s.saveLocalTransferHistory()
+	}
 }
 
 func (s *Service) saveBroadbandHistory() {

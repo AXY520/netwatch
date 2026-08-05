@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,6 +99,37 @@ func (h *Handler) handleBroadbandHistory(w http.ResponseWriter, _ *http.Request)
 
 func (h *Handler) handleLocalHistory(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.service.GetLocalTransferHistory())
+}
+
+func (h *Handler) handleSpeedHistoryNote(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var request struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+		Note string `json:"note"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	request.Note = strings.TrimSpace(request.Note)
+	if request.Kind != "broadband" && request.Kind != "local" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid history kind"})
+		return
+	}
+	if len([]rune(request.Note)) > 200 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "note too long"})
+		return
+	}
+	if !h.service.UpdateSpeedHistoryNote(request.Kind, request.ID, request.Note) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "history item not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": request.Note})
 }
 
 func (h *Handler) handleLocalResult(w http.ResponseWriter, r *http.Request) {

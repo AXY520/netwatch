@@ -693,6 +693,8 @@ type NetworkInfo struct {
 }
 
 type BroadbandSpeedResult struct {
+	ID             string                  `json:"id,omitempty"`
+	Note           string                  `json:"note,omitempty"`
 	Timestamp      string                  `json:"timestamp"`
 	DownloadMbps   float64                 `json:"download_mbps"`
 	UploadMbps     float64                 `json:"upload_mbps"`
@@ -725,6 +727,8 @@ type BroadbandStageDurations struct {
 }
 
 type LocalTransferResult struct {
+	ID                 string  `json:"id,omitempty"`
+	Note               string  `json:"note,omitempty"`
 	Timestamp          string  `json:"timestamp"`
 	DownloadMbps       float64 `json:"download_mbps"`
 	UploadMbps         float64 `json:"upload_mbps"`
