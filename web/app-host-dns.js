@@ -330,6 +330,7 @@ async function finishHostDNS(action) {
         }
         stopHostDNSCountdown();
         hostDNSState.pending = null;
+        networkMutationCoordinator.setPending('dns', null);
         await loadHostDNS(e.device ? e.device.value : '');
     } catch (err) {
         var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_dns_failed');

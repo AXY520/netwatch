@@ -395,6 +395,8 @@ async function finishHostBridge(action) {
             e.status.dataset.kind = '';
             e.status.textContent = result.note || '';
         }
+        hostBridgeState.pending = null;
+        networkMutationCoordinator.setPending('bridge', null);
         await loadHostBridges();
         if (window.__app && window.__app.loadNetworkConfigDevices) {
             await window.__app.loadNetworkConfigDevices();

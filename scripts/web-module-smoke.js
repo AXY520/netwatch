@@ -31,7 +31,7 @@ global.__app = {
     els: {},
     i18n: (key) => key,
     netwatchGet: async (url) => url.includes('/pending') ? { pending: false } : { enabled: true, devices: [] },
-    netwatchPost: async () => ({}),
+    netwatchPost: async () => ({ ok: true }),
     refreshNetworkDetailCards() {},
     refreshAppTrafficSoon() {}
 };
@@ -119,6 +119,9 @@ async function main() {
     elementsByID.set('network-config-preflight-btn', field());
     elementsByID.set('network-config-apply-btn', field());
     elementsByID.set('network-config-preview', field());
+    elementsByID.set('network-config-confirm-btn', field());
+    elementsByID.set('network-config-rollback-btn', field());
+    elementsByID.set('network-config-status', field());
     deviceSelect.__allDevices = [
         { device: 'eth0', type: 'ethernet', connection: 'Wired', ipv4_method: 'auto' },
         { device: 'wlan0', type: 'wifi', connection: 'Wi-Fi', ipv4_method: 'auto' }
@@ -146,6 +149,14 @@ async function main() {
     activeTab = 'ip';
     global.__app.networkMutationCoordinator.setPending('ip', null);
     global.__app.state.networkConfigPendingData = null;
+
+    global.__app.state.networkConfigRollbackID = 'rollback-1';
+    global.__app.state.networkConfigPendingData = { pending: true, id: 'rollback-1', device: 'eth0' };
+    global.__app.networkMutationCoordinator.setPending('ip', global.__app.state.networkConfigPendingData);
+    await global.__app.confirmNetworkConfig();
+    assert.equal(global.__app.networkMutationCoordinator.active(), null, 'confirmed IP transaction must release bridge and DNS controls');
+    assert.equal(global.__app.state.networkConfigPendingData, null);
+
     deviceSelect.__allDevices = [];
     global.__app.renderNetworkConfigDeviceOptions();
     assert.equal(deviceSelect.disabled, true);

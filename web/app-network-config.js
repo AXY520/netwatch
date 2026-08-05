@@ -508,6 +508,7 @@ async function finishNetworkConfig(kind) {
         if (!result.ok) throw new Error(result.error || (kind + ' failed'));
         state.networkConfigRollbackID = '';
         state.networkConfigPendingData = null;
+        networkMutationCoordinator.setPending('ip', null);
         stopNetworkConfigCountdown();
         clearNetworkConfigHighlights();
         setNetworkConfigLocked(false);
@@ -520,8 +521,8 @@ async function finishNetworkConfig(kind) {
     }
 }
 
-function confirmNetworkConfig() { finishNetworkConfig('confirm'); }
-function rollbackNetworkConfig() { finishNetworkConfig('rollback'); }
+function confirmNetworkConfig() { return finishNetworkConfig('confirm'); }
+function rollbackNetworkConfig() { return finishNetworkConfig('rollback'); }
 
 
 window.__app.networkConfigEls = networkConfigEls;
