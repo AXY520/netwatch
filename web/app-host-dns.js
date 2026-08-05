@@ -56,10 +56,12 @@ function setHostDNSOutput(text) {
 function updateHostDNSMethodState() {
     var e = hostDNSEls();
     var manual = e.method && e.method.value === 'manual';
+    var mutationPending = !!(networkMutationCoordinator && networkMutationCoordinator.active());
     document.querySelectorAll('.host-dns-manual-field').forEach(function (el) {
         el.hidden = !manual;
     });
-    if (e.servers) e.servers.disabled = !manual || !!(hostDNSState.pending && hostDNSState.pending.pending);
+    if (e.method) e.method.disabled = mutationPending;
+    if (e.servers) e.servers.disabled = !manual || mutationPending;
     if (e.presets) e.presets.hidden = !manual;
     if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
 }
@@ -80,10 +82,9 @@ function renderHostDNSPending(pending, openWindow) {
         if (e.confirm) e.confirm.hidden = true;
         if (e.rollback) e.rollback.hidden = true;
         if (e.apply) e.apply.hidden = false;
-        if (e.method) e.method.disabled = false;
-        if (e.servers) e.servers.disabled = false;
-        // Unlock device only if no other pending (IP/bridge) is pinning it.
-        if (e.device && !getPinnedNetworkConfigDevice()) {
+        if (e.method) e.method.disabled = !!(networkMutationCoordinator && networkMutationCoordinator.active());
+        if (e.servers) e.servers.disabled = !!(networkMutationCoordinator && networkMutationCoordinator.active());
+        if (e.device) {
             e.device.disabled = false;
             if (window.syncCustomSelect) window.syncCustomSelect(e.device);
         }
@@ -105,17 +106,19 @@ function renderHostDNSPending(pending, openWindow) {
     if (e.apply) e.apply.hidden = true;
     if (e.method) e.method.disabled = true;
     if (e.servers) e.servers.disabled = true;
-    if (e.method && pending.method) e.method.value = pending.method;
-    if (e.servers && pending.dns != null) e.servers.value = pending.dns || '';
-    // Pin shared NIC dropdown to the pending target — never snap to default uplink.
-    if (e.device && pending.device) {
+    var viewingPendingDevice = !e.device || !e.device.value || e.device.value === pending.device;
+    if (viewingPendingDevice && e.method && pending.method) e.method.value = pending.method;
+    if (viewingPendingDevice && e.servers && pending.dns != null) e.servers.value = pending.dns || '';
+    // Select the pending target when opening the recovery UI, then allow the
+    // shared selector to browse other devices without changing transaction ownership.
+    if (openWindow && e.device && pending.device) {
         ensureNetworkConfigOption(
             e.device,
             pending.device,
             pending.device + (pending.connection ? ' · ' + pending.connection : '')
         );
         e.device.value = pending.device;
-        e.device.disabled = true;
+        e.device.disabled = false;
         if (window.syncCustomSelect) window.syncCustomSelect(e.device);
     }
     updateHostDNSMethodState();
@@ -124,11 +127,10 @@ function renderHostDNSPending(pending, openWindow) {
         if (window.__app && window.__app.openWindow) window.__app.openWindow('network-config');
         setTimeout(function () {
             if (typeof switchNetworkConfigTab === 'function') switchNetworkConfigTab('dns');
-            // Re-pin after tab switch rebuilds the device list.
             if (e.device && pending.device) {
                 ensureNetworkConfigOption(e.device, pending.device, pending.device + (pending.connection ? ' · ' + pending.connection : ''));
                 e.device.value = pending.device;
-                e.device.disabled = true;
+                e.device.disabled = false;
                 if (window.syncCustomSelect) window.syncCustomSelect(e.device);
             }
             if (typeof loadHostDNS === 'function') {
@@ -178,11 +180,11 @@ function fillHostDNSFormFromInfo(data, keepDevice) {
         ].filter(Boolean);
         e.target.textContent = bits.join(' · ');
     }
-    if (e.method && !(hostDNSState.pending && hostDNSState.pending.pending)) {
+    if (e.method) {
         e.method.value = data.method === 'manual' ? 'manual' : 'auto';
         if (window.syncCustomSelect) window.syncCustomSelect(e.method);
     }
-    if (e.servers && !(hostDNSState.pending && hostDNSState.pending.pending)) {
+    if (e.servers) {
         e.servers.value = data.dns || data.runtime_dns || '';
     }
     if (!keepDevice && e.device && data.device) {
@@ -203,10 +205,6 @@ async function loadHostDNS(preferredDevice) {
     var requested = preferredDevice != null ? String(preferredDevice || '').trim() : '';
     if (!requested) requested = pin;
     if (!requested && e.device) requested = String(e.device.value || '').trim();
-    // While a DNS change is pending, force the pending NIC — ignore server default uplink.
-    if (hostDNSState.pending && hostDNSState.pending.pending && hostDNSState.pending.device) {
-        requested = String(hostDNSState.pending.device || '').trim();
-    }
     try {
         var query = requested ? { device: requested } : undefined;
         var data = await netwatchGet('/api/v1/network/dns', query);
@@ -217,7 +215,7 @@ async function loadHostDNS(preferredDevice) {
 
         // Rebuild shared device dropdown from DNS candidates (includes nw-* bridges).
         if (currentNetworkConfigTab() === 'dns') {
-            var prefer = pin || requested || data.device || '';
+            var prefer = requested || (e.device && e.device.value) || pin || data.device || '';
             renderNetworkConfigDeviceOptions({
                 dnsCandidates: hostDNSState.candidates,
                 preferredDevice: prefer
@@ -225,9 +223,7 @@ async function loadHostDNS(preferredDevice) {
             if (e.device && prefer) {
                 ensureNetworkConfigOption(e.device, prefer, prefer);
                 e.device.value = prefer;
-                if (hostDNSState.pending && hostDNSState.pending.pending) {
-                    e.device.disabled = true;
-                }
+                e.device.disabled = false;
                 if (window.syncCustomSelect) window.syncCustomSelect(e.device);
             }
         }
@@ -240,7 +236,7 @@ async function loadHostDNS(preferredDevice) {
             renderHostDNSPending(data.pending || null, false);
             return data;
         }
-        if (e.apply) e.apply.disabled = !!(hostDNSState.pending && hostDNSState.pending.pending);
+        if (e.apply) e.apply.disabled = !!(networkMutationCoordinator && networkMutationCoordinator.active());
         // keepDevice=true when user picked a device — do not snap select back to server default.
         fillHostDNSFormFromInfo(data, !!requested);
         renderHostDNSPending(data.pending || null, false);
@@ -300,7 +296,7 @@ async function applyHostDNS() {
             if (e.device && pendDev) {
                 ensureNetworkConfigOption(e.device, pendDev, pendDev);
                 e.device.value = pendDev;
-                e.device.disabled = true;
+                e.device.disabled = false;
                 if (window.syncCustomSelect) window.syncCustomSelect(e.device);
             }
         }

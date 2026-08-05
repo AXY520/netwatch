@@ -11,6 +11,21 @@ function refreshAppTrafficSoon() {
     if (window.__app.refreshAppTrafficSoon) window.__app.refreshAppTrafficSoon();
 }
 
+function appendNetworkMutationVerification(output, verification) {
+    output = String(output || '').trim();
+    if (!verification || !Array.isArray(verification.steps)) return output;
+    var statusKey = verification.status === 'passed' ? 'ok' : (verification.status === 'warning' ? 'degraded' : 'failed');
+    var lines = [i18n('network_mutation_verification') + ': ' + i18n(statusKey) + ' (' + (verification.duration_ms || 0) + 'ms)'];
+    verification.steps.forEach(function (step) {
+        if (step && !step.ok) {
+            var label = i18n('network_verify_' + step.name);
+            if (!label || label === 'network_verify_' + step.name) label = step.name || i18n('unknown');
+            lines.push(label + ': ' + (step.error || i18n('failed')));
+        }
+    });
+    return [output, lines.join('\n')].filter(Boolean).join('\n');
+}
+
 function networkConfigEls() {
     return {
         device: document.getElementById('network-config-device'),
@@ -64,9 +79,12 @@ function stopNetworkConfigCountdown() {
 
 function setNetworkConfigLocked(locked) {
     var e = networkConfigEls();
-    [e.device, e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
+    // A pending transaction blocks further mutations, but users must still be
+    // able to inspect another NIC from the shared selector.
+    [e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
         if (el) el.disabled = !!locked;
     });
+    if (e.device) e.device.disabled = false;
     [e.preflight, e.apply].forEach(function (el) {
         if (el) el.hidden = !!locked;
     });
@@ -220,10 +238,6 @@ async function loadNetworkConfigPending(openWindow) {
 
 function fillNetworkConfigForm(dev) {
     var e = networkConfigEls();
-    if (state.networkConfigPendingData && state.networkConfigPendingData.pending) {
-        applyPendingNetworkConfigToForm(state.networkConfigPendingData);
-        return;
-    }
     if (!dev) return;
     clearNetworkConfigHighlights();
     if (e.method) e.method.value = dev.ipv4_method === 'manual' ? 'manual' : 'auto';
@@ -243,7 +257,7 @@ function fillNetworkConfigForm(dev) {
 function updateNetworkConfigApplyState() {
     var e = networkConfigEls();
     if (!e.apply) return;
-    if (state.networkConfigPendingData && state.networkConfigPendingData.pending) {
+    if (networkMutationCoordinator.active()) {
         e.apply.disabled = true;
         renderNetworkConfigPreview();
         return;
@@ -292,15 +306,17 @@ function renderNetworkConfigPreview() {
 function updateNetworkConfigMethodState() {
     var e = networkConfigEls();
     var manual = !e.method || e.method.value !== 'auto';
+    var locked = !!networkMutationCoordinator.active();
+    if (e.method) e.method.disabled = locked;
     [e.address, e.gateway, e.dns].forEach(function (el) {
         if (!el) return;
-        el.disabled = !manual;
+        el.disabled = locked || !manual;
         var label = el.closest('label');
         if (label) label.hidden = !manual;
     });
     var grid = document.querySelector('#network-config-panel-ip .network-config-grid');
     if (grid) grid.classList.toggle('is-auto', !manual);
-    if (e.preflight) e.preflight.disabled = false;
+    if (e.preflight) e.preflight.disabled = locked;
     updateNetworkConfigApplyState();
 }
 
@@ -437,7 +453,7 @@ async function applyNetworkConfig() {
             e.output.hidden = !failedOutput;
         }
     } finally {
-        if (e.apply) e.apply.disabled = false;
+        if (e.apply) e.apply.disabled = !!(state.networkConfigPendingData && state.networkConfigPendingData.pending);
     }
 }
 
@@ -509,7 +525,9 @@ function rollbackNetworkConfig() { finishNetworkConfig('rollback'); }
 
 
 window.__app.networkConfigEls = networkConfigEls;
+window.__app.appendNetworkMutationVerification = appendNetworkMutationVerification;
 window.__app.setNetworkConfigFormEnabled = setNetworkConfigFormEnabled;
+window.__app.setNetworkConfigLocked = setNetworkConfigLocked;
 window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;

@@ -68,11 +68,21 @@ async function main() {
         'onNetworkConfigDeviceChange',
         'pinnedNetworkConfigDevice',
         'setNetworkConfigFormEnabled',
+        'setNetworkConfigLocked',
+        'appendNetworkMutationVerification',
         'applyPendingNetworkConfigToForm',
         'setHostBridgeCreateEnabled',
         'fillHostDNSFormFromInfo',
         'setHostDNSOutput'
     ].forEach((name) => assert.equal(typeof global.__app[name], 'function', `${name} must be exported`));
+
+    const verificationText = global.__app.appendNetworkMutationVerification('apply failed', {
+        status: 'failed',
+        duration_ms: 12,
+        steps: [{ name: 'dns_config', ok: false, error: 'bad dns' }]
+    });
+    assert.match(verificationText, /apply failed/);
+    assert.match(verificationText, /bad dns/);
 
     await global.__app.loadNetworkConfigDevices();
     const deviceSelect = {
@@ -90,6 +100,38 @@ async function main() {
     global.__app.renderNetworkConfigDeviceOptions();
     assert.equal(deviceSelect.value, 'eth0');
     assert.equal(deviceSelect.disabled, false);
+
+    function field(value = '') {
+        return {
+            value,
+            disabled: false,
+            hidden: false,
+            classList: { add() {}, remove() {}, toggle() {} },
+            closest() { return { hidden: false }; }
+        };
+    }
+    elementsByID.set('network-config-method', field('auto'));
+    elementsByID.set('network-config-address', field());
+    elementsByID.set('network-config-gateway', field());
+    elementsByID.set('network-config-dns', field());
+    elementsByID.set('network-config-preflight-btn', field());
+    elementsByID.set('network-config-apply-btn', field());
+    elementsByID.set('network-config-preview', field());
+    deviceSelect.__allDevices = [
+        { device: 'eth0', type: 'ethernet', connection: 'Wired', ipv4_method: 'auto' },
+        { device: 'wlan0', type: 'wifi', connection: 'Wi-Fi', ipv4_method: 'auto' }
+    ];
+    global.__app.state.networkConfigPendingData = { pending: true, device: 'eth0' };
+    global.__app.networkMutationCoordinator.setPending('ip', global.__app.state.networkConfigPendingData);
+    global.__app.renderNetworkConfigDeviceOptions();
+    deviceSelect.value = 'wlan0';
+    global.__app.onNetworkConfigDeviceChange();
+    assert.equal(deviceSelect.value, 'wlan0', 'pending transaction must not pin device browsing');
+    assert.equal(deviceSelect.disabled, false, 'pending transaction must keep shared device selector enabled');
+    assert.equal(elementsByID.get('network-config-method').disabled, true, 'pending transaction must lock mutation fields');
+
+    global.__app.networkMutationCoordinator.setPending('ip', null);
+    global.__app.state.networkConfigPendingData = null;
     deviceSelect.__allDevices = [];
     global.__app.renderNetworkConfigDeviceOptions();
     assert.equal(deviceSelect.disabled, true);

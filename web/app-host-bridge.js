@@ -11,6 +11,7 @@ var ensureNetworkConfigOption = window.__app.ensureNetworkConfigOption;
 var fillNetworkConfigForm = window.__app.fillNetworkConfigForm;
 var updateNetworkConfigApplyState = window.__app.updateNetworkConfigApplyState;
 var loadNetworkConfigPending = window.__app.loadNetworkConfigPending;
+var appendNetworkMutationVerification = window.__app.appendNetworkMutationVerification;
 
 function getPinnedNetworkConfigDevice() {
     if (typeof window.__app.pinnedNetworkConfigDevice === 'function') {
@@ -24,6 +25,12 @@ function getPinnedNetworkConfigDevice() {
 function setSharedNetworkConfigFormEnabled(enabled) {
     if (typeof window.__app.setNetworkConfigFormEnabled === 'function') {
         window.__app.setNetworkConfigFormEnabled(enabled);
+    }
+}
+
+function setSharedNetworkConfigLocked(locked) {
+    if (typeof window.__app.setNetworkConfigLocked === 'function') {
+        window.__app.setNetworkConfigLocked(locked);
     }
 }
 
@@ -91,7 +98,7 @@ function clearNetworkConfigLogs() {
 function setHostBridgeCreateEnabled(enabled) {
     var e = hostBridgeEls();
     if (!e.section) return;
-    var pending = !!(hostBridgeState.pending && hostBridgeState.pending.pending);
+    var pending = !!(networkMutationCoordinator && networkMutationCoordinator.active());
     var canCreate = !!enabled && !pending && hostBridgeState.enabled !== false;
     [e.suffix, e.method, e.address, e.gateway, e.dns, e.preflight, e.create].forEach(function (el) {
         if (el) el.disabled = !canCreate;
@@ -110,21 +117,6 @@ function setHostBridgeOutput(text) {
     }
     e.output.hidden = false;
     e.output.textContent = text;
-}
-
-function appendNetworkMutationVerification(output, verification) {
-	output = String(output || '').trim();
-	if (!verification || !Array.isArray(verification.steps)) return output;
-	var statusKey = verification.status === 'passed' ? 'ok' : (verification.status === 'warning' ? 'degraded' : 'failed');
-	var lines = [i18n('network_mutation_verification') + ': ' + i18n(statusKey) + ' (' + (verification.duration_ms || 0) + 'ms)'];
-	verification.steps.forEach(function (step) {
-		if (step && !step.ok) {
-			var label = i18n('network_verify_' + step.name);
-			if (!label || label === 'network_verify_' + step.name) label = step.name || i18n('unknown');
-			lines.push(label + ': ' + (step.error || i18n('failed')));
-		}
-	});
-	return [output, lines.join('\n')].filter(Boolean).join('\n');
 }
 
 function currentNetworkConfigDevice() {
@@ -603,7 +595,7 @@ function renderNetworkConfigDeviceOptions(opts) {
         devices = all.slice();
     }
     var pin = getPinnedNetworkConfigDevice();
-    var prev = opts.preferredDevice || pin || e.device.value;
+    var prev = opts.preferredDevice || e.device.value || pin;
     // Pending confirmation must always keep the target NIC visible/selected.
     if (pin && !devices.some(function (d) { return d && d.device === pin; })) {
         devices = devices.concat([{ device: pin, type: 'pending', connection: '' }]);
@@ -623,10 +615,10 @@ function renderNetworkConfigDeviceOptions(opts) {
         return { value: d.device, label: label, dataset: { index: idx } };
     });
     var selectedValue;
-    if (pin && devices.some(function (d) { return d.device === pin; })) {
-        selectedValue = pin;
-    } else if (prev && devices.some(function (d) { return d.device === prev; })) {
+    if (prev && devices.some(function (d) { return d.device === prev; })) {
         selectedValue = prev;
+    } else if (pin && devices.some(function (d) { return d.device === pin; })) {
+        selectedValue = pin;
     } else {
         selectedValue = devices[0].device;
     }
@@ -638,9 +630,12 @@ function renderNetworkConfigDeviceOptions(opts) {
         // Do not clear is-empty globally (IP/bridge create should stay locked).
     } else {
         setSharedNetworkConfigFormEnabled(true);
+        if (networkMutationCoordinator && networkMutationCoordinator.active()) {
+            setSharedNetworkConfigLocked(true);
+        }
     }
     var selected = devices.find(function (d) { return d.device === e.device.value; }) || devices[0];
-    if (pin && state.networkConfigPendingData && state.networkConfigPendingData.pending) {
+    if (tab === 'ip' && pin && e.device.value === pin && state.networkConfigPendingData && state.networkConfigPendingData.pending) {
         applySharedPendingNetworkConfig(state.networkConfigPendingData);
     } else if (tab === 'ip') {
         fillNetworkConfigForm(selected);
@@ -653,15 +648,6 @@ function renderNetworkConfigDeviceOptions(opts) {
 function onNetworkConfigDeviceChange() {
     var e = networkConfigEls();
     if (!e.device) return;
-    var pin = getPinnedNetworkConfigDevice();
-    if (pin) {
-        // Pending confirm/rollback: never follow accidental selection changes.
-        if (e.device.value !== pin) {
-            e.device.value = pin;
-            if (window.syncCustomSelect) window.syncCustomSelect(e.device);
-        }
-        return;
-    }
     var tab = currentNetworkConfigTab();
     var list = e.device.__devices || [];
     var selected = null;
@@ -800,6 +786,5 @@ window.__app.switchNetworkConfigTab = switchNetworkConfigTab;
 window.__app.currentNetworkConfigTab = currentNetworkConfigTab;
 window.__app.renderNetworkConfigDeviceOptions = renderNetworkConfigDeviceOptions;
 window.__app.onNetworkConfigDeviceChange = onNetworkConfigDeviceChange;
-window.__app.appendNetworkMutationVerification = appendNetworkMutationVerification;
 window.__app.setHostBridgeCreateEnabled = setHostBridgeCreateEnabled;
 })();
