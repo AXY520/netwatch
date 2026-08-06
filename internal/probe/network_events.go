@@ -217,8 +217,6 @@ func (s *Service) recordSummaryEvents(previous, current Summary) {
 	recordChange("default_ipv6_gateway_changed", "warning", "IPv6 默认网关已变化", previous.NetworkInfo.DefaultIPv6.Gateway, current.NetworkInfo.DefaultIPv6.Gateway)
 	recordChange("domestic_connectivity_changed", statusEventSeverity(current.WebsiteConnectivity.DomesticStatus), "国内网站连通性已变化", string(previous.WebsiteConnectivity.DomesticStatus), string(current.WebsiteConnectivity.DomesticStatus))
 	recordChange("global_connectivity_changed", statusEventSeverity(current.WebsiteConnectivity.GlobalStatus), "国际网站连通性已变化", string(previous.WebsiteConnectivity.GlobalStatus), string(current.WebsiteConnectivity.GlobalStatus))
-	recordChange("nat_type_changed", "warning", "NAT 类型已变化", previous.NetworkInfo.NAT.Type, current.NetworkInfo.NAT.Type)
-	recordChange("nat_reachability_changed", boolEventSeverity(current.NetworkInfo.NAT.Reachable), "NAT 可达性已变化", fmt.Sprint(previous.NetworkInfo.NAT.Reachable), fmt.Sprint(current.NetworkInfo.NAT.Reachable))
 
 	previousInterfaces := make(map[string]string, len(previous.NetworkInfo.Interfaces))
 	for _, item := range previous.NetworkInfo.Interfaces {

@@ -45,9 +45,9 @@ func TestNetworkEventStorePersistsAndDeduplicates(t *testing.T) {
 func TestNetworkEventStoreFilters(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	store.append(NetworkEvent{Kind: "egress_ipv4_changed", Severity: "info"})
-	store.append(NetworkEvent{Kind: "nat_type_changed", Severity: "warning"})
+	store.append(NetworkEvent{Kind: "interface_state_changed", Severity: "warning"})
 	got := store.query(NetworkEventQuery{Severity: "warning", Since: time.Now().Add(-time.Minute), Limit: 10})
-	if len(got) != 1 || got[0].Kind != "nat_type_changed" {
+	if len(got) != 1 || got[0].Kind != "interface_state_changed" {
 		t.Fatalf("filtered events = %+v", got)
 	}
 }
