@@ -283,7 +283,12 @@ func (s *Service) recordAppTrafficEvents() {
 	if s.events == nil {
 		return
 	}
-	threshold := s.notify.snapshotConfig().AbnormalTrafficThreshold
+	notifyConfig := s.notify.snapshotConfig()
+	// 生命周期事件属于事实记录；高流量事件仅在用户开启异常流量通知时记录。
+	threshold := notifyConfig.AbnormalTrafficThreshold
+	if !notifyConfig.Enabled || !notifyConfig.ClientEnabled || !notifyConfig.NotifyAbnormalTraffic {
+		threshold = 0
+	}
 	s.events.observeAppTraffic(s.appTrafficEventStats(), time.Now(), threshold)
 }
 

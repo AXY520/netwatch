@@ -2440,6 +2440,7 @@ button.icon-button,
         .history-item-main { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
         .history-item-metrics { display: grid; gap: 0.15rem; text-align: right; }
         .history-note { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+        .history-note-label { flex: 0 0 auto; color: var(--text-main); font-size: 0.72rem; font-weight: 600; }
         .history-note-text { flex: 1 1 auto; min-width: 0; color: var(--text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
         .history-note-text.placeholder { opacity: 0.65; }
         .history-note-edit, .history-note-save, .history-note-cancel { min-height: 26px; padding: 0.2rem 0.48rem; font-size: 0.7rem; }

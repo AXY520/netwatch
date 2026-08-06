@@ -53,7 +53,7 @@ function renderTransferHistory(items) {
 
 function historyNoteHTML(kind, item) {
     var note = String(item.note || '');
-    return '<div class="history-note" data-kind="' + kind + '" data-id="' + NetwatchShared.escapeHtml(item.id || '') + '"><span class="history-note-text' + (note ? '' : ' placeholder') + '">' + NetwatchShared.escapeHtml(note || i18n('speed_history_add_note')) + '</span><button type="button" class="history-note-edit" data-note="' + NetwatchShared.escapeHtml(note) + '">' + i18n('speed_history_note') + '</button></div>';
+    return '<div class="history-note" data-kind="' + kind + '" data-id="' + NetwatchShared.escapeHtml(item.id || '') + '"><span class="history-note-label">' + i18n('speed_history_note') + '</span><span class="history-note-text' + (note ? '' : ' placeholder') + '">' + NetwatchShared.escapeHtml(note || i18n('speed_history_add_note')) + '</span><button type="button" class="history-note-edit" data-note="' + NetwatchShared.escapeHtml(note) + '">' + i18n('speed_history_note') + '</button></div>';
 }
 
 async function saveSpeedHistoryNote(kind, id, note) {
