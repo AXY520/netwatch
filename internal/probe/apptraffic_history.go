@@ -11,6 +11,7 @@ import (
 )
 
 const maxAppTrafficPoints = 1440
+const maxAppTrafficTotalPoints = 200000
 const appTrafficHistoryWriteMinInterval = 10 * time.Second
 
 // AppTrafficPoint stores raw host-bridge counters. For lzc app bridges, RX maps
@@ -61,10 +62,52 @@ func newAppTrafficHistoryStore(dataDir string) *appTrafficHistoryStore {
 	}
 	if body, err := os.ReadFile(path); err == nil {
 		if json.Unmarshal(body, &store.history) == nil && len(store.history) > 0 {
+			store.pruneLoadedHistory()
 			store.loadedHistory = true
 		}
 	}
 	return store
+}
+
+// pruneLoadedHistory removes bridges that no longer exist and bounds the total
+// in-memory history. A deleted application must not keep its samples resident
+// forever, while a failed sysfs read must leave persisted history untouched.
+func (s *appTrafficHistoryStore) pruneLoadedHistory() {
+	entries, err := os.ReadDir(sysClassNetDir)
+	if err != nil {
+		return
+	}
+	active := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), lzcBridgePrefix) {
+			active[entry.Name()] = struct{}{}
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	for bridge := range s.history {
+		if _, ok := active[bridge]; !ok {
+			delete(s.history, bridge)
+		}
+	}
+	total := 0
+	for _, points := range s.history {
+		total += len(points)
+	}
+	if total <= maxAppTrafficTotalPoints {
+		return
+	}
+	// Keep the newest points globally. Sampling is append-only per bridge, so
+	// dropping the oldest prefix from the largest histories is deterministic.
+	for bridge, points := range s.history {
+		if total <= maxAppTrafficTotalPoints {
+			break
+		}
+		drop := min(len(points), total-maxAppTrafficTotalPoints)
+		s.history[bridge] = points[drop:]
+		total -= drop
+	}
 }
 
 // sample reads all lzc-br-* bridge counters and appends a point for each.
