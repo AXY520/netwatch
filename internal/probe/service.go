@@ -79,6 +79,8 @@ type Service struct {
 
 func NewService(cfg Config) *Service {
 	def := DefaultMutableSettings()
+	saved, hasSaved := loadMutableSettings(cfg.DataDir)
+	trafficHistoryLoad := !hasSaved || saved.TrafficSamplingEnabled
 	s := &Service{
 		cfg:                   cfg,
 		timeseries:            newTimeseriesStore(cfg.DataDir),
@@ -86,7 +88,7 @@ func NewService(cfg Config) *Service {
 		nicStats:              newNICStatsTracker(),
 		nicStop:               make(chan struct{}),
 		nicDone:               make(chan struct{}),
-		appTrafficHistory:     newAppTrafficHistoryStore(cfg.DataDir),
+		appTrafficHistory:     newAppTrafficHistoryStoreWithLoad(cfg.DataDir, trafficHistoryLoad),
 		events:                newNetworkEventStore(cfg.DataDir),
 		appTrafficStop:        make(chan struct{}),
 		appTrafficDone:        make(chan struct{}),
@@ -107,7 +109,7 @@ func NewService(cfg Config) *Service {
 	s.nicStats.onSampled = s.broadcastNICRealtime
 	s.closeCtx, s.closeCancel = context.WithCancel(context.Background())
 	s.loadHistory()
-	if saved, ok := loadMutableSettings(cfg.DataDir); ok {
+	if hasSaved {
 		s.applyMutableSettings(saved, false)
 	}
 	s.nicStats.start(s.nicStop, s.nicDone)

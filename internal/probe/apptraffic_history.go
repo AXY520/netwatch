@@ -53,6 +53,10 @@ type appTrafficHistoryStore struct {
 }
 
 func newAppTrafficHistoryStore(dataDir string) *appTrafficHistoryStore {
+	return newAppTrafficHistoryStoreWithLoad(dataDir, true)
+}
+
+func newAppTrafficHistoryStoreWithLoad(dataDir string, load bool) *appTrafficHistoryStore {
 	path := filepath.Join(dataDir, "app_traffic_history.json")
 	store := &appTrafficHistoryStore{
 		history:           make(map[string][]AppTrafficPoint),
@@ -60,10 +64,12 @@ func newAppTrafficHistoryStore(dataDir string) *appTrafficHistoryStore {
 		path:              path,
 		sampledSinceStart: make(map[string]bool),
 	}
-	if body, err := os.ReadFile(path); err == nil {
-		if json.Unmarshal(body, &store.history) == nil && len(store.history) > 0 {
-			store.pruneLoadedHistory()
-			store.loadedHistory = true
+	if load {
+		if body, err := os.ReadFile(path); err == nil {
+			if json.Unmarshal(body, &store.history) == nil && len(store.history) > 0 {
+				store.pruneLoadedHistory()
+				store.loadedHistory = true
+			}
 		}
 	}
 	return store
