@@ -122,12 +122,6 @@ type MutableSettings struct {
 	LANFlappingWindowSec    int `json:"lan_flapping_window_sec"`     // sliding window duration in seconds
 	LANDeviceAutoRemoveDays int `json:"lan_device_auto_remove_days"` // auto-remove offline devices after N days (0 = disabled)
 
-	// Traffic sampling settings
-	TrafficSamplingEnabled     bool           `json:"traffic_sampling_enabled"`
-	TrafficSamplingIntervalSec int            `json:"traffic_sampling_interval_sec"`
-	PerAppSamplingInterval     map[string]int `json:"per_app_sampling_interval,omitempty"` // bridge → interval sec
-	PersistentTrafficBridges   []string       `json:"persistent_traffic_bridges,omitempty"`
-
 	// Traffic chart settings
 	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
 
@@ -211,7 +205,6 @@ type AppNetworkDetail struct {
 	Project             string                 `json:"project,omitempty"`
 	Containers          []ContainerRuntimeInfo `json:"containers"`
 	Ports               []HostPortEntry        `json:"ports"`
-	History             []AppTrafficPoint      `json:"history"`
 	Events              []NetworkEvent         `json:"events"`
 	Live                AppNetworkRate         `json:"live"`
 	ConnectionTargets   []string               `json:"connection_targets"`

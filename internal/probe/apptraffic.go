@@ -95,15 +95,6 @@ type AppTrafficSnapshot struct {
 	Source             string           `json:"source"`
 }
 
-type AppTrafficLiveResult struct {
-	GeneratedAt        string            `json:"generated_at"`
-	Bridge             AppBridgeStats    `json:"bridge"`
-	History            []AppTrafficPoint `json:"history"`
-	Note               string            `json:"note,omitempty"`
-	CounterPerspective string            `json:"counter_perspective"`
-	Source             string            `json:"source"`
-}
-
 const (
 	sysClassNetDir               = "/sys/class/net"
 	lzcBridgePrefix              = "lzc-br-"

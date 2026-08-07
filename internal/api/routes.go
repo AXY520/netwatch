@@ -59,13 +59,6 @@ func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
-	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
-	mux.HandleFunc("/api/v1/network/app-traffic/live", h.handleAppTrafficLive)
-	mux.HandleFunc("/api/v1/network/app-traffic/top", h.handleAppTrafficTop)
-	mux.HandleFunc("/api/v1/network/app-detail", h.handleAppNetworkDetail)
-	mux.HandleFunc("/api/v1/network/connections/snapshot", h.handleAppConnectionsSnapshot)
-	mux.HandleFunc("/api/v1/settings/persistent-traffic-bridges", h.handlePersistentTrafficBridges)
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {

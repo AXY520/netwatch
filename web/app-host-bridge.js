@@ -402,7 +402,6 @@ async function finishHostBridge(action) {
             await window.__app.loadNetworkConfigDevices();
         }
         try { await refreshNetworkDetailCards(); } catch (_) {}
-        refreshAppTrafficSoon();
     } catch (err) {
         var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_bridge_failed');
         if (e.status) e.status.textContent = msg;
@@ -509,7 +508,6 @@ async function createHostBridge() {
                 window.__app.loadNetworkConfigDevices().catch(function () {});
             }
             refreshNetworkDetailCards().catch(function () {});
-            refreshAppTrafficSoon();
         }, 1500);
     } catch (err) {
         var msg = (err && err.payload && (err.payload.error || err.payload.message)) || (err && err.message) || i18n('host_bridge_failed');
@@ -543,7 +541,6 @@ async function dissolveHostBridge() {
             await window.__app.loadNetworkConfigDevices();
         }
         try { await refreshNetworkDetailCards(); } catch (_) {}
-        refreshAppTrafficSoon();
     } catch (err) {
         var msg = (err && err.payload && err.payload.error) || (err && err.message) || i18n('host_bridge_failed');
         if (e.status) e.status.textContent = msg;

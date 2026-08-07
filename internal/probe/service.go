@@ -2,6 +2,8 @@ package probe
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -40,7 +42,6 @@ type Service struct {
 	egressInflight        bool
 	publicIPCache         publicIPCacheData
 	publicIPMu            sync.Mutex
-	appTrafficHistory     *appTrafficHistoryStore
 	events                *networkEventStore
 	lastConnectivityProbe time.Time
 	lastEgressProbe       time.Time
@@ -48,8 +49,6 @@ type Service struct {
 	// lifecycle workers
 	nicStop               chan struct{}
 	nicDone               chan struct{}
-	appTrafficStop        chan struct{}
-	appTrafficDone        chan struct{}
 	appLifecycleStop      chan struct{}
 	appLifecycleDone      chan struct{}
 	backgroundMonitorStop chan struct{}
@@ -80,7 +79,7 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	def := DefaultMutableSettings()
 	saved, hasSaved := loadMutableSettings(cfg.DataDir)
-	trafficHistoryLoad := !hasSaved || saved.TrafficSamplingEnabled
+	_ = os.Remove(filepath.Join(cfg.DataDir, "app_traffic_history.json"))
 	s := &Service{
 		cfg:                   cfg,
 		timeseries:            newTimeseriesStore(cfg.DataDir),
@@ -88,10 +87,7 @@ func NewService(cfg Config) *Service {
 		nicStats:              newNICStatsTracker(),
 		nicStop:               make(chan struct{}),
 		nicDone:               make(chan struct{}),
-		appTrafficHistory:     newAppTrafficHistoryStoreWithLoad(cfg.DataDir, trafficHistoryLoad),
 		events:                newNetworkEventStore(cfg.DataDir),
-		appTrafficStop:        make(chan struct{}),
-		appTrafficDone:        make(chan struct{}),
 		appLifecycleStop:      make(chan struct{}),
 		appLifecycleDone:      make(chan struct{}),
 		backgroundMonitorStop: make(chan struct{}),
@@ -113,7 +109,6 @@ func NewService(cfg Config) *Service {
 		s.applyMutableSettings(saved, false)
 	}
 	s.nicStats.start(s.nicStop, s.nicDone)
-	s.startAppTrafficSampling()
 	s.startAppLifecycleObserver()
 	s.startBackgroundMonitor()
 	s.startLANInterfaceMonitor()
@@ -163,12 +158,10 @@ func (s *Service) Close() {
 		}
 		s.closeCancel()
 		close(s.nicStop)
-		close(s.appTrafficStop)
 		close(s.appLifecycleStop)
 		close(s.backgroundMonitorStop)
 		close(s.lanInterfaceStop)
 		<-s.nicDone
-		<-s.appTrafficDone
 		<-s.appLifecycleDone
 		<-s.backgroundMonitorDone
 		<-s.lanInterfaceDone

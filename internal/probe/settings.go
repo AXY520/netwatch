@@ -45,8 +45,6 @@ func DefaultMutableSettings() MutableSettings {
 		LANFlappingThreshold:           5,
 		LANFlappingWindowSec:           600,
 		LANDeviceAutoRemoveDays:        30,
-		TrafficSamplingEnabled:         true,
-		TrafficSamplingIntervalSec:     60,
 		ChartTimeLabelInterval:         0,
 		ContainerControlEnabled:        false,
 	}
@@ -137,12 +135,6 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	}
 	if _, ok := raw["lan_device_auto_remove_days"]; !ok {
 		s.LANDeviceAutoRemoveDays = def.LANDeviceAutoRemoveDays
-	}
-	if _, ok := raw["traffic_sampling_enabled"]; !ok {
-		s.TrafficSamplingEnabled = def.TrafficSamplingEnabled
-	}
-	if _, ok := raw["traffic_sampling_interval_sec"]; !ok {
-		s.TrafficSamplingIntervalSec = def.TrafficSamplingIntervalSec
 	}
 	if _, ok := raw["chart_time_label_interval"]; !ok {
 		s.ChartTimeLabelInterval = def.ChartTimeLabelInterval

@@ -50,7 +50,6 @@ type networkEventStore struct {
 	seq                  uint64
 	trafficBaselineReady bool
 	trafficSampledAt     time.Time
-	trafficCounters      map[string]AppBridgeStats
 	trafficAppRuntime    map[string]AppBridgeStats
 	trafficMetadataAt    time.Time
 	trafficMetadata      map[string]AppBridgeStats
@@ -59,7 +58,6 @@ type networkEventStore struct {
 func newNetworkEventStore(dataDir string) *networkEventStore {
 	store := &networkEventStore{
 		path:              filepath.Join(dataDir, "network_events.json"),
-		trafficCounters:   make(map[string]AppBridgeStats),
 		trafficAppRuntime: make(map[string]AppBridgeStats),
 		trafficMetadata:   make(map[string]AppBridgeStats),
 	}
@@ -281,13 +279,7 @@ func (s *Service) recordAppTrafficEvents() {
 	if s.events == nil {
 		return
 	}
-	notifyConfig := s.notify.snapshotConfig()
-	// 生命周期事件属于事实记录；高流量事件仅在用户开启异常流量通知时记录。
-	threshold := notifyConfig.AbnormalTrafficThreshold
-	if !notifyConfig.Enabled || !notifyConfig.ClientEnabled || !notifyConfig.NotifyAbnormalTraffic {
-		threshold = 0
-	}
-	s.events.observeAppTraffic(s.appTrafficEventStats(), time.Now(), threshold)
+	s.events.observeAppTraffic(s.appTrafficEventStats(), time.Now())
 }
 
 func (s *Service) appTrafficEventStats() []AppBridgeStats {
@@ -415,25 +407,18 @@ func appEnabledEventTimestamp(item AppBridgeStats, previousAt, observedAt time.T
 	return observedAt.Format(time.DateTime)
 }
 
-func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.Time, thresholdMbps int) {
-	current := make(map[string]AppBridgeStats, len(stats))
-	for _, item := range stats {
-		current[item.Bridge] = item
-	}
+func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.Time) {
 	currentApps := aggregateAppTrafficRuntime(stats)
 	s.mu.Lock()
 	if !s.trafficBaselineReady {
 		s.trafficBaselineReady = true
 		s.trafficSampledAt = now
-		s.trafficCounters = current
 		s.trafficAppRuntime = currentApps
 		s.mu.Unlock()
 		return
 	}
-	previous := s.trafficCounters
 	previousApps := s.trafficAppRuntime
 	previousAt := s.trafficSampledAt
-	s.trafficCounters = current
 	s.trafficAppRuntime = currentApps
 	s.trafficSampledAt = now
 	s.mu.Unlock()
@@ -457,27 +442,6 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v3"}, DedupeKey: "app_lifecycle:" + key,
 			})
 		}
-	}
-	seconds := now.Sub(previousAt).Seconds()
-	if thresholdMbps <= 0 || seconds <= 0 {
-		return
-	}
-	for bridge, item := range current {
-		before, ok := previous[bridge]
-		if !ok || item.RxBytes < before.RxBytes || item.TxBytes < before.TxBytes {
-			continue
-		}
-		bytesDelta := item.RxBytes - before.RxBytes + item.TxBytes - before.TxBytes
-		mbps := float64(bytesDelta) * 8 / seconds / 1_000_000
-		if mbps < float64(thresholdMbps) {
-			continue
-		}
-		s.append(NetworkEvent{
-			Timestamp: now.Format(time.DateTime), Kind: "app_traffic_high", Severity: "warning", Source: "app_traffic_observer", Title: "应用流量超过阈值",
-			Summary:   fmt.Sprintf("%s: %.1f Mbps", appTrafficEventName(item), mbps),
-			Details:   map[string]any{"bridge": bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "mbps": mbps, "threshold_mbps": thresholdMbps, "interval_seconds": seconds},
-			DedupeKey: "app_traffic_high:" + bridge,
-		})
 	}
 }
 

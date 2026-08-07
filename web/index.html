@@ -194,26 +194,6 @@
                 </table>
             </section>
 
-            <section class="card interfaces-card dashboard-collapsible" id="app-traffic-section" data-dashboard-section="app_traffic">
-                <div class="card-title">
-                    <span data-i18n="app_traffic_title">应用流量</span>
-                    <div class="title-tools">
-                        <span id="app-traffic-status" class="placeholder observation-status" data-i18n="waiting_for_sample">等待采样</span>
-                        <a class="button-link btn-with-icon" id="traffic-analysis-link" href="/traffic.html" hidden><span class="ui-icon ui-icon--traffic" aria-hidden="true"></span><span data-i18n="traffic_analysis_btn">流量分析</span></a>
-                        <button id="traffic-settings-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--settings" aria-hidden="true"></span><span data-i18n="settings_btn">设置</span></button>
-                        <button id="app-traffic-refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
-                        <button type="button" class="icon-button dashboard-collapse-btn" data-collapse-section="app_traffic" title="折叠板块" aria-label="折叠板块" aria-expanded="true" data-i18n-title="collapse_panel" data-i18n-aria-label="collapse_panel"><span class="dashboard-collapse-icon" aria-hidden="true"></span></button>
-                    </div>
-                </div>
-                <div class="dashboard-panel-content">
-                    <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                        <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
-                        <tbody></tbody>
-                    </table></div>
-                    <div id="app-traffic-note" class="traffic-note"></div>
-                </div>
-            </section>
-
             <section class="card interfaces-card dashboard-collapsible" id="host-ports-section" data-dashboard-section="host_ports">
                 <div class="card-title">
                     <span id="host-ports-title" class="host-ports-title" data-i18n="host_ports_title">端口占用</span>
@@ -655,6 +635,10 @@
                     <button id="open-notification-settings" class="btn-with-icon"><span class="ui-icon ui-icon--bell" aria-hidden="true"></span><span data-i18n="notification_settings_btn">通知设置</span></button>
                 </div>
             </div>
+            <div class="settings-row">
+                <span data-i18n="container_control">容器网络控制</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-container-control-enabled"><span data-i18n="toggle_on">on</span></label>
+            </div>
         </div>
     </section>
     <section class="floating-window" id="notification-settings-window">
@@ -773,50 +757,12 @@
             </div>
         </div>
     </section>
-    <section class="floating-window" id="traffic-settings-window">
-        <div class="window-head">
-            <div>
-                <div class="window-title" data-i18n="traffic_analysis_settings">流量分析设置</div>
-            </div>
-            <div class="window-actions">
-                <button id="ts-save-btn" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
-                <button type="button" class="icon-button window-close-btn" id="close-traffic-settings-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
-            </div>
-        </div>
-        <div class="settings-layout settings-compact" style="padding: 0.2rem 1rem">
-            <div class="settings-row">
-                <span data-i18n="enable_traffic_analysis">流量分析</span>
-                <div class="settings-inline-controls">
-                    <label class="settings-toggle inline"><input type="checkbox" id="ts-sampling-enabled"><span data-i18n="toggle_on">on</span></label>
-                    <select id="ts-global-interval">
-                        <option value="10" data-i18n="sec_10">10 秒</option>
-                        <option value="30" data-i18n="sec_30">30 秒</option>
-                        <option value="60" selected data-i18n="sec_60">60 秒</option>
-                        <option value="120" data-i18n="sec_120">120 秒</option>
-                        <option value="300" data-i18n="sec_300">300 秒</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-divider"></div>
-            <div class="settings-row" style="margin-bottom:0.3rem">
-                <span data-i18n="per_app_sampling">单独应用采样</span>
-            </div>
-            <div id="ts-per-app-list" class="ts-per-app-list"></div>
-            <div class="settings-divider"></div>
-            <div class="settings-row">
-                <span data-i18n="container_control">容器网络控制</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="ts-container-control-enabled"><span data-i18n="toggle_on">on</span></label>
-            </div>
-        </div>
-    </section>
-
     <script src="/speedtest.js" defer></script>
     <script src="/shared.js" defer></script>
     <script src="/api.js" defer></script>
     <script src="/app-core.js" defer></script>
     <script src="/app-containers.js" defer></script>
     <script src="/app-network.js" defer></script>
-    <script src="/app-traffic-dashboard.js" defer></script>
     <script src="/app-network-config.js" defer></script>
     <script src="/app-host-bridge.js" defer></script>
     <script src="/app-host-dns.js" defer></script>

@@ -94,27 +94,27 @@ func TestRecordSummaryEventsCollapsesIPv6PrivacyAddressesToPrefix(t *testing.T) 
 	}
 }
 
-func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
+func TestObserveAppTrafficReportsLifecycle(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, RxBytes: 100, TxBytes: 100}}, start, 10)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, RxBytes: 100, TxBytes: 100}}, start)
 	store.observeAppTraffic([]AppBridgeStats{
 		{Bridge: "lzc-br-a", AppID: "app.a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, RxBytes: 20_000_100, TxBytes: 20_000_100},
 		{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", ContainerCount: 1, RunningCount: 1, CreatedAt: start.Add(7 * time.Second).Unix(), RxBytes: 0, TxBytes: 0},
-	}, start.Add(10*time.Second), 10)
+	}, start.Add(10*time.Second))
 	events := store.query(NetworkEventQuery{Limit: 10})
-	if len(events) != 2 {
+	if len(events) != 1 {
 		t.Fatalf("events = %+v", events)
 	}
 	kinds := NetworkEventKinds(events)
-	if kinds[0] != "app_enabled" || kinds[1] != "app_traffic_high" {
+	if kinds[0] != "app_enabled" {
 		t.Fatalf("kinds = %v", kinds)
 	}
 	enabled := store.query(NetworkEventQuery{Kind: "app_enabled", Limit: 10})
 	if len(enabled) != 1 || enabled[0].Timestamp != start.Add(7*time.Second).Format(time.DateTime) {
 		t.Fatalf("enabled events = %+v", enabled)
 	}
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", ContainerCount: 1, RunningCount: 1}}, start.Add(20*time.Second), 10)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-b", AppID: "app.b", AppTitle: "应用乙", ContainerCount: 1, RunningCount: 1}}, start.Add(20*time.Second))
 	events = store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10})
 	if len(events) != 1 || events[0].Summary != "应用甲" || events[0].Title != "应用已停用" {
 		t.Fatalf("disappearance events = %+v", events)
@@ -124,9 +124,9 @@ func TestObserveAppTrafficReportsLifecycleAndThreshold(t *testing.T) {
 func TestObserveAppTrafficUsesRunningStateInsteadOfBridgePresence(t *testing.T) {
 	store := newNetworkEventStore(t.TempDir())
 	start := time.Date(2026, 8, 4, 12, 0, 0, 0, time.Local)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1}}, start, 0)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 0}}, start.Add(10*time.Second), 0)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, CreatedAt: start.Add(18 * time.Second).Unix()}}, start.Add(20*time.Second), 0)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1}}, start)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 0}}, start.Add(10*time.Second))
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-a", AppTitle: "应用甲", ContainerCount: 1, RunningCount: 1, CreatedAt: start.Add(18 * time.Second).Unix()}}, start.Add(20*time.Second))
 	events := store.query(NetworkEventQuery{Limit: 10})
 	if len(events) != 2 || events[0].Kind != "app_enabled" || events[1].Kind != "app_disabled" {
 		t.Fatalf("events = %+v", events)
@@ -144,12 +144,12 @@ func TestObserveAppTrafficGroupsLifecycleByApplication(t *testing.T) {
 	store.observeAppTraffic([]AppBridgeStats{
 		{Bridge: "lzc-br-old", AppID: app, Project: project, ContainerCount: 0, RunningCount: 0},
 		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 2},
-	}, start, 0)
+	}, start)
 
 	// Removing an unused old bridge must not look like an application stop.
 	store.observeAppTraffic([]AppBridgeStats{
 		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 2},
-	}, start.Add(time.Minute), 0)
+	}, start.Add(time.Minute))
 	if events := store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10}); len(events) != 0 {
 		t.Fatalf("old bridge removal produced false stop: %+v", events)
 	}
@@ -157,7 +157,7 @@ func TestObserveAppTrafficGroupsLifecycleByApplication(t *testing.T) {
 	// The application stops only when its aggregated runtime reaches zero.
 	store.observeAppTraffic([]AppBridgeStats{
 		{Bridge: "lzc-br-current", AppID: app, Project: project, ContainerCount: 2, RunningCount: 0},
-	}, start.Add(2*time.Minute), 0)
+	}, start.Add(2*time.Minute))
 	events := store.query(NetworkEventQuery{Kind: "app_disabled", Limit: 10})
 	if len(events) != 1 || events[0].DedupeKey != "app_lifecycle:app:"+app {
 		t.Fatalf("application stop events = %+v", events)
@@ -168,8 +168,8 @@ func TestObserveAppTrafficBridgeReplacementDoesNotToggleApplication(t *testing.T
 	store := newNetworkEventStore(t.TempDir())
 	start := time.Date(2026, 8, 5, 9, 30, 0, 0, time.Local)
 	app := "cloud.lazycat.app.browser"
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-old", AppID: app, ContainerCount: 1, RunningCount: 1}}, start, 0)
-	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-new", AppID: app, ContainerCount: 1, RunningCount: 1}}, start.Add(time.Minute), 0)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-old", AppID: app, ContainerCount: 1, RunningCount: 1}}, start)
+	store.observeAppTraffic([]AppBridgeStats{{Bridge: "lzc-br-new", AppID: app, ContainerCount: 1, RunningCount: 1}}, start.Add(time.Minute))
 	if events := store.query(NetworkEventQuery{Limit: 10}); len(events) != 0 {
 		t.Fatalf("bridge replacement produced lifecycle events: %+v", events)
 	}

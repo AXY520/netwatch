@@ -13,7 +13,6 @@ import (
 const (
 	appLifecycleEventDebounce     = 2 * time.Second
 	appLifecycleCalibrationPeriod = time.Minute
-	appTrafficCounterPeriod       = 5 * time.Second
 )
 
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
@@ -93,48 +92,6 @@ func (s *Service) UpdateSpeedHistoryNote(kind, id, note string) bool {
 	return false
 }
 
-func (s *Service) startAppTrafficSampling() {
-	go func() {
-		defer close(s.appTrafficDone)
-		lastSampled := make(map[string]time.Time)
-		for {
-			enabled, interval, perApp, persistent := s.getTrafficSamplingConfig()
-			if !enabled {
-				// Wait and re-check
-				select {
-				case <-s.appTrafficStop:
-					return
-				case <-time.After(5 * time.Second):
-					continue
-				}
-			}
-
-			now := time.Now()
-			s.appTrafficHistory.sampleWithTiming(persistent, lastSampled, now, interval, perApp)
-
-			// Sleep until the next bridge needs sampling
-			sleep := time.Duration(interval) * time.Second
-			for _, iv := range perApp {
-				if iv > 0 {
-					d := time.Duration(iv) * time.Second
-					if d < sleep {
-						sleep = d
-					}
-				}
-			}
-			if sleep < 1*time.Second {
-				sleep = 1 * time.Second
-			}
-
-			select {
-			case <-s.appTrafficStop:
-				return
-			case <-time.After(sleep):
-			}
-		}
-	}()
-}
-
 func (s *Service) startAppLifecycleObserver() {
 	go func() {
 		defer close(s.appLifecycleDone)
@@ -145,8 +102,6 @@ func (s *Service) startAppLifecycleObserver() {
 
 		calibration := time.NewTicker(appLifecycleCalibrationPeriod)
 		defer calibration.Stop()
-		trafficCounters := time.NewTicker(appTrafficCounterPeriod)
-		defer trafficCounters.Stop()
 		var debounce *time.Timer
 		var debounceC <-chan time.Time
 		scheduleObservation := func() {
@@ -184,8 +139,6 @@ func (s *Service) startAppLifecycleObserver() {
 					dockerlzc.InvalidateBridgeMapCache()
 					s.recordAppTrafficEvents()
 				}
-			case <-trafficCounters.C:
-				s.recordAppTrafficEvents()
 			}
 		}
 	}()
@@ -237,71 +190,4 @@ func dockerLifecycleEventRelevant(event dockerlzc.Event) bool {
 		}
 	}
 	return false
-}
-
-func (s *Service) getTrafficSamplingConfig() (enabled bool, interval int, perApp map[string]int, persistent []string) {
-	return s.settings.snapshotTraffic()
-}
-
-func (s *Service) getPersistentTrafficBridges() []string {
-	_, _, _, persistent := s.settings.snapshotTraffic()
-	return persistent
-}
-
-func (s *Service) TogglePersistentTrafficBridge(bridge string, enabled bool) MutableSettings {
-	bridge = strings.TrimSpace(bridge)
-	if bridge == "" {
-		return s.GetMutableSettings()
-	}
-	_, _, _, persistent := s.settings.snapshotTraffic()
-	next := make([]string, 0, len(persistent)+1)
-	found := false
-	for _, b := range persistent {
-		if b == bridge {
-			found = true
-			if enabled {
-				next = append(next, b)
-			}
-			continue
-		}
-		next = append(next, b)
-	}
-	if enabled && !found {
-		next = append(next, bridge)
-	}
-	s.settings.setPersistentBridges(next)
-	settings := s.GetMutableSettings()
-	if err := saveMutableSettings(s.cfg.DataDir, settings); err != nil {
-		logger.Warn("save persistent bridges: %v", err)
-	}
-	return settings
-}
-
-func (s *Service) GetAppTrafficHistory(bridge string, limit int) []AppTrafficPoint {
-	return s.appTrafficHistory.snapshot(bridge, limit)
-}
-
-func (s *Service) GetAppTrafficHistorySince(bridge string, since time.Time, limit int) []AppTrafficPoint {
-	return s.appTrafficHistory.snapshotSince(bridge, since, limit)
-}
-
-func (s *Service) GetAppTrafficTop(since time.Time, limit int) []AppTrafficTopItem {
-	return s.appTrafficHistory.topSince(since, limit)
-}
-
-func (s *Service) SampleAppTrafficBridge(bridge string, since time.Time, limit int) (AppTrafficLiveResult, bool) {
-	if ok := s.appTrafficHistory.sampleOne(bridge, time.Now()); !ok {
-		return AppTrafficLiveResult{}, false
-	}
-	stats, ok := CollectBridgeTraffic(bridge)
-	if !ok {
-		return AppTrafficLiveResult{}, false
-	}
-	return AppTrafficLiveResult{
-		GeneratedAt:        localTimestamp(),
-		Bridge:             stats,
-		History:            s.appTrafficHistory.snapshotSince(bridge, since, limit),
-		CounterPerspective: appTrafficCounterPerspective,
-		Source:             appTrafficSource,
-	}, true
 }

@@ -192,7 +192,6 @@
         if (kindFilter.value) params.set('kind', kindFilter.value);
         var since = rangeStart(rangeFilter.value);
         if (since) params.set('since', since);
-        var trafficPromise = iconsLoaded ? Promise.resolve(null) : eventGet('/api/v1/network/app-traffic').catch(function () { return null; });
         try {
             var data = await eventGet('/api/v1/events/history?' + params.toString());
             if (sequence !== loadSequence) return;
@@ -204,12 +203,6 @@
                 renderLatestEvents();
             }
             updateEventCount(filteredEvents().length);
-            trafficPromise.then(function (trafficData) {
-                if (sequence !== loadSequence || !trafficData) return;
-                cachedIcons = appIconMap(trafficData);
-                iconsLoaded = true;
-                renderLatestEvents();
-            });
         } catch (error) {
             if (!silent) {
                 timeline.innerHTML = '<div class="events-empty events-error"><strong>' + NetwatchShared.escapeHtml(i18n('load_failed')) + '</strong><span>' + NetwatchShared.escapeHtml(error.message) + '</span></div>';

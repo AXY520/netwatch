@@ -25,6 +25,7 @@ function applySettingsToForm() {
         els.settingBackgroundMonitorIntervalSec.disabled = !state.settings.background_monitor_enabled;
         if (window.syncCustomSelect) window.syncCustomSelect(els.settingBackgroundMonitorIntervalSec);
     }
+    if (els.settingContainerControlEnabled) els.settingContainerControlEnabled.checked = !!state.settings.container_control_enabled;
     var notificationsDisabled = !state.settings.background_monitor_enabled || !state.settings.notifications_enabled;
     if (els.settingNotificationsEnabled) {
         els.settingNotificationsEnabled.checked = !!state.settings.notifications_enabled;
@@ -128,10 +129,6 @@ async function loadSettings() {
             nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
             chart_time_label_interval: settingsData.chart_time_label_interval || 0,
             dashboard_collapsed_sections: settingsData.dashboard_collapsed_sections || [],
-            traffic_sampling_enabled: settingsData.traffic_sampling_enabled !== false,
-            traffic_sampling_interval_sec: settingsData.traffic_sampling_interval_sec || 60,
-            per_app_sampling_interval: settingsData.per_app_sampling_interval || {},
-            persistent_traffic_bridges: settingsData.persistent_traffic_bridges || [],
             background_monitor_enabled: !!settingsData.background_monitor_enabled,
             background_monitor_interval_sec: settingsData.background_monitor_interval_sec || 60,
             notifications_enabled: !!settingsData.notifications_enabled,
@@ -174,17 +171,13 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
-    var perApp = state.settings.per_app_sampling_interval || {};
     var payload = {
         refresh_interval_sec: state.settings.refresh_interval_sec,
         broadband_domestic_only: !!(els.settingBroadbandDomesticOnly && els.settingBroadbandDomesticOnly.checked),
         nic_realtime_enabled: !!(els.settingNICRealtimeEnabled && els.settingNICRealtimeEnabled.checked),
         nic_realtime_interval_sec: parseInt((els.settingNICRealtimeIntervalSec && els.settingNICRealtimeIntervalSec.value) || '1', 10) || 1,
         chart_time_label_interval: state.settings.chart_time_label_interval,
-        traffic_sampling_enabled: state.settings.traffic_sampling_enabled,
-        traffic_sampling_interval_sec: state.settings.traffic_sampling_interval_sec,
-        per_app_sampling_interval: perApp,
-        persistent_traffic_bridges: state.settings.persistent_traffic_bridges || [],
+        container_control_enabled: !!(els.settingContainerControlEnabled && els.settingContainerControlEnabled.checked),
         background_monitor_enabled: !!(els.settingBackgroundMonitorEnabled && els.settingBackgroundMonitorEnabled.checked),
         background_monitor_interval_sec: parseInt((els.settingBackgroundMonitorIntervalSec && els.settingBackgroundMonitorIntervalSec.value) || '60', 10) || 60,
         notifications_enabled: !!(els.settingNotificationsEnabled && els.settingNotificationsEnabled.checked),

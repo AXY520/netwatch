@@ -19,9 +19,6 @@ func TestDefaultMutableSettingsStableCore(t *testing.T) {
 	if def.BarkServerURL == "" || def.BarkGroup == "" {
 		t.Fatal("bark defaults missing")
 	}
-	if def.TrafficSamplingIntervalSec < 5 {
-		t.Fatalf("traffic sampling interval too small: %d", def.TrafficSamplingIntervalSec)
-	}
 }
 
 func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
@@ -54,9 +51,6 @@ func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
 	}
 	if got.LANDeviceOfflineAfterSec != def.LANDeviceOfflineAfterSec {
 		t.Fatalf("LANDeviceOfflineAfterSec=%d", got.LANDeviceOfflineAfterSec)
-	}
-	if !got.TrafficSamplingEnabled {
-		t.Fatal("expected traffic sampling default true")
 	}
 }
 
