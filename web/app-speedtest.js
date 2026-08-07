@@ -41,7 +41,7 @@ async function loadSpeedHistory() {
 
 function renderBroadbandHistory(items) {
     els.broadbandHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div><div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small><small>' + i18n('total_duration') + ' ' + window.__app.formatDurationMS(item.stage_durations && item.stage_durations.total_ms) + '</small></div></div>' + historyNoteHTML('broadband', item) + '</div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div><div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small></div></div>' + historyNoteHTML('broadband', item) + '</div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
@@ -104,29 +104,14 @@ function resetBroadbandDetails() {
     window.__app.setText(els.broadbandNodeProvider);
     window.__app.setText(els.broadbandNodeRegion);
     window.__app.setText(els.broadbandNodeSource);
-    window.__app.setText(els.broadbandDurationNode);
-    window.__app.setText(els.broadbandDurationLatency);
-    window.__app.setText(els.broadbandDurationDownload);
-    window.__app.setText(els.broadbandDurationUpload);
-    window.__app.setText(els.broadbandDurationTotal);
-    window.__app.setText(els.broadbandFailureStage);
-    window.__app.setText(els.broadbandFailureReason);
 }
 
 function renderBroadbandDetails(result) {
     result = result || {};
-    var durations = result.stage_durations || {};
     window.__app.setText(els.broadbandNodeName, result.server_name || result.server_region || '--');
     window.__app.setText(els.broadbandNodeProvider, result.provider || '--');
     window.__app.setText(els.broadbandNodeRegion, result.server_country || result.server_region || '--');
     window.__app.setText(els.broadbandNodeSource, result.node_source ? result.node_source + (result.domestic_node ? ' \u00B7 ' + i18n('domestic_node') : '') : '--');
-    window.__app.setText(els.broadbandDurationNode, window.__app.formatDurationMS(durations.node_selection_ms));
-    window.__app.setText(els.broadbandDurationLatency, window.__app.formatDurationMS(durations.latency_test_ms));
-    window.__app.setText(els.broadbandDurationDownload, window.__app.formatDurationMS(durations.download_test_ms));
-    window.__app.setText(els.broadbandDurationUpload, window.__app.formatDurationMS(durations.upload_test_ms));
-    window.__app.setText(els.broadbandDurationTotal, window.__app.formatDurationMS(durations.total_ms));
-    window.__app.setText(els.broadbandFailureStage, result.failure_stage ? (window.__app.broadbandFailureStageMap[result.failure_stage] || result.failure_stage) : '--');
-    window.__app.setText(els.broadbandFailureReason, result.failure_reason || result.error || '--');
 }
 
 function resetTransferDetails() {
@@ -155,8 +140,6 @@ function renderTransferDetails(stats) {
 }
 
 function resetBroadbandMetrics() {
-    els.broadbandStage.textContent = i18n('idle');
-    els.broadbandProgress.textContent = '0%';
     els.broadbandNote.textContent = i18n('broadband_note_prefix') + state.speedConfig.broadband_duration_sec + i18n('seconds_unit');
     window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Idle', i18n('standby'));
     window.__app.setSpeedPanelMode('broadband', 'Idle');
@@ -203,8 +186,6 @@ function renderBroadbandSteps(steps) {
 
 function renderBroadbandTask(task) {
     task = task || {};
-    els.broadbandStage.textContent = window.__app.broadbandStageMap[task.stage] || i18n('idle');
-    els.broadbandProgress.textContent = Math.max(0, Math.min(100, Math.round(task.progress_percent || 0))) + '%';
     els.broadbandNote.textContent = task.message || window.__app.broadbandStageMap[task.stage] || i18n('standby');
     els.broadbandLatency.textContent = window.__app.formatMS(task.result && task.result.latency_ms);
     els.broadbandJitter.textContent = window.__app.formatMS(task.result && task.result.jitter_ms);
@@ -260,6 +241,17 @@ async function pollBroadbandTask() {
             if (task.finished) {
                 await loadSpeedHistory();
             }
+            var failure = task.result && (task.result.failure_reason || task.result.error);
+            if (failure && !state.broadbandFailureShown) {
+                state.broadbandFailureShown = true;
+                NetwatchShared.confirmDialog({
+                    title: i18n('speedtest_failed'),
+                    message: failure,
+                    okText: i18n('close_btn'),
+                    cancelText: i18n('close_btn'),
+                    danger: true
+                });
+            }
         }
     } catch (error) {
         console.error(error);
@@ -274,6 +266,7 @@ function startBroadbandPolling() {
 async function startBroadbandTest() {
     if (state.runningTest) return;
     state.runningTest = 'broadband';
+    state.broadbandFailureShown = false;
     window.__app.updateWindowControls();
     resetBroadbandMetrics();
     els.broadbandNote.textContent = i18n('started_broadband');

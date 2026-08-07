@@ -686,37 +686,28 @@ type NetworkInfo struct {
 }
 
 type BroadbandSpeedResult struct {
-	ID             string                  `json:"id,omitempty"`
-	Note           string                  `json:"note,omitempty"`
-	Timestamp      string                  `json:"timestamp"`
-	DownloadMbps   float64                 `json:"download_mbps"`
-	UploadMbps     float64                 `json:"upload_mbps"`
-	LatencyMS      int64                   `json:"latency_ms"`
-	JitterMS       int64                   `json:"jitter_ms"`
-	Provider       string                  `json:"provider,omitempty"`
-	ServerRegion   string                  `json:"server_region,omitempty"`
-	ServerID       string                  `json:"server_id,omitempty"`
-	ServerName     string                  `json:"server_name,omitempty"`
-	ServerCountry  string                  `json:"server_country,omitempty"`
-	ServerHost     string                  `json:"server_host,omitempty"`
-	NodeSource     string                  `json:"node_source,omitempty"`
-	DomesticNode   bool                    `json:"domestic_node,omitempty"`
-	FailureStage   string                  `json:"failure_stage,omitempty"`
-	FailureReason  string                  `json:"failure_reason,omitempty"`
-	StageDurations BroadbandStageDurations `json:"stage_durations,omitempty"`
+	ID            string  `json:"id,omitempty"`
+	Note          string  `json:"note,omitempty"`
+	Timestamp     string  `json:"timestamp"`
+	DownloadMbps  float64 `json:"download_mbps"`
+	UploadMbps    float64 `json:"upload_mbps"`
+	LatencyMS     int64   `json:"latency_ms"`
+	JitterMS      int64   `json:"jitter_ms"`
+	Provider      string  `json:"provider,omitempty"`
+	ServerRegion  string  `json:"server_region,omitempty"`
+	ServerID      string  `json:"server_id,omitempty"`
+	ServerName    string  `json:"server_name,omitempty"`
+	ServerCountry string  `json:"server_country,omitempty"`
+	ServerHost    string  `json:"server_host,omitempty"`
+	NodeSource    string  `json:"node_source,omitempty"`
+	DomesticNode  bool    `json:"domestic_node,omitempty"`
+	FailureStage  string  `json:"failure_stage,omitempty"`
+	FailureReason string  `json:"failure_reason,omitempty"`
 	// 诊断字段:稳态采样口径(最终值)与库 EWMA 口径并存,用于校准"测准"参数。
 	DownloadMbpsEWMA float64 `json:"download_mbps_ewma,omitempty"`
 	UploadMbpsEWMA   float64 `json:"upload_mbps_ewma,omitempty"`
 	DownloadStreams  int     `json:"download_streams,omitempty"`
 	Error            string  `json:"error,omitempty"`
-}
-
-type BroadbandStageDurations struct {
-	NodeSelectionMS int64 `json:"node_selection_ms,omitempty"`
-	LatencyTestMS   int64 `json:"latency_test_ms,omitempty"`
-	DownloadTestMS  int64 `json:"download_test_ms,omitempty"`
-	UploadTestMS    int64 `json:"upload_test_ms,omitempty"`
-	TotalMS         int64 `json:"total_ms,omitempty"`
 }
 
 type LocalTransferResult struct {

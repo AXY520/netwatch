@@ -63,10 +63,3 @@ func progressRange(elapsed, total time.Duration, width int) int {
 	}
 	return int(math.Round(ratio * float64(width)))
 }
-
-func elapsedMS(startedAt time.Time) int64 {
-	if startedAt.IsZero() {
-		return 0
-	}
-	return int64(time.Since(startedAt) / time.Millisecond)
-}

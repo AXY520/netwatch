@@ -272,33 +272,17 @@
                 </div>
             </div>
 
-            <div class="st-meta">
-                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="broadband-latency">--</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="broadband-jitter">--</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="stage">阶段</div><div class="st-chip-value" id="broadband-stage">待启动</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="progress">进度</div><div class="st-chip-value" id="broadband-progress">等待</div></div>
-            </div>
-
-            <div class="st-detail-grid" id="broadband-detail">
-                <div class="st-detail-card">
+            <div class="broadband-summary-grid" id="broadband-detail">
+                <div class="broadband-latency-pair">
+                    <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="broadband-latency">--</div></div>
+                    <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="broadband-jitter">--</div></div>
+                </div>
+                <div class="st-detail-card broadband-node-card">
                     <div class="st-detail-title" data-i18n="speedtest_node">测速节点</div>
                     <div class="st-detail-row"><span data-i18n="node">节点</span><strong id="broadband-node-name">--</strong></div>
                     <div class="st-detail-row"><span data-i18n="provider">运营商</span><strong id="broadband-node-provider">--</strong></div>
                     <div class="st-detail-row"><span data-i18n="region">地区</span><strong id="broadband-node-region">--</strong></div>
                     <div class="st-detail-row"><span data-i18n="source">来源</span><strong id="broadband-node-source">--</strong></div>
-                </div>
-                <div class="st-detail-card">
-                    <div class="st-detail-title" data-i18n="stage_duration">阶段耗时</div>
-                    <div class="st-detail-row"><span data-i18n="select_node">选节点</span><strong id="broadband-duration-node">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="latency_col">延迟</span><strong id="broadband-duration-latency">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="download">下载</span><strong id="broadband-duration-download">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="upload">上传</span><strong id="broadband-duration-upload">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="total_duration">总耗时</span><strong id="broadband-duration-total">--</strong></div>
-                </div>
-                <div class="st-detail-card">
-                    <div class="st-detail-title" data-i18n="failure_info">失败信息</div>
-                    <div class="st-detail-row"><span data-i18n="stage">阶段</span><strong id="broadband-failure-stage">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="reason">原因</span><strong id="broadband-failure-reason">--</strong></div>
                 </div>
             </div>
 

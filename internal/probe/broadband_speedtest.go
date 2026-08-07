@@ -79,7 +79,6 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 		duration = 15 * time.Second
 	}
 	ctx = withStepReporter(ctx, step)
-	startedAt := time.Now()
 	domesticOnly := true
 	streams := defaultBroadbandStreams
 	dataDir := ""
@@ -123,7 +122,6 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 			r.FailureStage = stage
 			r.FailureReason = reason
 			r.Error = reason
-			r.StageDurations.TotalMS = elapsedMS(startedAt)
 		})
 		return currentResult(), false
 	}
@@ -143,7 +141,6 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 	var downloadSamples, uploadSamples []speedSample
 
 	var server *speedtest.Server
-	nodeStartedAt := time.Now()
 
 	if domesticOnly {
 		report("starting", 5, "正在检索国内优质运营商节点")
@@ -181,10 +178,6 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 			}
 		}
 	}
-	nodeSelectionMS := elapsedMS(nodeStartedAt)
-	setResult(func(r *BroadbandSpeedResult) {
-		r.StageDurations.NodeSelectionMS = nodeSelectionMS
-	})
 
 	if server == nil {
 		return fail("node_selection", "无法连接到测速服务器")
@@ -202,14 +195,12 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 	report("latency", 15, fmt.Sprintf("已选节点：%s (%s)", server.Sponsor, server.Name))
 	emitStep(ctx, "node_selection", "ok", fmt.Sprintf("已选节点: %s · %s", server.Sponsor, server.Name))
 
-	latencyStartedAt := time.Now()
 	_ = server.PingTestContext(ctx, nil)
 	latencyMS := int64(server.Latency.Milliseconds())
 	jitterMS := int64(server.Jitter.Milliseconds())
 	setResult(func(r *BroadbandSpeedResult) {
 		r.LatencyMS = latencyMS
 		r.JitterMS = jitterMS
-		r.StageDurations.LatencyTestMS = elapsedMS(latencyStartedAt)
 	})
 	report("latency", 25, fmt.Sprintf("延迟 %d ms · 抖动 %d ms", latencyMS, jitterMS))
 	emitStep(ctx, "latency", "ok", fmt.Sprintf("延迟 %d ms · 抖动 %d ms", latencyMS, jitterMS))
@@ -258,7 +249,6 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 	setResult(func(r *BroadbandSpeedResult) {
 		r.DownloadMbps = downloadMbps
 		r.DownloadMbpsEWMA = dlEWMA
-		r.StageDurations.DownloadTestMS = elapsedMS(downloadStart)
 	})
 	report("download", 60, fmt.Sprintf("下载完成 %.1f Mbps", downloadMbps))
 	emitStep(ctx, "download", "ok", fmt.Sprintf("下载完成 %.1f Mbps (EWMA %.1f)", downloadMbps, dlEWMA))
@@ -300,14 +290,12 @@ func executeBroadbandSpeedTest(ctx context.Context, svc *Service, duration time.
 	setResult(func(r *BroadbandSpeedResult) {
 		r.UploadMbps = uploadMbps
 		r.UploadMbpsEWMA = ulEWMA
-		r.StageDurations.UploadTestMS = elapsedMS(uploadStart)
 	})
 	report("upload", 95, fmt.Sprintf("上传完成 %.1f Mbps", uploadMbps))
 	emitStep(ctx, "upload", "ok", fmt.Sprintf("上传完成 %.1f Mbps", uploadMbps))
 
 	setResult(func(r *BroadbandSpeedResult) {
 		r.Timestamp = localTimestamp()
-		r.StageDurations.TotalMS = elapsedMS(startedAt)
 	})
 	report("finalizing", 100, "测速全部完成")
 	emitStep(ctx, "finalizing", "ok", "测速全部完成")
