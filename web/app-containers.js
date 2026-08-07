@@ -66,6 +66,7 @@ function handleContainerAction(e) {
 }
 
 function refreshAll() {
+    if (window.__app.refreshAppTraffic) window.__app.refreshAppTraffic();
 }
 
 window.__app.fetchContainers = fetchContainers;

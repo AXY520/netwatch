@@ -309,6 +309,8 @@ const state = {
             nic_realtime_enabled: data.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: data.nic_realtime_interval_sec || 1,
             chart_time_label_interval: data.chart_time_label_interval || 0,
+            traffic_sampling_enabled: data.traffic_sampling_enabled !== false,
+            traffic_sampling_interval_sec: data.traffic_sampling_interval_sec || 60,
             per_app_sampling_interval: data.per_app_sampling_interval || {},
             persistent_traffic_bridges: data.persistent_traffic_bridges || [],
             domestic_sites: data.domestic_sites || [],

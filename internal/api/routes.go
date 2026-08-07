@@ -59,6 +59,7 @@ func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {

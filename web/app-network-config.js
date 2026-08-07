@@ -7,6 +7,9 @@ var i18n = window.__app.i18n;
 var netwatchGet = window.__app.netwatchGet;
 var netwatchPost = window.__app.netwatchPost;
 var refreshNetworkDetailCards = window.__app.refreshNetworkDetailCards;
+function refreshAppTrafficSoon() {
+    if (window.__app.refreshAppTrafficSoon) window.__app.refreshAppTrafficSoon();
+}
 
 function appendNetworkMutationVerification(output, verification) {
     output = String(output || '').trim();

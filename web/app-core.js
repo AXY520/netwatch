@@ -23,6 +23,8 @@ var state = {
         nic_realtime_enabled: true,
         nic_realtime_interval_sec: 1,
         chart_time_label_interval: 0,
+        traffic_sampling_enabled: true,
+        traffic_sampling_interval_sec: 60,
         per_app_sampling_interval: {},
         persistent_traffic_bridges: [],
         background_monitor_enabled: false,

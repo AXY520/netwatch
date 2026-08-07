@@ -26,6 +26,8 @@ function openWindow(name) {
     els.transferWindow.classList.remove('active');
     if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
+    var tsWin = document.getElementById('traffic-settings-window');
+    if (tsWin) tsWin.classList.remove('active');
 
     if (name === 'settings') {
         els.settingsWindow.classList.add('active');
@@ -82,6 +84,8 @@ async function closeCurrentWindow() {
     els.transferWindow.classList.remove('active');
     if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
+    var tsWin = document.getElementById('traffic-settings-window');
+    if (tsWin) tsWin.classList.remove('active');
     els.backdrop.classList.remove('active');
     NetwatchShared.unlockModalScroll();
     state.activeWindow = null;
@@ -535,8 +539,15 @@ function initWithRetry(maxRetries) {
         window.__app.loadSettings ? window.__app.loadSettings() : Promise.resolve()
     ]).then(function () {
         initDashboardPanelCollapse();
+        var appTrafficWasInitialized = state.appTrafficInitialized;
+        if (!appTrafficWasInitialized && window.__app.initAppTraffic) {
+            window.__app.initAppTraffic();
+        }
         window.__app.updateWindowControls();
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
+        if (appTrafficWasInitialized && window.__app.refreshAppTraffic) {
+            window.__app.refreshAppTraffic();
+        }
         if (window.__app.loadSummary) return window.__app.loadSummary(false, true);
     }).then(function () {
         if (!state.summary || !state.summary.ready) {
@@ -546,6 +557,9 @@ function initWithRetry(maxRetries) {
         }
     }).catch(function () {
         initDashboardPanelCollapse();
+        if (!state.appTrafficInitialized && window.__app.initAppTraffic) {
+            window.__app.initAppTraffic();
+        }
     });
 
     initSSE();
