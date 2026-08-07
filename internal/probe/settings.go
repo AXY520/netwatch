@@ -22,7 +22,7 @@ func DefaultMutableSettings() MutableSettings {
 		BackgroundMonitorIntervalSec:   60,
 		NotificationsEnabled:           false,
 		ClientNotificationEnabled:      true,
-		NotifyAbnormalTraffic:          true,
+		NotifyAbnormalTraffic:          false,
 		NotifyEgressChange:             true,
 		NotifyConnectivityChange:       true,
 		NotifyLANDeviceChange:          true,
