@@ -1542,21 +1542,55 @@ button.icon-button,
         }
         .broadband-summary-grid {
             display: grid;
-            grid-template-columns: minmax(12rem, 0.72fr) minmax(20rem, 1.28fr);
+            grid-template-columns: minmax(15rem, 0.8fr) minmax(20rem, 1.2fr);
             gap: 1rem;
             align-items: stretch;
         }
-        .broadband-latency-pair {
+        .broadband-latency-card {
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.75rem;
+            grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+            align-items: center;
+            min-height: 0;
+            padding: 0.85rem 1rem;
         }
-        .broadband-latency-pair .st-chip {
-            min-height: 100%;
-            align-content: center;
+        .broadband-latency-divider {
+            width: 1px;
+            height: 2.4rem;
+            background: var(--border-subtle);
+        }
+        .broadband-latency-metric {
+            display: grid;
+            gap: 0.35rem;
+            text-align: center;
+        }
+        .broadband-latency-metric span {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+        }
+        .broadband-latency-metric strong {
+            color: var(--text-main);
+            font-family: var(--font-number);
+            font-size: 1.05rem;
+            font-variant-numeric: tabular-nums;
         }
         .broadband-node-card {
             min-width: 0;
+            padding-top: 0.7rem;
+            padding-bottom: 0.7rem;
+            color: var(--text-muted);
+        }
+        .broadband-node-card .st-detail-title {
+            color: var(--text-muted);
+            font-size: 0.68rem;
+        }
+        .broadband-node-card .st-detail-row {
+            min-height: 1.65rem;
+            color: var(--text-muted);
+            font-size: 0.72rem;
+        }
+        .broadband-node-card .st-detail-row strong {
+            color: var(--text-secondary);
+            font-weight: 500;
         }
         .connectivity-table-fixed .target-info {
             min-width: 0;

@@ -273,9 +273,10 @@
             </div>
 
             <div class="broadband-summary-grid" id="broadband-detail">
-                <div class="broadband-latency-pair">
-                    <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="broadband-latency">--</div></div>
-                    <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="broadband-jitter">--</div></div>
+                <div class="st-detail-card broadband-latency-card">
+                    <div class="broadband-latency-metric"><span data-i18n="latency_col">延迟</span><strong id="broadband-latency">--</strong></div>
+                    <div class="broadband-latency-divider" aria-hidden="true"></div>
+                    <div class="broadband-latency-metric"><span data-i18n="latency_jitter">抖动</span><strong id="broadband-jitter">--</strong></div>
                 </div>
                 <div class="st-detail-card broadband-node-card">
                     <div class="st-detail-title" data-i18n="speedtest_node">测速节点</div>
