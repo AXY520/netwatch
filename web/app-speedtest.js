@@ -110,6 +110,10 @@ function renderBroadbandDetails(result) {
     window.__app.setText(els.broadbandNodeRegion, result.server_country || result.server_region || '--');
 }
 
+function formatMeasuredMS(value, measured) {
+    return measured && Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value)) + ' ms' : '--';
+}
+
 function resetTransferDetails() {
 }
 
@@ -117,8 +121,9 @@ function renderTransferDetails(stats) {
     stats = stats || {};
     var downloadMB = Number(stats.download_mb) || 0;
     var uploadMB = Number(stats.upload_mb) || 0;
-    window.__app.setText(els.transferLatency, window.__app.formatMS(stats.rtt_avg_ms));
-    window.__app.setText(els.transferJitter, window.__app.formatMS(stats.jitter_ms));
+    var measured = Number(stats.rtt_avg_ms) > 0;
+    window.__app.setText(els.transferLatency, formatMeasuredMS(stats.rtt_avg_ms, measured));
+    window.__app.setText(els.transferJitter, formatMeasuredMS(stats.jitter_ms, measured));
 }
 
 function resetBroadbandMetrics() {
@@ -167,8 +172,9 @@ function renderBroadbandSteps(steps) {
 function renderBroadbandTask(task) {
     task = task || {};
     els.broadbandNote.textContent = task.message || window.__app.broadbandStageMap[task.stage] || i18n('standby');
-    els.broadbandLatency.textContent = window.__app.formatMS(task.result && task.result.latency_ms);
-    els.broadbandJitter.textContent = window.__app.formatMS(task.result && task.result.jitter_ms);
+    var latencyMeasured = !!(task.result && Number(task.result.latency_ms) > 0);
+    els.broadbandLatency.textContent = formatMeasuredMS(task.result && task.result.latency_ms, latencyMeasured);
+    els.broadbandJitter.textContent = formatMeasuredMS(task.result && task.result.jitter_ms, latencyMeasured);
     els.broadbandDownload.textContent = window.__app.formatMbps(task.result && task.result.download_mbps);
     els.broadbandUpload.textContent = window.__app.formatMbps(task.result && task.result.upload_mbps);
     renderBroadbandDetails(task.result || {});
