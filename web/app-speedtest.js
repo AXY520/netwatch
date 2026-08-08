@@ -41,13 +41,13 @@ async function loadSpeedHistory() {
 
 function renderBroadbandHistory(items) {
     els.broadbandHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div><div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small></div></div>' + historyNoteHTML('broadband', item) + '</div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div>' + historyNoteHTML('broadband', item) + '<div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small></div></div></div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
 function renderTransferHistory(items) {
     els.transferHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + ' \u00B7 ' + i18n('total') + ' ' + window.__app.formatMB(item.payload_mb || ((item.download_mb || 0) + (item.upload_mb || 0))) + '</small></div><div class="history-item-metrics"><small>RTT ' + (item.rtt_min_ms || 0) + '/' + (item.rtt_avg_ms || item.round_trip_latency_ms || 0) + '/' + (item.rtt_max_ms || 0) + ' ms</small><small>' + i18n('duration') + ' ' + window.__app.formatDurationMS(item.duration_ms) + '</small></div></div>' + historyNoteHTML('local', item) + '</div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + ' \u00B7 ' + i18n('total') + ' ' + window.__app.formatMB(item.payload_mb || ((item.download_mb || 0) + (item.upload_mb || 0))) + '</small></div>' + historyNoteHTML('local', item) + '<div class="history-item-metrics"><small>RTT ' + (item.rtt_avg_ms || item.round_trip_latency_ms || 0) + ' ms</small></div></div></div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
@@ -113,28 +113,14 @@ function renderBroadbandDetails(result) {
 }
 
 function resetTransferDetails() {
-    window.__app.setText(els.transferRTTMin);
-    window.__app.setText(els.transferRTTAvg);
-    window.__app.setText(els.transferRTTMax);
-    window.__app.setText(els.transferRTTJitter);
-    window.__app.setText(els.transferDownloadBytes);
-    window.__app.setText(els.transferUploadBytes);
-    window.__app.setText(els.transferTotalBytes);
-    window.__app.setText(els.transferDuration);
 }
 
 function renderTransferDetails(stats) {
     stats = stats || {};
     var downloadMB = Number(stats.download_mb) || 0;
     var uploadMB = Number(stats.upload_mb) || 0;
-    window.__app.setText(els.transferRTTMin, window.__app.formatMS(stats.rtt_min_ms));
-    window.__app.setText(els.transferRTTAvg, window.__app.formatMS(stats.rtt_avg_ms));
-    window.__app.setText(els.transferRTTMax, window.__app.formatMS(stats.rtt_max_ms));
-    window.__app.setText(els.transferRTTJitter, window.__app.formatMS(stats.jitter_ms));
-    window.__app.setText(els.transferDownloadBytes, window.__app.formatMB(downloadMB));
-    window.__app.setText(els.transferUploadBytes, window.__app.formatMB(uploadMB));
-    window.__app.setText(els.transferTotalBytes, window.__app.formatMB(stats.payload_mb || (downloadMB + uploadMB)));
-    window.__app.setText(els.transferDuration, window.__app.formatDurationMS(stats.duration_ms));
+    window.__app.setText(els.transferLatency, window.__app.formatMS(stats.rtt_avg_ms));
+    window.__app.setText(els.transferJitter, window.__app.formatMS(stats.jitter_ms));
 }
 
 function resetBroadbandMetrics() {
@@ -150,8 +136,6 @@ function resetBroadbandMetrics() {
 }
 
 function resetTransferMetrics() {
-    els.transferStage.textContent = i18n('idle');
-    els.transferProgress.textContent = '0%';
     els.transferNote.textContent = i18n('transfer_note_prefix') + state.speedConfig.local_transfer_duration_sec + i18n('seconds_unit');
     window.__app.setPrimaryStatus(els.transferPrimaryMode, els.transferPrimaryCaption, 'Idle', i18n('standby'));
     window.__app.setSpeedPanelMode('transfer', 'Idle');
@@ -212,8 +196,6 @@ function renderBroadbandTask(task) {
 }
 
 function updateTransferProgress(stage, progress, message) {
-    els.transferStage.textContent = stage;
-    els.transferProgress.textContent = Math.max(0, Math.min(100, Math.round(progress))) + '%';
     els.transferNote.textContent = stage;
 }
 
@@ -379,8 +361,6 @@ async function runTransferTest() {
 
         var current = testStateMap[data.testState];
         if (current) {
-            els.transferStage.textContent = current.stage;
-            els.transferProgress.textContent = Math.round(current.progress) + '%';
 
             var speed = 0;
             var caption = '';
@@ -453,8 +433,6 @@ async function runTransferTest() {
         transferStats.payload_mb = transferStats.download_mb + transferStats.upload_mb;
         renderTransferDetails(transferStats);
 
-        els.transferStage.textContent = i18n('complete');
-        els.transferProgress.textContent = '100%';
         els.transferNote.textContent = i18n('transfer_done');
         window.__app.setPrimaryStatus(els.transferPrimaryMode, els.transferPrimaryCaption, 'Result', i18n('speedtest_complete'));
         window.__app.setSpeedPanelMode('transfer', 'Result');
@@ -495,7 +473,6 @@ async function runTransferTest() {
         s.start();
     } catch (error) {
         console.error(error);
-        els.transferStage.textContent = i18n('start_failed');
         els.transferNote.textContent = i18n('transfer_start_failed');
         window.__app.setPrimaryStatus(els.transferPrimaryMode, els.transferPrimaryCaption, 'Error', i18n('speedtest_start_failed'));
         window.__app.setSpeedPanelMode('transfer', 'Error');
@@ -514,9 +491,7 @@ function cancelTransferTest(showStopped) {
     }
     window.__app.updateWindowControls();
     if (showStopped) {
-        els.transferStage.textContent = i18n('canceled');
         els.transferNote.textContent = i18n('transfer_stopped');
-        els.transferProgress.textContent = '0%';
         window.__app.setPrimaryStatus(els.transferPrimaryMode, els.transferPrimaryCaption, 'Stopped', i18n('manual_stop'));
         window.__app.setSpeedPanelMode('transfer', 'Stopped');
     }

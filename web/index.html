@@ -320,28 +320,9 @@
                 </div>
             </div>
 
-            <div class="st-meta">
-                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_col">延迟</div><div class="st-chip-value" id="transfer-latency">--</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="latency_jitter">抖动</div><div class="st-chip-value" id="transfer-jitter">--</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="stage">阶段</div><div class="st-chip-value" id="transfer-stage">待启动</div></div>
-                <div class="st-chip"><div class="st-chip-label" data-i18n="progress">进度</div><div class="st-chip-value" id="transfer-progress">等待</div></div>
-            </div>
-
-            <div class="st-detail-grid" id="transfer-detail">
-                <div class="st-detail-card">
-                    <div class="st-detail-title" data-i18n="rtt_stats">RTT 统计</div>
-                    <div class="st-detail-row"><span data-i18n="min_rtt">最小</span><strong id="transfer-rtt-min">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="avg_rtt">平均</span><strong id="transfer-rtt-avg">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="max_rtt">最大</span><strong id="transfer-rtt-max">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="latency_jitter">抖动</span><strong id="transfer-rtt-jitter">--</strong></div>
-                </div>
-                <div class="st-detail-card">
-                    <div class="st-detail-title" data-i18n="current_transfer">本次传输</div>
-                    <div class="st-detail-row"><span data-i18n="download_data">下载数据</span><strong id="transfer-download-bytes">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="upload_data">上传数据</span><strong id="transfer-upload-bytes">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="total">合计</span><strong id="transfer-total-bytes">--</strong></div>
-                    <div class="st-detail-row"><span data-i18n="duration">耗时</span><strong id="transfer-duration">--</strong></div>
-                </div>
+            <div class="transfer-facts" id="transfer-detail">
+                <div class="broadband-fact"><span data-i18n="latency_col">延迟</span><strong id="transfer-latency">--</strong></div>
+                <div class="broadband-fact"><span data-i18n="latency_jitter">抖动</span><strong id="transfer-jitter">--</strong></div>
             </div>
 
         </div>
