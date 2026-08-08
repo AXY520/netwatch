@@ -1540,57 +1540,35 @@ button.icon-button,
             font-variant-numeric: tabular-nums;
             font-feature-settings: "tnum";
         }
-        .broadband-summary-grid {
+        .broadband-facts {
             display: grid;
-            grid-template-columns: minmax(15rem, 0.8fr) minmax(20rem, 1.2fr);
-            gap: 1rem;
-            align-items: stretch;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.75rem;
         }
-        .broadband-latency-card {
+        .broadband-fact {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
-            align-items: center;
-            min-height: 0;
-            padding: 0.85rem 1rem;
-        }
-        .broadband-latency-divider {
-            width: 1px;
-            height: 2.4rem;
-            background: var(--border-subtle);
-        }
-        .broadband-latency-metric {
-            display: grid;
-            gap: 0.35rem;
-            text-align: center;
-        }
-        .broadband-latency-metric span {
-            color: var(--text-muted);
-            font-size: 0.7rem;
-        }
-        .broadband-latency-metric strong {
-            color: var(--text-main);
-            font-family: var(--font-number);
-            font-size: 1.05rem;
-            font-variant-numeric: tabular-nums;
-        }
-        .broadband-node-card {
+            align-content: center;
+            gap: 0.4rem;
             min-width: 0;
-            padding-top: 0.7rem;
-            padding-bottom: 0.7rem;
-            color: var(--text-muted);
+            min-height: 5.2rem;
+            padding: 0.75rem 0.9rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: rgba(255,255,255,0.018);
         }
-        .broadband-node-card .st-detail-title {
+        .broadband-fact span {
             color: var(--text-muted);
             font-size: 0.68rem;
         }
-        .broadband-node-card .st-detail-row {
-            min-height: 1.65rem;
-            color: var(--text-muted);
-            font-size: 0.72rem;
-        }
-        .broadband-node-card .st-detail-row strong {
+        .broadband-fact strong {
+            overflow: hidden;
             color: var(--text-secondary);
-            font-weight: 500;
+            font-family: var(--font-number);
+            font-size: 0.88rem;
+            font-weight: 550;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
         }
         .connectivity-table-fixed .target-info {
             min-width: 0;
@@ -4483,7 +4461,8 @@ button.icon-button,
 }
 
 @media (max-width: 760px) {
-    .broadband-summary-grid { grid-template-columns: 1fr; }
+    .broadband-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .broadband-fact:last-child { grid-column: span 2; }
     .event-row { grid-template-columns: 16px minmax(0, 1fr); }
     .event-time { grid-column: 2; padding: 0.5rem 0.8rem 0; white-space: normal; }
     .event-content { grid-column: 2; padding: 0.2rem 0.8rem 0.52rem; }

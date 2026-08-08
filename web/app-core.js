@@ -168,7 +168,6 @@ var els = {
     broadbandNodeName: document.getElementById('broadband-node-name'),
     broadbandNodeProvider: document.getElementById('broadband-node-provider'),
     broadbandNodeRegion: document.getElementById('broadband-node-region'),
-    broadbandNodeSource: document.getElementById('broadband-node-source'),
     broadbandSteps: document.getElementById('broadband-steps'),
     transferPrimaryMode: document.getElementById('transfer-primary-mode'),
     transferPrimaryCaption: document.getElementById('transfer-primary-caption'),

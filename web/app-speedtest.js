@@ -103,7 +103,6 @@ function resetBroadbandDetails() {
     window.__app.setText(els.broadbandNodeName);
     window.__app.setText(els.broadbandNodeProvider);
     window.__app.setText(els.broadbandNodeRegion);
-    window.__app.setText(els.broadbandNodeSource);
 }
 
 function renderBroadbandDetails(result) {
@@ -111,7 +110,6 @@ function renderBroadbandDetails(result) {
     window.__app.setText(els.broadbandNodeName, result.server_name || result.server_region || '--');
     window.__app.setText(els.broadbandNodeProvider, result.provider || '--');
     window.__app.setText(els.broadbandNodeRegion, result.server_country || result.server_region || '--');
-    window.__app.setText(els.broadbandNodeSource, result.node_source ? result.node_source + (result.domestic_node ? ' \u00B7 ' + i18n('domestic_node') : '') : '--');
 }
 
 function resetTransferDetails() {
