@@ -53,7 +53,7 @@ function renderTransferHistory(items) {
 
 function historyNoteHTML(kind, item) {
     var note = String(item.note || '');
-    return '<div class="history-note" data-kind="' + kind + '" data-id="' + NetwatchShared.escapeHtml(item.id || '') + '"><span class="history-note-label">' + i18n('speed_history_note') + '</span><span class="history-note-text' + (note ? '' : ' placeholder') + '">' + NetwatchShared.escapeHtml(note || i18n('speed_history_add_note')) + '</span><button type="button" class="history-note-edit" data-note="' + NetwatchShared.escapeHtml(note) + '">' + i18n('speed_history_note') + '</button></div>';
+    return '<div class="history-note" data-kind="' + kind + '" data-id="' + NetwatchShared.escapeHtml(item.id || '') + '"><span class="history-note-text' + (note ? '' : ' placeholder') + '" tabindex="0" role="button" data-note="' + NetwatchShared.escapeHtml(note) + '">' + NetwatchShared.escapeHtml(note || i18n('speed_history_add_note')) + '</span></div>';
 }
 
 async function saveSpeedHistoryNote(kind, id, note) {
@@ -70,32 +70,30 @@ function bindSpeedHistoryNotes() {
         if (!container || container.dataset.noteBound) return;
         container.dataset.noteBound = '1';
         container.addEventListener('click', function (event) {
-            var edit = event.target.closest && event.target.closest('.history-note-edit');
+            var edit = event.target.closest && event.target.closest('.history-note-text');
             if (!edit) return;
             var row = edit.closest('.history-note');
             if (!row) return;
             var note = edit.dataset.note || '';
-            row.innerHTML = '<input class="history-note-input" maxlength="200" value="' + NetwatchShared.escapeHtml(note) + '" placeholder="' + NetwatchShared.escapeHtml(i18n('speed_history_note_placeholder')) + '"><button type="button" class="history-note-save">' + i18n('save_btn') + '</button><button type="button" class="history-note-cancel">' + i18n('close_btn') + '</button>';
+            row.innerHTML = '<input class="history-note-input" maxlength="200" value="' + NetwatchShared.escapeHtml(note) + '" placeholder="' + NetwatchShared.escapeHtml(i18n('speed_history_note_placeholder')) + '">';
             var input = row.querySelector('.history-note-input');
             input.focus();
+            input.addEventListener('blur', function () { saveHistoryNoteRow(row); }, { once: true });
+            input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
         });
-        container.addEventListener('click', async function (event) {
-            var row = event.target.closest && event.target.closest('.history-note');
-            if (!row) return;
-            if (event.target.closest('.history-note-cancel')) {
-                await loadSpeedHistory();
-                return;
-            }
-            if (!event.target.closest('.history-note-save')) return;
+        async function saveHistoryNoteRow(row) {
             var input = row.querySelector('.history-note-input');
+            if (!input || row.dataset.saving) return;
+            row.dataset.saving = '1';
             try {
                 await saveSpeedHistoryNote(row.dataset.kind, row.dataset.id, input ? input.value.trim() : '');
                 await loadSpeedHistory();
             } catch (error) {
                 if (input) input.setCustomValidity(error.message || i18n('save_failed'));
                 if (input) input.reportValidity();
+                delete row.dataset.saving;
             }
-        });
+        }
     });
 }
 
