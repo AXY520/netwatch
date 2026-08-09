@@ -26,8 +26,6 @@ function openWindow(name) {
     els.transferWindow.classList.remove('active');
     if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
-    var tsWin = document.getElementById('traffic-settings-window');
-    if (tsWin) tsWin.classList.remove('active');
 
     if (name === 'settings') {
         els.settingsWindow.classList.add('active');
@@ -84,8 +82,6 @@ async function closeCurrentWindow() {
     els.transferWindow.classList.remove('active');
     if (els.networkConfigWindow) els.networkConfigWindow.classList.remove('active');
     if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.remove('active');
-    var tsWin = document.getElementById('traffic-settings-window');
-    if (tsWin) tsWin.classList.remove('active');
     els.backdrop.classList.remove('active');
     NetwatchShared.unlockModalScroll();
     state.activeWindow = null;

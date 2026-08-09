@@ -115,7 +115,7 @@ function initAppTraffic() {
             countLabel: i18n('apps_unit'),
             generatedAt: data.generated_at,
             stale: list.some(function (item) { return item.stale; }),
-            staleAfterSeconds: Math.max(180, Number(state.settings.traffic_sampling_interval_sec || 60) * 3),
+            staleAfterSeconds: 180,
             title: data.note || ''
         });
         if (noteEl) noteEl.textContent = data.note || '';
@@ -177,111 +177,6 @@ function initAppTraffic() {
     if (btn) btn.addEventListener('click', load);
     load();
 
-    var settingsBtn = document.getElementById('traffic-settings-btn');
-    var trafficSettingsWindow = document.getElementById('traffic-settings-window');
-    var closeTrafficSettingsBtn = document.getElementById('close-traffic-settings-window');
-
-    function populateTrafficSettings() {
-        var el = function (id) { return document.getElementById(id); };
-        if (el('ts-sampling-enabled')) el('ts-sampling-enabled').checked = !!state.settings.traffic_sampling_enabled;
-        if (el('ts-global-interval')) {
-            el('ts-global-interval').value = String(state.settings.traffic_sampling_interval_sec || 60);
-            if (window.syncCustomSelect) window.syncCustomSelect(el('ts-global-interval'));
-        }
-        if (el('ts-container-control-enabled')) el('ts-container-control-enabled').checked = !!state.settings.container_control_enabled;
-        var perAppList = el('ts-per-app-list');
-        if (perAppList && latestTrafficData && latestTrafficData.bridges) {
-            var perApp = state.settings.per_app_sampling_interval || {};
-            perAppList.innerHTML = latestTrafficData.bridges.filter(function (b) { return !NetwatchShared.isNetwatchBridge(b); }).map(function (b) {
-                var title = b.app_title || window.__app.shortAppName(b.app_id) || b.bridge;
-                var currentVal = perApp[b.bridge] || '';
-                var options = [
-                    { v: '', l: i18n('follow_global') },
-                    { v: '10', l: '10 ' + i18n('seconds_short') },
-                    { v: '30', l: '30 ' + i18n('seconds_short') },
-                    { v: '60', l: '60 ' + i18n('seconds_short') },
-                    { v: '120', l: '120 ' + i18n('seconds_short') },
-                    { v: '300', l: '300 ' + i18n('seconds_short') }
-                ].map(function (o) { return '<option value="' + o.v + '" ' + (String(currentVal) === o.v ? 'selected' : '') + '>' + o.l + '</option>'; }).join('');
-                return '<div class="ts-per-app-item" data-bridge="' + b.bridge + '"><span class="ts-app-name" title="' + b.bridge + '">' + title + '</span><select class="ts-per-app-select">' + options + '</select></div>';
-            }).join('');
-            if (window.enhanceSelects) window.enhanceSelects(perAppList);
-        }
-    }
-
-    function openTrafficSettings() {
-        if (!trafficSettingsWindow) return;
-        populateTrafficSettings();
-        trafficSettingsWindow.classList.add('active');
-        document.getElementById('window-backdrop').classList.add('active');
-        NetwatchShared.lockModalScroll();
-    }
-
-    async function saveTrafficSettings() {
-        var perApp = {};
-        var perAppList = document.getElementById('ts-per-app-list');
-        if (perAppList) {
-            perAppList.querySelectorAll('.ts-per-app-item').forEach(function (item) {
-                var bridge = item.dataset.bridge;
-                var select = item.querySelector('.ts-per-app-select');
-                if (select && select.value) {
-                    perApp[bridge] = parseInt(select.value, 10);
-                }
-            });
-        }
-        var el = function (id) { return document.getElementById(id); };
-        var payload = {
-            refresh_interval_sec: state.settings.refresh_interval_sec,
-            broadband_domestic_only: state.settings.broadband_domestic_only,
-            nic_realtime_enabled: state.settings.nic_realtime_enabled,
-            nic_realtime_interval_sec: state.settings.nic_realtime_interval_sec,
-            chart_time_label_interval: state.settings.chart_time_label_interval,
-            traffic_sampling_enabled: !!el('ts-sampling-enabled').checked,
-            traffic_sampling_interval_sec: parseInt(el('ts-global-interval').value || '60', 10) || 60,
-            per_app_sampling_interval: perApp,
-            persistent_traffic_bridges: state.settings.persistent_traffic_bridges || [],
-            container_control_enabled: !!el('ts-container-control-enabled').checked,
-            background_monitor_enabled: state.settings.background_monitor_enabled,
-            background_monitor_interval_sec: state.settings.background_monitor_interval_sec,
-            notifications_enabled: state.settings.notifications_enabled,
-            client_notification_enabled: state.settings.client_notification_enabled !== false,
-            notify_abnormal_traffic: state.settings.notify_abnormal_traffic,
-            notify_egress_change: state.settings.notify_egress_change,
-            notify_connectivity_change: state.settings.notify_connectivity_change,
-            notify_lan_device_change: state.settings.notify_lan_device_change,
-            lan_device_offline_after_sec: state.settings.lan_device_offline_after_sec || 180,
-            lan_device_online_after_sec: state.settings.lan_device_online_after_sec || 0,
-            lan_device_offline_notify_delay_sec: state.settings.lan_device_offline_notify_delay_sec || 120,
-            lan_device_online_notify_delay_sec: state.settings.lan_device_online_notify_delay_sec || 120,
-            abnormal_traffic_threshold_mbps: state.settings.abnormal_traffic_threshold_mbps,
-            bark_enabled: state.settings.bark_enabled,
-            bark_server_url: state.settings.bark_server_url,
-            bark_device_key: state.settings.bark_device_key,
-            bark_group: state.settings.bark_group
-        };
-        try {
-            var saved = await netwatchPost('/api/v1/settings', payload);
-            state.settings = Object.assign({}, state.settings, saved);
-            trafficSettingsWindow.classList.remove('active');
-            document.getElementById('window-backdrop').classList.remove('active');
-            NetwatchShared.unlockModalScroll();
-            updateTrafficAnalysisLink();
-            if (latestTrafficData) renderTraffic(latestTrafficData);
-            NetwatchShared.showToast(i18n('traffic_settings_saved'), 'success');
-        } catch (e) {
-            NetwatchShared.showToast(i18n('save_settings_fail') + ': ' + e.message, 'error');
-        }
-    }
-
-    if (settingsBtn) settingsBtn.addEventListener('click', openTrafficSettings);
-    if (closeTrafficSettingsBtn) closeTrafficSettingsBtn.addEventListener('click', function () {
-        if (trafficSettingsWindow) trafficSettingsWindow.classList.remove('active');
-        document.getElementById('window-backdrop').classList.remove('active');
-        NetwatchShared.unlockModalScroll();
-    });
-    var tsSaveBtn = document.getElementById('ts-save-btn');
-    if (tsSaveBtn) tsSaveBtn.addEventListener('click', saveTrafficSettings);
-    updateTrafficAnalysisLink();
 }
 
 
@@ -572,33 +467,12 @@ function updateNICRealtimeRefreshButton() {
     els.nicRealtimeRefreshBtn.setAttribute('aria-label', i18n('refresh_btn'));
 }
 
-function updateTrafficAnalysisLink() {
-    var link = document.getElementById('traffic-analysis-link');
-    if (!link) return;
-    var enabled = !!(state.settings && state.settings.traffic_sampling_enabled);
-    // Entry only when traffic analysis sampling is enabled in settings.
-    link.hidden = !enabled;
-    if (enabled) {
-        link.removeAttribute('hidden');
-        link.classList.remove('is-disabled');
-        link.setAttribute('aria-disabled', 'false');
-        link.removeAttribute('tabindex');
-    } else {
-        link.setAttribute('hidden', '');
-        link.classList.add('is-disabled');
-        link.setAttribute('aria-disabled', 'true');
-        link.setAttribute('tabindex', '-1');
-    }
-    link.title = enabled ? i18n('traffic_analysis_btn') : (i18n('traffic_sampling_disabled') || i18n('traffic_analysis_btn'));
-}
-
 function refreshAppTrafficSoon() {
     // Host bridge create briefly rewires the default route; give counters/docker a beat.
     var run = function () {
         if (window.__app && typeof window.__app.refreshAppTraffic === 'function') {
             window.__app.refreshAppTraffic();
         }
-        updateTrafficAnalysisLink();
     };
     setTimeout(run, 400);
     setTimeout(run, 2000);
@@ -608,6 +482,5 @@ window.__app.initAppTraffic = initAppTraffic;
 window.__app.initNICRealtime = initNICRealtime;
 window.__app.initTrace = initTrace;
 window.__app.updateNICRealtimeRefreshButton = updateNICRealtimeRefreshButton;
-window.__app.updateTrafficAnalysisLink = updateTrafficAnalysisLink;
 window.__app.refreshAppTrafficSoon = refreshAppTrafficSoon;
 })();

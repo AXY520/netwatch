@@ -2065,9 +2065,6 @@ button.icon-button,
         .btn-sm:hover { border-color: var(--accent-cyan); }
 
         .notify-settings-compact { padding: 0.2rem 0; }
-        #traffic-settings-window {
-            width: min(480px, calc(100vw - 2rem));
-        }
         #notification-settings-window {
             width: min(520px, calc(100vw - 2rem));
             max-height: calc(100vh - 3rem);

@@ -175,7 +175,6 @@ var mutatePathPrefixes = []string{
 	"/api/v1/containers/unblock",
 	"/api/v1/network/ipv6/renew",
 	"/api/v1/settings",
-	"/api/v1/settings/persistent-traffic-bridges",
 }
 
 func isMutatePath(path string) bool {
