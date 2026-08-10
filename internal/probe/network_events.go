@@ -290,6 +290,40 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 		if current, err := dockerlzc.BuildBridgeMap(ctx); err == nil {
 			runtime = current
 		}
+		// Some applications (for example Tailscale) use host networking and
+		// therefore never appear in the bridge map. Keep a project-level runtime
+		// record so their container exits still produce lifecycle events.
+		if containers, err := dockerlzc.ListContainerRuntime(ctx); err == nil {
+			bridgedProjects := make(map[string]bool)
+			for _, item := range runtime {
+				if item.Project != "" {
+					bridgedProjects[item.Project] = true
+				}
+			}
+			hostApps := make(map[string]AppBridgeStats)
+			for _, item := range containers {
+				if item.Project == "" || bridgedProjects[item.Project] || item.NetworkMode != "host" {
+					continue
+				}
+				app := hostApps[item.Project]
+				app.Bridge = "app-runtime:" + item.Project
+				app.AppID, app.Project = item.AppID, item.Project
+				if app.AppTitle == "" {
+					app.AppTitle = item.AppID
+				}
+				app.ContainerCount++
+				if item.Running {
+					app.RunningCount++
+					if app.CreatedAt == 0 || (item.StartedAt > 0 && item.StartedAt < app.CreatedAt) {
+						app.CreatedAt = item.StartedAt
+					}
+				}
+				hostApps[item.Project] = app
+			}
+			for _, app := range hostApps {
+				counters = append(counters, app)
+			}
+		}
 		cancel()
 	}
 	s.events.mu.RLock()
