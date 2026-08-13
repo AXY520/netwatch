@@ -1,13 +1,13 @@
 # Netwatch
 
-Netwatch 是一个面向主机网络观测的 Web 面板，用于查看网站连通性、出口 IP、出口地区、NAT 类型、网卡实时速率、应用网桥流量、路由追踪和测速结果。项目由 Go 后端和静态前端组成，支持普通 Docker 运行，也支持打包为懒猫微服 LPK 应用。
+Netwatch 是面向懒猫微服的主机网络观测应用，用于查看网站连通性、出口 IP、出口地区、NAT 类型、网卡实时速率、应用网桥流量、路由追踪和测速结果。项目以 LPK 形式构建和发布。
 
 ## 功能
 
 - 国内网站连通性：默认探测 `Baidu`、`Bilibili`
 - 国外网站连通性：默认探测 `GitHub`、`YouTube`
 - 本机网络信息：接口、地址、默认路由、DNS 等
-- 主机网络配置：通过懒猫 SDK 或本机 `nmcli` 修改网卡 IP、网桥和 DNS，并支持超时自动回滚
+- 主机网络配置：通过懒猫 SDK 修改网卡 IP、网桥和 DNS，并支持超时自动回滚
 - 出口信息：公网 IPv4/IPv6、国内出口、地区识别
 - NAT 类型检测：基于 STUN 的手动探测
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
@@ -15,40 +15,8 @@ Netwatch 是一个面向主机网络观测的 Web 面板，用于查看网站连
 - 宽带测速：基于 speedtest 节点执行下载/上传测速
 - 本机传输测速：浏览器到服务端的下载/上传/延迟测试
 - 路由追踪：基于 `mtr` 的异步 trace 任务
-- 时序与历史：保存测速历史、网卡速率时序和应用流量历史
+- 时序与历史：保存测速历史和网卡速率时序
 - 可选告警：出口 IP 或 NAT 变化时向 webhook 发送通知
-
-## 运行
-
-使用 Docker Compose：
-
-```bash
-docker compose up --build
-```
-
-直接本地运行：
-
-```bash
-go run ./cmd/server
-```
-
-默认监听 `http://localhost:8080`。直接运行时需要确保当前目录下存在 `web/`，并且系统 PATH 中有 `mtr` 才能使用路由追踪功能。
-
-## Docker
-
-`docker-compose.yml` 默认使用 host 网络：
-
-```yaml
-network_mode: host
-```
-
-这是项目的推荐模式，因为 NAT、默认路由、出口 IP、网卡统计和 `/sys/class/net` 读取都依赖宿主机网络视角。普通 bridge 网络下，看到的通常只是容器自己的网络命名空间。
-
-默认持久化目录为：
-
-```yaml
-./data:/app/data
-```
 
 ## 懒猫微服 LPK
 
@@ -80,19 +48,7 @@ application:
 ./deploy.sh
 ```
 
-Windows PowerShell：
-
-```powershell
-.\deploy.ps1
-```
-
-只打包不安装：
-
-```powershell
-.\deploy.ps1 -BuildOnly
-```
-
-Windows 部署脚本会用 Docker 在 Linux 容器里执行 `build.sh`，用于打包 `mtr` 和相关 Linux 依赖；本机需要能运行 `docker` 和 `lzc-cli`。
+`deploy.sh` 用于本地构建 LPK 并安装到默认懒猫微服，依赖 `lzc-cli` 以及 `build.sh` 所需的 Linux 工具。
 
 ## API
 

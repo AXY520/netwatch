@@ -1,0 +1,95 @@
+name: Release LPK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-lpk-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install LPK build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mtr-tiny binutils iproute2 iputils-ping iputils-arping iptables nmap-common
+          npm install -g @lazycatcloud/lzc-cli@2.0.9
+
+      - name: Read package metadata
+        id: package
+        shell: bash
+        run: |
+          package_id="$(awk -F: '/^package:/ {gsub(/[ \t]/, "", $2); print $2}' package.yml)"
+          version="$(awk -F: '/^version:/ {gsub(/[ \t\"]/, "", $2); print $2}' package.yml)"
+          echo "package_id=${package_id}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "asset=dist/${package_id}-v${version}.lpk" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Lazycat App Store token
+        env:
+          LZC_CLI_TOKEN: ${{ secrets.LZC_CLI_TOKEN }}
+        run: test -n "$LZC_CLI_TOKEN"
+
+      - name: Build LPK
+        run: |
+          sed 's/^FROM scratch$/FROM alpine:3.20/' Dockerfile.lzc > Dockerfile.release.lzc
+          cp lzc-build.yml lzc-build.release.yml
+          sed -i '/^  netwatch:$/a\    builder: local' lzc-build.release.yml
+          sed -i 's#dockerfile: ./Dockerfile.lzc#dockerfile: ./Dockerfile.release.lzc#' lzc-build.release.yml
+          lzc-cli project build --file lzc-build.release.yml
+
+      - name: Verify LPK
+        run: test -f "${{ steps.package.outputs.asset }}"
+
+      - name: Update release tag
+        env:
+          TAG: ${{ steps.package.outputs.tag }}
+        run: |
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG" --force
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.package.outputs.tag }}
+          ASSET: ${{ steps.package.outputs.asset }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" "$ASSET" --title "Netwatch ${VERSION}" --generate-notes --target "$GITHUB_SHA"
+          fi
+
+      - name: Configure Lazycat App Store token
+        env:
+          LZC_CLI_TOKEN: ${{ secrets.LZC_CLI_TOKEN }}
+        run: lzc-cli config set token "$LZC_CLI_TOKEN"
+
+      - name: Publish to Lazycat App Store
+        run: lzc-cli appstore publish "${{ steps.package.outputs.asset }}"
