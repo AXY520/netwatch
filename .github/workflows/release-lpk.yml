@@ -93,4 +93,7 @@ jobs:
         run: lzc-cli config set token "$LZC_CLI_TOKEN"
 
       - name: Publish to Lazycat App Store
-        run: lzc-cli appstore publish "${{ steps.package.outputs.asset }}"
+        run: |
+          lzc-cli appstore publish "${{ steps.package.outputs.asset }}" \
+            --changelog "Netwatch ${{ steps.package.outputs.version }} release" \
+            --changelog-locale en
