@@ -57,6 +57,7 @@ jobs:
 
       - name: Build LPK
         run: |
+          docker pull alpine:3.20
           sed 's/^FROM scratch$/FROM alpine:3.20/' Dockerfile.lzc > Dockerfile.release.lzc
           cp lzc-build.yml lzc-build.release.yml
           sed -i '/^  netwatch:$/a\    builder: local' lzc-build.release.yml
