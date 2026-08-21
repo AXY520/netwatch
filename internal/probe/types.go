@@ -76,7 +76,6 @@ type MutableSettings struct {
 	RefreshIntervalSec     int          `json:"refresh_interval_sec"`
 	NICRealtimeEnabled     bool         `json:"nic_realtime_enabled"`
 	NICRealtimeIntervalSec int          `json:"nic_realtime_interval_sec"`
-	BroadbandDomesticOnly  bool         `json:"broadband_domestic_only"`
 	DomesticSites          []SiteTarget `json:"domestic_sites"`
 	GlobalSites            []SiteTarget `json:"global_sites"`
 	AlertWebhookURL        string       `json:"alert_webhook_url"`
@@ -237,6 +236,18 @@ type NetworkConfigApplyRequest struct {
 	Address string `json:"address"`
 	Gateway string `json:"gateway"`
 	DNS     string `json:"dns"`
+}
+
+type NetworkConfigRestartRequest struct {
+	Device string `json:"device"`
+}
+
+type NetworkConfigRestartResult struct {
+	OK         bool   `json:"ok"`
+	Device     string `json:"device,omitempty"`
+	Connection string `json:"connection,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type NetworkConfigIPCheckRequest struct {
@@ -689,6 +700,10 @@ type BroadbandSpeedResult struct {
 	ID            string  `json:"id,omitempty"`
 	Note          string  `json:"note,omitempty"`
 	Timestamp     string  `json:"timestamp"`
+	TestMode      string  `json:"test_mode,omitempty"`
+	NodeID        string  `json:"node_id,omitempty"`
+	NodeName      string  `json:"node_name,omitempty"`
+	NodeCategory  string  `json:"node_category,omitempty"`
 	DownloadMbps  float64 `json:"download_mbps"`
 	UploadMbps    float64 `json:"upload_mbps"`
 	LatencyMS     int64   `json:"latency_ms"`

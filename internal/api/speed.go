@@ -66,7 +66,16 @@ func (h *Handler) handleBroadbandStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.StartBroadbandTask())
+	var request probe.BroadbandServerRequest
+	if r.Body != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		if err := decoder.Decode(&request); err != nil && err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+			return
+		}
+	}
+	request.NodeID = strings.TrimSpace(request.NodeID)
+	writeJSON(w, http.StatusOK, h.service.StartBroadbandTaskWithRequest(request))
 }
 
 func (h *Handler) handleBroadbandTask(w http.ResponseWriter, _ *http.Request) {
@@ -81,16 +90,31 @@ func (h *Handler) handleBroadbandCancel(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, h.service.CancelBroadbandTask())
 }
 
-func (h *Handler) handleBroadbandRun(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleBroadbandCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.service.GetPublicBroadbandNodes())
+}
+
+func (h *Handler) handleBroadbandClientResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if !h.acquireSpeedSlot(w) {
+	var result probe.BroadbandSpeedResult
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+	if err := decoder.Decode(&result); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	defer h.releaseSpeedSlot()
-	writeJSON(w, http.StatusOK, h.service.RunBroadbandSpeedTest(r.Context()))
+	if !validClientBroadbandResult(result) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid speed result"})
+		return
+	}
+	result.Timestamp = ""
+	writeJSON(w, http.StatusOK, h.service.RecordClientBroadbandResult(result))
 }
 
 func (h *Handler) handleBroadbandHistory(w http.ResponseWriter, _ *http.Request) {
@@ -270,6 +294,24 @@ func validLocalTransferResult(result probe.LocalTransferResult) bool {
 		result.RTTMaxMS >= 0 &&
 		result.JitterMS >= 0 &&
 		result.DurationMS >= 0
+}
+
+func validClientBroadbandResult(result probe.BroadbandSpeedResult) bool {
+	for _, value := range []float64{result.DownloadMbps, result.UploadMbps} {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 100000 {
+			return false
+		}
+	}
+	if result.LatencyMS < 0 || result.LatencyMS > 600000 || result.JitterMS < 0 || result.JitterMS > 600000 {
+		return false
+	}
+	if len([]rune(result.NodeID)) > 80 || len([]rune(result.NodeName)) > 160 || len([]rune(result.NodeCategory)) > 48 {
+		return false
+	}
+	if result.NodeID == "" {
+		return false
+	}
+	return true
 }
 
 // clampQueryLimit parses ?limit= with a default and hard max so list/history

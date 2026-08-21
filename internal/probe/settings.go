@@ -17,7 +17,6 @@ func DefaultMutableSettings() MutableSettings {
 		RefreshIntervalSec:             10,
 		NICRealtimeEnabled:             true,
 		NICRealtimeIntervalSec:         1,
-		BroadbandDomesticOnly:          true,
 		BackgroundMonitorEnabled:       false,
 		BackgroundMonitorIntervalSec:   60,
 		NotificationsEnabled:           false,
@@ -66,9 +65,6 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	// Re-apply defaults for keys absent from the on-disk document so new fields
 	// introduced later do not silently stay zero-valued after upgrade.
 	def := DefaultMutableSettings()
-	if _, ok := raw["broadband_domestic_only"]; !ok {
-		s.BroadbandDomesticOnly = def.BroadbandDomesticOnly
-	}
 	if _, ok := raw["background_monitor_interval_sec"]; !ok {
 		s.BackgroundMonitorIntervalSec = def.BackgroundMonitorIntervalSec
 	}

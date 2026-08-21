@@ -10,9 +10,6 @@ import (
 
 func TestDefaultMutableSettingsStableCore(t *testing.T) {
 	def := DefaultMutableSettings()
-	if !def.BroadbandDomesticOnly {
-		t.Fatal("expected BroadbandDomesticOnly default true")
-	}
 	if def.BackgroundMonitorIntervalSec != 60 {
 		t.Fatalf("BackgroundMonitorIntervalSec=%d", def.BackgroundMonitorIntervalSec)
 	}

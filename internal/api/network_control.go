@@ -93,6 +93,26 @@ func (h *Handler) handleNetworkConfigApply(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, status, result)
 }
 
+func (h *Handler) handleNetworkConfigRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req probe.NetworkConfigRestartRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(h.service.LifecycleContext(), 60*time.Second)
+	defer cancel()
+	result := h.service.RestartNetworkConfigDevice(ctx, req)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, result)
+}
+
 func (h *Handler) handleNetworkConfigConfirm(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

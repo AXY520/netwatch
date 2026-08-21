@@ -130,10 +130,11 @@ Block or unblock external internet access per app (bridge-level iptables). LAN t
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/speed/config` | Current speed-test configuration |
-| POST | `/api/v1/speed/broadband/start` | Start background broadband speed test |
-| GET | `/api/v1/speed/broadband/task` | Poll broadband progress / realtime speed |
-| POST | `/api/v1/speed/broadband/cancel` | Cancel running broadband test |
-| POST | `/api/v1/speed/broadband/run` | Synchronous broadband test (blocks until done) |
+| GET | `/api/v1/speed/broadband/catalog` | Read public broadband endpoint catalog |
+| POST | `/api/v1/speed/broadband/server/start` | Start server-egress-to-internet broadband test |
+| GET | `/api/v1/speed/broadband/server/task` | Poll server broadband progress / realtime speed |
+| POST | `/api/v1/speed/broadband/server/cancel` | Cancel running server broadband test |
+| POST | `/api/v1/speed/broadband/client/result` | Store browser-to-public-internet broadband result |
 | GET | `/api/v1/speed/broadband/history` | Broadband history |
 | GET | `/api/v1/speed/local/history` | LAN transfer history |
 | GET | `/api/v1/speed/local/ping` | Lightweight ping for LAN transfer tests |

@@ -60,6 +60,65 @@ func (s *Service) ListNetworkConfigDevices(ctx context.Context) NetworkConfigDev
 	return NetworkConfigDevicesResponse{Enabled: true, Devices: devices}
 }
 
+func (s *Service) RestartNetworkConfigDevice(ctx context.Context, req NetworkConfigRestartRequest) NetworkConfigRestartResult {
+	req.Device = strings.TrimSpace(req.Device)
+	if req.Device == "" {
+		return NetworkConfigRestartResult{Error: "device required"}
+	}
+	if isUnsafeNetworkDevice(req.Device) {
+		return NetworkConfigRestartResult{Device: req.Device, Error: "refuse to restart virtual or unsafe device"}
+	}
+	id, err := s.reserveNetworkMutation(networkMutationRestart, req.Device)
+	if err != nil {
+		return NetworkConfigRestartResult{Device: req.Device, Error: err.Error()}
+	}
+	defer s.abortNetworkMutation(id)
+	started := time.Now()
+	audit := func(ok bool, connection, errText string) {
+		state := "completed"
+		if !ok {
+			state = "failed"
+		}
+		s.auditNetworkMutation(NetworkMutationAuditEvent{
+			ID: id, Kind: string(networkMutationRestart), Target: req.Device,
+			Action: "restart", State: state, DurationMS: time.Since(started).Milliseconds(), Error: errText,
+		}, nil)
+		s.auditNetworkConfig(networkConfigAuditEvent{
+			Action: "restart", ID: id, Device: req.Device, Connection: connection, OK: ok, Error: errText,
+		})
+	}
+
+	invalidateHostNetworkDeviceInventoryCache()
+	devices, err := listNetworkConfigDevices(ctx)
+	if err != nil {
+		audit(false, "", err.Error())
+		return NetworkConfigRestartResult{Device: req.Device, Error: err.Error()}
+	}
+	dev, ok := findNetworkConfigDevice(devices, req.Device)
+	if !ok || strings.TrimSpace(dev.Connection) == "" {
+		errText := "网卡不可配置或未连接"
+		audit(false, "", errText)
+		return NetworkConfigRestartResult{Device: req.Device, Error: errText}
+	}
+
+	downOut, err := nmcli(ctx, []string{"device", "disconnect", req.Device}, 20*time.Second)
+	if err != nil {
+		errText := "断开网卡连接失败: " + err.Error()
+		audit(false, dev.Connection, errText)
+		return NetworkConfigRestartResult{Device: req.Device, Connection: dev.Connection, Output: strings.TrimSpace(downOut), Error: errText}
+	}
+	upOut, err := nmcli(ctx, []string{"connection", "up", dev.Connection, "ifname", req.Device}, 30*time.Second)
+	output := strings.TrimSpace(strings.Join([]string{downOut, upOut}, "\n"))
+	invalidateHostNetworkDeviceInventoryCache()
+	if err != nil {
+		errText := "重新连接网卡失败: " + err.Error()
+		audit(false, dev.Connection, errText)
+		return NetworkConfigRestartResult{Device: req.Device, Connection: dev.Connection, Output: output, Error: errText}
+	}
+	audit(true, dev.Connection, "")
+	return NetworkConfigRestartResult{OK: true, Device: req.Device, Connection: dev.Connection, Output: output}
+}
+
 func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApplyRequest) NetworkConfigApplyResult {
 	req.Device = strings.TrimSpace(req.Device)
 	req.Method = strings.TrimSpace(req.Method)
@@ -112,6 +171,7 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 		s.auditNetworkConfig(networkConfigAuditEvent{Action: "apply", ID: id, Device: req.Device, Connection: dev.Connection, Request: &req, Snapshot: &snapshot, OK: false, Error: err.Error()})
 		return NetworkConfigApplyResult{Device: req.Device, Connection: dev.Connection, Error: err.Error()}
 	}
+	invalidateHostNetworkDeviceInventoryCache()
 
 	until := time.Now().Add(networkConfigRollbackDelay)
 	rb := &networkConfigRollback{ID: id, Device: req.Device, Request: req, Previous: dev, Snapshot: snapshot, Until: until}
@@ -281,6 +341,13 @@ var hostNetworkDeviceInventoryCache struct {
 	devices []hostNetworkDeviceInventoryItem
 }
 
+func invalidateHostNetworkDeviceInventoryCache() {
+	hostNetworkDeviceInventoryCache.Lock()
+	hostNetworkDeviceInventoryCache.at = time.Time{}
+	hostNetworkDeviceInventoryCache.devices = nil
+	hostNetworkDeviceInventoryCache.Unlock()
+}
+
 // listHostNetworkDeviceInventory is the single source of truth for connected
 // host devices that may be configured or used as DNS resolver sources.
 func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInventoryItem, error) {
@@ -439,6 +506,7 @@ func restoreNetworkConfigSnapshot(ctx context.Context, device string, snap netwo
 		return strings.TrimSpace(out1), err
 	}
 	out2, err := nmcli(ctx, []string{"device", "reapply", device}, 20*time.Second)
+	invalidateHostNetworkDeviceInventoryCache()
 	return strings.TrimSpace(strings.Join([]string{out1, out2}, "\n")), err
 }
 

@@ -55,7 +55,6 @@
             "transfer_stopped": "网页到本机传输测速已停止",
             "transfer_start_failed": "网页到本机传输测速启动失败",
             "start_failed": "启动失败",
-            "broadband_note_prefix": "宽带测速使用 Speedtest.net 节点；开启仅国内节点后会强制选择国内候选节点，每阶段 ",
             "transfer_note_prefix": "浏览器与本机服务间并发下载/上传 ",
             "seconds_unit": " 秒，实时显示速率。",
             "seconds_short": "秒",
@@ -96,6 +95,12 @@
             "network_config_dns": "DNS",
             "network_config_check_ip": "检测 IP 占用",
             "network_config_apply": "应用配置",
+            "network_config_restart": "重启网卡",
+            "network_config_restart_confirm": "重启网卡会短暂中断该网卡的网络连接，当前页面可能暂时断开。确认继续？",
+            "network_config_restarting": "正在重启网卡...",
+            "network_config_restart_waiting": "重启命令已发送，正在等待网卡恢复连接...",
+            "network_config_restarted": "网卡已重启并恢复连接",
+            "network_config_restart_unreachable": "网卡重启后仍未恢复连接",
             "network_config_confirm": "确认网络可用",
             "network_config_rollback": "立即回滚",
             "network_config_disabled": "网卡配置未启用，请设置 NETWORK_CONFIG_ENABLED=true",
@@ -251,10 +256,21 @@
             "app_traffic_title": "应用流量趋势",
             "settings_window_title": "设置",
             "broadband_window_title": "宽带测速",
-            "broadband_steps_title": "操作日志",
+            "broadband_mode_client": "用户设备到公网",
+            "broadband_mode_server": "服务器出口到公网",
+            "broadband_client_note": "浏览器直接连接公网测速节点，不经过 Netwatch 服务器。",
+            "broadband_server_note": "Netwatch 服务器直接连接公网测速节点，测量服务器出口带宽。",
+            "broadband_node_label": "公网测速节点",
+            "broadband_nodes_refresh": "刷新公共测速节点",
+            "broadband_nodes_loading": "正在刷新公共测速节点",
+            "broadband_nodes_loaded": "已加载 {count} 个公共测速节点",
+            "broadband_nodes_empty": "公共测速节点目录为空",
+            "broadband_nodes_refresh_failed": "公共测速节点刷新失败，继续使用当前目录",
+            "broadband_node_invalid": "公共测速节点无效",
+            "broadband_client_starting": "正在启动用户设备到公网测速",
+            "broadband_browser_unavailable": "当前浏览器无法直连",
+            "broadband_worker_unsupported": "当前浏览器不支持后台测速 Worker",
             "transfer_window_title": "传输测速",
-            "broadband_speedtest": "宽带测速",
-            "domestic_nodes_only": "仅国内节点",
             "nic_realtime_monitor": "网卡实时刷新",
             "background_monitor": "后台检测",
             "notification_settings": "通知设置",
@@ -638,7 +654,6 @@
             "transfer_stopped": "Browser-to-server transfer stopped",
             "transfer_start_failed": "Browser-to-server start failed",
             "start_failed": "Start failed",
-            "broadband_note_prefix": "Using Speedtest.net; domestic-only forces domestic nodes. Each phase ",
             "transfer_note_prefix": "Concurrent download/upload between browser and server ",
             "seconds_unit": " sec, real-time display.",
             "seconds_short": "sec",
@@ -679,6 +694,12 @@
             "network_config_dns": "DNS",
             "network_config_check_ip": "Check IP",
             "network_config_apply": "Apply Config",
+            "network_config_restart": "Restart Interface",
+            "network_config_restart_confirm": "Restarting this interface will briefly interrupt its network connection and may disconnect this page. Continue?",
+            "network_config_restarting": "Restarting interface...",
+            "network_config_restart_waiting": "Restart command sent. Waiting for the interface to reconnect...",
+            "network_config_restarted": "Interface restarted and reconnected",
+            "network_config_restart_unreachable": "The interface did not reconnect after restart",
             "network_config_confirm": "Confirm Reachable",
             "network_config_rollback": "Rollback Now",
             "network_config_disabled": "Network config is disabled. Set NETWORK_CONFIG_ENABLED=true.",
@@ -834,10 +855,21 @@
             "app_traffic_title": "App Traffic Trend",
             "settings_window_title": "Settings",
             "broadband_window_title": "Broadband Speed Test",
-            "broadband_steps_title": "Activity Log",
+            "broadband_mode_client": "Device to Internet",
+            "broadband_mode_server": "Server Egress to Internet",
+            "broadband_client_note": "The browser connects to public speed test endpoints directly, without the Netwatch server.",
+            "broadband_server_note": "The Netwatch server connects to public speed test endpoints to measure server egress bandwidth.",
+            "broadband_node_label": "Public test node",
+            "broadband_nodes_refresh": "Refresh public test nodes",
+            "broadband_nodes_loading": "Refreshing public test nodes",
+            "broadband_nodes_loaded": "Loaded {count} public test nodes",
+            "broadband_nodes_empty": "The public test node catalog is empty",
+            "broadband_nodes_refresh_failed": "Node refresh failed; keeping the current catalog",
+            "broadband_node_invalid": "Invalid public test node",
+            "broadband_client_starting": "Starting device-to-internet test",
+            "broadband_browser_unavailable": "Unavailable for this browser",
+            "broadband_worker_unsupported": "This browser does not support background test workers",
             "transfer_window_title": "Transfer Speed Test",
-            "broadband_speedtest": "Broadband Speed Test",
-            "domestic_nodes_only": "Domestic speedtest nodes only",
             "nic_realtime_monitor": "NIC Real-Time",
             "background_monitor": "Background Detection",
             "notification_settings": "Notification Settings",
@@ -1208,7 +1240,7 @@
         var menu = wrapper.__customSelectMenu || wrapper.querySelector('.custom-select-menu');
         var previousOptions = wrapper.__optionSignature || '';
         var nextOptions = Array.prototype.map.call(select.options, function (option) {
-            return option.value + '\u0000' + option.textContent;
+            return option.value + '\u0000' + option.textContent + '\u0000' + (option.disabled ? '1' : '0');
         }).join('\u0001');
         if (menu && previousOptions !== nextOptions) {
             wrapper.__optionSignature = nextOptions;
@@ -1219,6 +1251,7 @@
                 btn.className = 'custom-select-option';
                 btn.dataset.value = option.value;
                 btn.textContent = option.textContent;
+                btn.disabled = option.disabled;
                 btn.addEventListener('click', function () {
                     select.value = option.value;
                     select.dispatchEvent(new Event('change', { bubbles: true }));

@@ -6,9 +6,6 @@ var els = window.__app.els;
 var i18n = window.__app.i18n;
 
 function applySettingsToForm() {
-    if (els.settingBroadbandDomesticOnly) {
-        els.settingBroadbandDomesticOnly.checked = !!state.settings.broadband_domestic_only;
-    }
     if (els.settingNICRealtimeEnabled) {
         els.settingNICRealtimeEnabled.checked = !!state.settings.nic_realtime_enabled;
     }
@@ -124,7 +121,6 @@ async function loadSettings() {
             })();
         state.settings = {
             refresh_interval_sec: settingsData.refresh_interval_sec || state.refreshInterval || 10,
-            broadband_domestic_only: !!settingsData.broadband_domestic_only,
             nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
             chart_time_label_interval: settingsData.chart_time_label_interval || 0,
@@ -172,7 +168,6 @@ async function loadSettings() {
 async function saveSettings() {
     var payload = {
         refresh_interval_sec: state.settings.refresh_interval_sec,
-        broadband_domestic_only: !!(els.settingBroadbandDomesticOnly && els.settingBroadbandDomesticOnly.checked),
         nic_realtime_enabled: !!(els.settingNICRealtimeEnabled && els.settingNICRealtimeEnabled.checked),
         nic_realtime_interval_sec: parseInt((els.settingNICRealtimeIntervalSec && els.settingNICRealtimeIntervalSec.value) || '1', 10) || 1,
         chart_time_label_interval: state.settings.chart_time_label_interval,

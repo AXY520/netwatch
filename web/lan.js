@@ -305,7 +305,6 @@ const state = {
         return {
             ...data,
             refresh_interval_sec: data.refresh_interval_sec || 10,
-            broadband_domestic_only: !!data.broadband_domestic_only,
             nic_realtime_enabled: data.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: data.nic_realtime_interval_sec || 1,
             chart_time_label_interval: data.chart_time_label_interval || 0,

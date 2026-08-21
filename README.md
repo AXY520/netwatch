@@ -12,8 +12,8 @@ Netwatch 是面向懒猫微服的主机网络观测应用，用于查看网站�
 - NAT 类型检测：基于 STUN 的手动探测
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
 - 应用流量：在懒猫环境中按 `lzc-br-*` 网桥展示应用流量
-- 宽带测速：基于 speedtest 节点执行下载/上传测速
-- 本机传输测速：浏览器到服务端的下载/上传/延迟测试
+- 宽带测速：分别测量用户设备直连公网、服务器出口直连公网的下载/上传/延迟
+- 传输测速：基于 LibreSpeed 测量浏览器到本项目服务端的下载/上传/延迟
 - 路由追踪：基于 `mtr` 的异步 trace 任务
 - 时序与历史：保存测速历史和网卡速率时序
 - 可选告警：出口 IP 或 NAT 变化时向 webhook 发送通知
@@ -49,6 +49,9 @@ application:
 ```
 
 `deploy.sh` 用于本地构建 LPK 并安装到默认懒猫微服，依赖 `lzc-cli` 以及 `build.sh` 所需的 Linux 工具。
+
+自动构建、GitHub Release 和懒猫商店发布流程见
+[LPK 自动构建与发布](docs/automated-lpk-release.md)。
 
 ## API
 
@@ -112,10 +115,11 @@ application:
 测速：
 
 - `GET /api/v1/speed/config`：测速配置
-- `POST /api/v1/speed/broadband/start`：启动异步宽带测速任务
-- `GET /api/v1/speed/broadband/task`：读取宽带测速任务状态
-- `POST /api/v1/speed/broadband/cancel`：取消宽带测速任务
-- `POST /api/v1/speed/broadband/run`：同步执行宽带测速
+- `GET /api/v1/speed/broadband/catalog`：读取两个公共 CDN 测速节点目录
+- `POST /api/v1/speed/broadband/server/start`：启动服务器出口到公网的异步测速，可传 `{"node_id":"1"}`
+- `GET /api/v1/speed/broadband/server/task`：读取服务器出口测速任务状态
+- `POST /api/v1/speed/broadband/server/cancel`：取消服务器出口测速
+- `POST /api/v1/speed/broadband/client/result`：保存用户设备直连公网的测速结果
 - `GET /api/v1/speed/broadband/history`：宽带测速历史
 - `GET /api/v1/speed/local/history`：本机传输测速历史
 - `POST /api/v1/speed/local/result`：记录本机传输测速结果
@@ -176,7 +180,6 @@ application:
 - `PUBLIC_IPV6_ENDPOINT`：公网 IPv6 查询端点
 - `DATA_DIR`：持久化数据目录，默认 `/app/data`
 - `BROADBAND_TEST_SEC`：宽带测速时长，默认 `15`
-- `BROADBAND_DOMESTIC_ONLY`：宽带测速优先国内节点，默认 `true`
 - `LOCAL_TRANSFER_TEST_SEC`：本机传输测速时长，默认 `10`
 - `LOCAL_TRANSFER_PAYLOAD_MB`：本机传输测速固定负载大小，默认 `32`
 - `IPV6_HIGH_PORT_PROBE_HOST`：IPv6 高端口探测地址
@@ -195,7 +198,6 @@ application:
   "nat_timeout_sec": 2,
   "data_dir": "/app/data",
   "broadband_test_sec": 15,
-  "broadband_domestic_only": true,
   "local_transfer_test_sec": 10,
   "local_transfer_payload_mb": 32
 }
@@ -219,7 +221,6 @@ application:
 
 ## 部署风险
 
-- `docker-compose.yml` 使用 host 网络，用于读取宿主网络视角；这也意味着服务端口直接暴露在宿主网络上。
 - LPK 配置需要 `NET_RAW`/`NET_ADMIN`，用于路由追踪、NAT/连通性探测等能力；不要把这个容器当作低权限沙箱。
 - 应用流量识别会挂载 Docker socket 和懒猫包元数据，只建议在可信主机上运行。
 - 本机传输测速上传接口限制单次请求体最大 512 MiB，并限制同时进行的测速流数量；仍可能占用带宽和 CPU。

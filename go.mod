@@ -7,7 +7,6 @@ require (
 	github.com/cilium/ebpf v0.21.0
 	github.com/jsimonetti/rtnetlink/v2 v2.0.1
 	github.com/miekg/dns v1.1.55
-	github.com/showwin/speedtest-go v1.7.10
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.38.0
 	google.golang.org/grpc v1.81.0

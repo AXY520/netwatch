@@ -50,6 +50,21 @@ func TestVerifyRuntimeMutationConfigHardFailures(t *testing.T) {
 	}
 }
 
+func TestVerifyRuntimeMutationConfigPassesKernelRuntimeState(t *testing.T) {
+	m := &networkMutation{
+		Kind: networkMutationIP,
+		IP: &networkConfigRollback{Request: NetworkConfigApplyRequest{
+			Method: "manual", Address: "192.0.2.10/24", Gateway: "192.0.2.1", DNS: "1.1.1.1,8.8.8.8",
+		}},
+	}
+	steps := verifyRuntimeMutationConfig(m, networkDeviceRuntimeConfig{
+		IPv4: "192.0.2.10/24", Gateway: "192.0.2.1", DNS: "1.1.1.1,8.8.8.8",
+	}, nil)
+	if !requiredStepsPassed(steps) {
+		t.Fatalf("matching kernel runtime config failed: %+v", steps)
+	}
+}
+
 func TestVerifyAutoDNSRequiresRuntimeNameserver(t *testing.T) {
 	m := &networkMutation{
 		Kind: networkMutationDNS,

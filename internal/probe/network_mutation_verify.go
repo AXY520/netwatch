@@ -105,11 +105,6 @@ func verifyRequiredMutationState(ctx context.Context, mutation *networkMutation)
 }
 
 func readRuntimeConfigForVerification(ctx context.Context, device string, iface *net.Interface) (networkDeviceRuntimeConfig, error) {
-	if nmcliTransportAvailable() {
-		if runtime, err := readNetworkDeviceRuntimeConfig(ctx, device); err == nil {
-			return runtime, nil
-		}
-	}
 	addrs, err := iface.Addrs()
 	if err != nil {
 		return networkDeviceRuntimeConfig{}, err
@@ -126,6 +121,16 @@ func readRuntimeConfigForVerification(ctx context.Context, device string, iface 
 		runtime.Gateway = route.Gateway
 	}
 	runtime.DNS = readResolvDNS()
+
+	// Host-network mode exposes the kernel's effective address and route to this
+	// process. Those are authoritative for an IP mutation. Lazycat's NmcliCall
+	// may legitimately return an empty device-show payload, which must not turn
+	// a valid kernel configuration into an empty runtime observation.
+	if nmcliTransportAvailable() {
+		if nmRuntime, err := readNetworkDeviceRuntimeConfig(ctx, device); err == nil && nmRuntime.DNS != "" {
+			runtime.DNS = nmRuntime.DNS
+		}
+	}
 	return runtime, nil
 }
 

@@ -50,6 +50,26 @@ func (s *Service) pushBroadbandHistory(result BroadbandSpeedResult) {
 	s.saveBroadbandHistory()
 }
 
+// RecordClientBroadbandResult stores a browser-to-public-network result. The
+// test traffic itself never traverses this service; this endpoint only keeps
+// the local history together with server-exit test results.
+func (s *Service) RecordClientBroadbandResult(result BroadbandSpeedResult) BroadbandSpeedResult {
+	result.TestMode = "client"
+	result.DownloadMbps = sanitizeSpeedMetric(result.DownloadMbps, 0, 100000)
+	result.UploadMbps = sanitizeSpeedMetric(result.UploadMbps, 0, 100000)
+	if result.LatencyMS < 0 || result.LatencyMS > 600000 {
+		result.LatencyMS = 0
+	}
+	if result.JitterMS < 0 || result.JitterMS > 600000 {
+		result.JitterMS = 0
+	}
+	if result.Timestamp == "" {
+		result.Timestamp = localTimestamp()
+	}
+	s.pushBroadbandHistory(result)
+	return result
+}
+
 func (s *Service) pushLocalTransferHistory(result LocalTransferResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

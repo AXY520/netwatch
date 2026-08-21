@@ -198,7 +198,6 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		RefreshIntervalSec:     int(s.cfg.RefreshInterval / time.Second),
 		NICRealtimeEnabled:     s.nicStats.enabled(),
 		NICRealtimeIntervalSec: s.nicStats.intervalSeconds(),
-		BroadbandDomesticOnly:  s.cfg.BroadbandDomesticOnly,
 		DomesticSites:          append([]SiteTarget(nil), s.cfg.DomesticSites...),
 		GlobalSites:            append([]SiteTarget(nil), s.cfg.GlobalSites...),
 		AlertWebhookURL:        s.alertWebhookURL,
@@ -221,7 +220,6 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	if in.RefreshIntervalSec > 0 {
 		s.cfg.RefreshInterval = time.Duration(in.RefreshIntervalSec) * time.Second
 	}
-	s.cfg.BroadbandDomesticOnly = in.BroadbandDomesticOnly
 	if len(in.DomesticSites) > 0 {
 		s.cfg.DomesticSites = in.DomesticSites
 	}

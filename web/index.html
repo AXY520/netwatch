@@ -255,6 +255,19 @@
                 <button type="button" class="icon-button window-close-btn" id="close-broadband-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
+        <section class="broadband-control-console" aria-label="宽带测速配置">
+            <div class="broadband-mode-switch" role="tablist" aria-label="测速位置">
+                <button type="button" id="broadband-mode-client" data-broadband-mode="client" role="tab" aria-selected="true" data-i18n="broadband_mode_client">用户设备到公网</button>
+                <button type="button" id="broadband-mode-server" data-broadband-mode="server" role="tab" aria-selected="false" data-i18n="broadband_mode_server">服务器出口到公网</button>
+            </div>
+            <div class="broadband-node-fields">
+                <div class="broadband-node-select-field">
+                    <label class="settings-field"><span data-i18n="broadband_node_label">公共测速节点</span><select id="broadband-node-select"></select></label>
+                    <button type="button" id="broadband-node-refresh" class="icon-button" title="刷新公共测速节点" aria-label="刷新公共测速节点" data-i18n-title="broadband_nodes_refresh" data-i18n-aria-label="broadband_nodes_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
+                </div>
+            </div>
+            <div class="note" id="broadband-node-status"></div>
+        </section>
         <div class="speedtest-layout">
             <div class="st-header">
                 <div class="st-stage-chip" id="broadband-primary-mode">Idle</div>
@@ -278,11 +291,6 @@
                 <div class="broadband-fact"><span data-i18n="node">节点</span><strong id="broadband-node-name">--</strong></div>
                 <div class="broadband-fact"><span data-i18n="provider">运营商</span><strong id="broadband-node-provider">--</strong></div>
                 <div class="broadband-fact"><span data-i18n="region">地区</span><strong id="broadband-node-region">--</strong></div>
-            </div>
-
-            <div class="st-log" id="broadband-steps-panel">
-                <div class="st-detail-title" data-i18n="broadband_steps_title">操作日志</div>
-                <div class="st-log-list" id="broadband-steps"></div>
             </div>
 
         </div>
@@ -480,6 +488,7 @@
                 <div class="network-config-actions">
                     <button id="network-config-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
                     <button id="network-config-apply-btn" data-i18n="network_config_apply">应用配置</button>
+                    <button id="network-config-restart-btn" class="btn-with-icon"><span class="ui-icon ui-icon--restart" aria-hidden="true"></span><span data-i18n="network_config_restart">重启网卡</span></button>
                     <button id="network-config-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
                     <button id="network-config-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>
                 </div>
@@ -509,7 +518,7 @@
                         <label class="host-bridge-manual-field" hidden><span data-i18n="network_config_gateway">网关</span><input id="host-bridge-gateway" placeholder="192.168.1.1"></label>
                         <label class="host-bridge-manual-field" hidden><span data-i18n="network_config_dns">DNS</span><input id="host-bridge-dns" placeholder="223.5.5.5,119.29.29.29"></label>
                     </div>
-                    <div id="host-bridge-status-line" class="host-bridge-status-line"></div>
+                    <!-- <div id="host-bridge-status-line" class="host-bridge-status-line"></div> -->
                     <div class="host-bridge-actions">
                         <button id="host-bridge-preflight-btn" data-i18n="network_config_preflight">预检配置</button>
                         <button id="host-bridge-create-btn" data-i18n="host_bridge_create">创建网桥</button>
@@ -555,7 +564,7 @@
                         <button id="host-dns-confirm-btn" hidden data-i18n="host_dns_confirm">确认可用</button>
                         <button id="host-dns-rollback-btn" hidden data-i18n="host_dns_rollback">立即回滚</button>
                     </div>
-                    <div id="host-dns-status-line" class="host-bridge-status-line"></div>
+                    <!-- <div id="host-dns-status-line" class="host-bridge-status-line"></div> -->
                     <pre class="ipv6-renew-output" id="host-dns-output" hidden></pre>
                 </div>
             </div>
@@ -576,13 +585,6 @@
             </div>
         </div>
         <div class="settings-layout settings-compact">
-            <div class="settings-row">
-                <span data-i18n="broadband_speedtest">宽带测速</span>
-                <label class="settings-toggle inline">
-                    <input type="checkbox" id="setting-broadband-domestic-only">
-                    <span data-i18n="domestic_nodes_only">仅国内节点</span>
-                </label>
-            </div>
             <div class="settings-row">
                 <span data-i18n="nic_realtime_monitor">网卡实时刷新</span>
                 <div class="settings-inline-controls">
@@ -736,6 +738,7 @@
         </div>
     </section>
     <script src="/speedtest.js" defer></script>
+    <script src="/broadband-node-config.js" defer></script>
     <script src="/shared.js" defer></script>
     <script src="/api.js" defer></script>
     <script src="/app-core.js" defer></script>

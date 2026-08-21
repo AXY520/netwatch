@@ -52,6 +52,7 @@ function openWindow(name) {
     window.__app.updateWindowControls();
     if (name === 'broadband' || name === 'transfer') {
         if (window.__app.loadSpeedHistory) window.__app.loadSpeedHistory();
+        if (name === 'broadband' && window.__app.loadBroadbandNodes) window.__app.loadBroadbandNodes();
     }
 }
 
@@ -242,6 +243,8 @@ function bindControls() {
     });
     var networkConfigApplyBtn = document.getElementById('network-config-apply-btn');
     if (networkConfigApplyBtn) networkConfigApplyBtn.addEventListener('click', function () { if (A.applyNetworkConfig) A.applyNetworkConfig(); });
+    var networkConfigRestartBtn = document.getElementById('network-config-restart-btn');
+    if (networkConfigRestartBtn) networkConfigRestartBtn.addEventListener('click', function () { if (A.restartNetworkConfigDevice) A.restartNetworkConfigDevice(); });
     var networkConfigConfirmBtn = document.getElementById('network-config-confirm-btn');
     if (networkConfigConfirmBtn) networkConfigConfirmBtn.addEventListener('click', function () { if (A.confirmNetworkConfig) A.confirmNetworkConfig(); });
     var networkConfigRollbackBtn = document.getElementById('network-config-rollback-btn');
@@ -250,6 +253,9 @@ function bindControls() {
     if (A.bindIPv6TitleEasterEgg) A.bindIPv6TitleEasterEgg();
 
     els.runBroadbandTest.addEventListener('click', function () { if (A.startBroadbandTest) A.startBroadbandTest(); });
+    if (els.broadbandModeClient) els.broadbandModeClient.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('client'); });
+    if (els.broadbandModeServer) els.broadbandModeServer.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('server'); });
+    if (els.broadbandNodeRefresh) els.broadbandNodeRefresh.addEventListener('click', function () { if (A.loadBroadbandNodes) A.loadBroadbandNodes(); });
     els.runTransferTest.addEventListener('click', function () { if (A.runTransferTest) A.runTransferTest(); });
     if (els.saveSettings) els.saveSettings.addEventListener('click', function () { if (A.saveSettings) A.saveSettings(); });
 

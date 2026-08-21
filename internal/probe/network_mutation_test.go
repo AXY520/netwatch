@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -49,9 +50,30 @@ func TestNetworkMutationKindsAreMutuallyExclusive(t *testing.T) {
 	if _, err := s.reserveNetworkMutation(networkMutationBridge, "nw-eth0"); err == nil {
 		t.Fatal("bridge reservation succeeded while DNS reservation was active")
 	}
+	if _, err := s.reserveNetworkMutation(networkMutationRestart, "eth0"); err == nil {
+		t.Fatal("restart reservation succeeded while DNS reservation was active")
+	}
 	s.abortNetworkMutation(id)
+	restartID, err := s.reserveNetworkMutation(networkMutationRestart, "eth0")
+	if err != nil {
+		t.Fatalf("restart reservation after abort: %v", err)
+	}
+	s.abortNetworkMutation(restartID)
 	if _, err := s.reserveNetworkMutation(networkMutationBridge, "nw-eth0"); err != nil {
 		t.Fatalf("bridge reservation after abort: %v", err)
+	}
+}
+
+func TestRestartNetworkConfigDeviceRejectsUnsafeDeviceBeforeMutation(t *testing.T) {
+	s := newNetworkMutationTestService(t)
+	result := s.RestartNetworkConfigDevice(context.Background(), NetworkConfigRestartRequest{Device: "lo"})
+	if result.OK || result.Error == "" {
+		t.Fatalf("result = %+v, want unsafe-device error", result)
+	}
+	s.network.mu.Lock()
+	defer s.network.mu.Unlock()
+	if s.network.active != nil {
+		t.Fatalf("unsafe restart reserved a mutation: %+v", s.network.active)
 	}
 }
 
