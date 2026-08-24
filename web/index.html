@@ -55,7 +55,7 @@
         </header>
 
         <main class="dashboard-grid">
-            <section class="card connectivity-card">
+            <section class="card connectivity-card" id="connectivity-card">
                 <div class="card-title">
                     <span data-i18n="website_latency_chk">网站延迟检测</span>
                     <div class="title-tools">
@@ -65,20 +65,30 @@
                 </div>
                 <div class="connectivity-split">
                     <div class="connectivity-group">
-                        <div class="connectivity-group-head">
-                            <div class="table-subtitle" data-i18n="domestic_sites">国内网站</div>
-                            <span class="connectivity-group-meta"><span data-i18n="status_col">状态</span><span data-i18n="latency_col">延迟</span></span>
-                        </div>
+                        <div class="table-subtitle" data-i18n="domestic_sites">国内网站</div>
                         <table class="data-table connectivity-table-fixed" id="domestic-table">
+                            <colgroup><col class="col-target"><col class="col-status"><col class="col-latency"></colgroup>
+                            <thead>
+                                <tr>
+                                    <th class="col-target" data-i18n="target_col">目标</th>
+                                    <th class="col-status" data-i18n="status_col">状态</th>
+                                    <th class="col-latency" data-i18n="latency_col">延迟</th>
+                                </tr>
+                            </thead>
                             <tbody></tbody>
                         </table>
                     </div>
                     <div class="connectivity-group">
-                        <div class="connectivity-group-head">
-                            <div class="table-subtitle" data-i18n="global_sites">国际网站</div>
-                            <span class="connectivity-group-meta"><span data-i18n="status_col">状态</span><span data-i18n="latency_col">延迟</span></span>
-                        </div>
+                        <div class="table-subtitle" data-i18n="global_sites">国际网站</div>
                         <table class="data-table connectivity-table-fixed" id="global-table">
+                            <colgroup><col class="col-target"><col class="col-status"><col class="col-latency"></colgroup>
+                            <thead>
+                                <tr>
+                                    <th class="col-target" data-i18n="target_col">目标</th>
+                                    <th class="col-status" data-i18n="status_col">状态</th>
+                                    <th class="col-latency" data-i18n="latency_col">延迟</th>
+                                </tr>
+                            </thead>
                             <tbody></tbody>
                         </table>
                     </div>
@@ -206,7 +216,7 @@
                 </div>
                 <div class="dashboard-panel-content">
                     <div class="table-scroll"><table class="data-table app-traffic-table-fixed" id="app-traffic-table">
-                        <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rx"><button type="button" class="sort-header" data-sort-key="rx" aria-sort="none"><span data-i18n="traffic_upload">上传</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-tx"><button type="button" class="sort-header" data-sort-key="tx" aria-sort="none"><span data-i18n="traffic_download">下载</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">合计</span><span class="sort-indicator" aria-hidden="true"></span></button></th></tr></thead>
+                        <thead><tr><th class="col-app"><button type="button" class="sort-header" data-sort-key="app" aria-sort="none"><span data-i18n="app_col">应用</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-rate"><button type="button" class="sort-header" data-sort-key="rate" aria-sort="none"><span data-i18n="app_traffic_realtime">实时</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-period"><button type="button" class="sort-header" data-sort-key="today" aria-sort="none"><span data-i18n="app_traffic_today">今日</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-period"><button type="button" class="sort-header" data-sort-key="month" aria-sort="none"><span data-i18n="app_traffic_month">本月</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-total"><button type="button" class="sort-header" data-sort-key="total" aria-sort="descending"><span data-i18n="total">累计</span><span class="sort-indicator" aria-hidden="true"></span></button></th><th class="col-actions"><span class="sr-only" data-i18n="app_traffic_actions">操作</span></th></tr></thead>
                         <tbody></tbody>
                     </table></div>
                     <div id="app-traffic-note" class="traffic-note"></div>
@@ -231,6 +241,25 @@
         </main>
     </div>
 
+    <div id="app-traffic-limit-backdrop" class="window-backdrop"></div>
+    <section class="floating-window app-traffic-limit-window" id="app-traffic-limit-window" aria-labelledby="app-traffic-limit-title">
+        <div class="window-head">
+            <div>
+                <div class="window-title" id="app-traffic-limit-title" data-i18n="app_traffic_limit">限速</div>
+                <div class="note" id="app-traffic-limit-note"></div>
+            </div>
+            <div class="window-actions">
+                <button type="button" class="icon-button window-close-btn" id="close-app-traffic-limit-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
+        </div>
+        <form id="app-traffic-limit-form" class="app-traffic-limit-form" novalidate>
+            <label><span data-i18n="app_traffic_upload_limit">上传上限 (Mbps)</span><input id="app-traffic-limit-upload" name="upload" type="number" min="0" max="10000" step="0.1" inputmode="decimal" placeholder="0 = 不限速" data-i18n-placeholder="app_traffic_limit_placeholder"></label>
+            <label><span data-i18n="app_traffic_download_limit">下载上限 (Mbps)</span><input id="app-traffic-limit-download" name="download" type="number" min="0" max="10000" step="0.1" inputmode="decimal" placeholder="0 = 不限速" data-i18n-placeholder="app_traffic_limit_placeholder"></label>
+            <div class="app-traffic-limit-form-actions"><span class="note" data-i18n="app_traffic_limit_hint">留空或 0 为不限速</span><button type="submit" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button></div>
+            <div id="app-traffic-limit-error" class="form-error" role="alert" hidden></div>
+        </form>
+    </section>
+
     <section class="floating-window" id="host-port-detail-window">
         <div class="window-head">
             <div>
@@ -248,7 +277,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="broadband_window_title">宽带测速</div>
-                <div class="note" id="broadband-note" data-i18n="standby">等待测速开始</div>
+                <div class="note speedtest-window-note" id="broadband-note" data-i18n="standby">等待测速开始</div>
             </div>
             <div class="window-actions">
                 <button id="run-broadband-test" data-i18n="start_test_btn">开始测速</button>
@@ -257,8 +286,8 @@
         </div>
         <section class="broadband-control-console" aria-label="宽带测速配置">
             <div class="broadband-mode-switch" role="tablist" aria-label="测速位置">
-                <button type="button" id="broadband-mode-client" data-broadband-mode="client" role="tab" aria-selected="true" data-i18n="broadband_mode_client">用户设备到公网</button>
-                <button type="button" id="broadband-mode-server" data-broadband-mode="server" role="tab" aria-selected="false" data-i18n="broadband_mode_server">服务器出口到公网</button>
+                <button type="button" id="broadband-mode-client" data-broadband-mode="client" role="tab" aria-selected="false" data-i18n="broadband_mode_client">用户设备到公网</button>
+                <button type="button" id="broadband-mode-server" data-broadband-mode="server" role="tab" aria-selected="true" data-i18n="broadband_mode_server">服务器出口到公网</button>
             </div>
             <div class="broadband-node-fields">
                 <div class="broadband-node-select-field">
@@ -288,14 +317,12 @@
             <div class="broadband-facts" id="broadband-detail">
                 <div class="broadband-fact"><span data-i18n="latency_col">延迟</span><strong id="broadband-latency">--</strong></div>
                 <div class="broadband-fact"><span data-i18n="latency_jitter">抖动</span><strong id="broadband-jitter">--</strong></div>
-                <div class="broadband-fact"><span data-i18n="node">节点</span><strong id="broadband-node-name">--</strong></div>
-                <div class="broadband-fact"><span data-i18n="provider">运营商</span><strong id="broadband-node-provider">--</strong></div>
-                <div class="broadband-fact"><span data-i18n="region">地区</span><strong id="broadband-node-region">--</strong></div>
             </div>
 
         </div>
         <div class="window-head">
             <div class="window-title" data-i18n="history_title">历史记录</div>
+            <button type="button" class="btn-with-icon clear-history-btn" id="clear-broadband-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
         </div>
         <div class="history-list" id="broadband-history"></div>
     </section>
@@ -304,7 +331,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="transfer_window_title">网页与本机传输测速</div>
-                <div class="note" id="transfer-note" data-i18n="transfer_note_desc">持续测量浏览器到本机服务的下载、上传、延迟和抖动。</div>
+                <div class="note speedtest-window-note" id="transfer-note" data-i18n="standby">等待测速开始</div>
             </div>
             <div class="window-actions">
                 <button id="run-transfer-test" data-i18n="start_test_btn">开始测速</button>
@@ -336,6 +363,7 @@
         </div>
         <div class="window-head">
             <div class="window-title" data-i18n="history_title">历史记录</div>
+            <button type="button" class="btn-with-icon clear-history-btn" id="clear-transfer-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
         </div>
         <div class="history-list" id="transfer-history"></div>
     </section>
@@ -601,6 +629,10 @@
                 </div>
             </div>
             <div class="settings-row">
+                <span data-i18n="app_traffic_realtime_monitor">应用流量实时刷新</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-app-traffic-realtime-enabled"></label>
+            </div>
+            <div class="settings-row">
                 <span data-i18n="background_monitor">后台检测</span>
                 <div class="settings-inline-controls">
                     <label class="settings-toggle inline">
@@ -614,10 +646,6 @@
                     </select>
                     <button id="open-notification-settings" class="btn-with-icon"><span class="ui-icon ui-icon--bell" aria-hidden="true"></span><span data-i18n="notification_settings_btn">通知设置</span></button>
                 </div>
-            </div>
-            <div class="settings-row">
-                <span data-i18n="container_control">容器网络控制</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-container-control-enabled"><span data-i18n="toggle_on">on</span></label>
             </div>
         </div>
     </section>

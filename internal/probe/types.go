@@ -122,13 +122,11 @@ type MutableSettings struct {
 	LANDeviceAutoRemoveDays int `json:"lan_device_auto_remove_days"` // auto-remove offline devices after N days (0 = disabled)
 
 	// Traffic chart settings
-	ChartTimeLabelInterval int `json:"chart_time_label_interval"`
+	ChartTimeLabelInterval    int  `json:"chart_time_label_interval"`
+	AppTrafficRealtimeEnabled bool `json:"app_traffic_realtime_enabled"`
 
 	// Collapsed dashboard panels, persisted server-side for all clients.
 	DashboardCollapsedSections []string `json:"dashboard_collapsed_sections,omitempty"`
-
-	// Container network control enabled (show block buttons in traffic view)
-	ContainerControlEnabled bool `json:"container_control_enabled"`
 
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all

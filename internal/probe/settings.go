@@ -45,7 +45,7 @@ func DefaultMutableSettings() MutableSettings {
 		LANFlappingWindowSec:           600,
 		LANDeviceAutoRemoveDays:        30,
 		ChartTimeLabelInterval:         0,
-		ContainerControlEnabled:        false,
+		AppTrafficRealtimeEnabled:      true,
 	}
 }
 
@@ -135,8 +135,8 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	if _, ok := raw["chart_time_label_interval"]; !ok {
 		s.ChartTimeLabelInterval = def.ChartTimeLabelInterval
 	}
-	if _, ok := raw["container_control_enabled"]; !ok {
-		s.ContainerControlEnabled = def.ContainerControlEnabled
+	if _, ok := raw["app_traffic_realtime_enabled"]; !ok {
+		s.AppTrafficRealtimeEnabled = def.AppTrafficRealtimeEnabled
 	}
 	return s, true
 }

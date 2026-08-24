@@ -13,6 +13,7 @@ import (
 const (
 	appLifecycleEventDebounce     = 2 * time.Second
 	appLifecycleCalibrationPeriod = time.Minute
+	appTrafficReconcileInterval   = 2 * time.Second
 )
 
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
@@ -112,6 +113,23 @@ func (s *Service) UpdateSpeedHistoryNote(kind, id, note string) bool {
 	return false
 }
 
+func (s *Service) ClearSpeedHistory(kind string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch kind {
+	case "broadband":
+		s.broadbandHistory = make([]BroadbandSpeedResult, 0)
+		s.saveBroadbandHistory()
+		return true
+	case "local":
+		s.localTransferHistory = make([]LocalTransferResult, 0)
+		s.saveLocalTransferHistory()
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) startAppLifecycleObserver() {
 	go func() {
 		defer close(s.appLifecycleDone)
@@ -122,6 +140,8 @@ func (s *Service) startAppLifecycleObserver() {
 
 		calibration := time.NewTicker(appLifecycleCalibrationPeriod)
 		defer calibration.Stop()
+		reconcile := time.NewTicker(appTrafficReconcileInterval)
+		defer reconcile.Stop()
 		var debounce *time.Timer
 		var debounceC <-chan time.Time
 		scheduleObservation := func() {
@@ -140,6 +160,8 @@ func (s *Service) startAppLifecycleObserver() {
 		}
 
 		dockerlzc.InvalidateBridgeMapCache()
+		InvalidateAppTrafficMetadataCache()
+		s.observeAppTraffic()
 		s.recordAppTrafficEvents()
 		for {
 			select {
@@ -153,15 +175,52 @@ func (s *Service) startAppLifecycleObserver() {
 			case <-debounceC:
 				debounceC = nil
 				dockerlzc.InvalidateBridgeMapCache()
+				InvalidateAppTrafficMetadataCache()
+				s.observeAppTraffic()
 				s.recordAppTrafficEvents()
 			case <-calibration.C:
 				if debounceC == nil {
 					dockerlzc.InvalidateBridgeMapCache()
+					InvalidateAppTrafficMetadataCache()
+					s.observeAppTraffic()
 					s.recordAppTrafficEvents()
 				}
+			case <-reconcile.C:
+				s.observeAppTraffic()
 			}
 		}
 	}()
+}
+
+func (s *Service) observeAppTraffic() {
+	items := CollectAppTraffic().Bridges
+	if s.appTraffic != nil {
+		s.appTraffic.sample(items, time.Now())
+		s.reconcileAppTrafficLimits(items)
+	}
+}
+
+func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
+	snapshot := CollectAppTraffic()
+	if s.appTraffic == nil {
+		return snapshot
+	}
+	s.appTraffic.sample(snapshot.Bridges, time.Now())
+	s.reconcileAppTrafficLimits(snapshot.Bridges)
+	overview := s.appTraffic.overview(trafficControlAvailable())
+	snapshot.Apps = overview.Apps
+	snapshot.LimitSupport = overview.LimitSupport
+	if snapshot.Note == "" && overview.Note != "" {
+		snapshot.Note = overview.Note
+	}
+	return snapshot
+}
+
+func (s *Service) AppTrafficHistory(appID string) []AppTrafficSample {
+	if s.appTraffic == nil {
+		return []AppTrafficSample{}
+	}
+	return s.appTraffic.history(strings.TrimSpace(appID))
 }
 
 func watchDockerLifecycleEvents(ctx context.Context, changes chan<- struct{}) {

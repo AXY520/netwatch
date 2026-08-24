@@ -2,8 +2,6 @@ package probe
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -65,12 +63,14 @@ type Service struct {
 	lanDeviceSubsMu sync.Mutex
 
 	// domain subsystems
-	settings   *settingsStore
-	lan        *lanHub
-	notify     *notifyHub
-	containers *containerControlState
-	network    *networkMutationState
-	tasks      *taskRuntime
+	settings          *settingsStore
+	lan               *lanHub
+	notify            *notifyHub
+	containers        *containerControlState
+	appTraffic        *appTrafficState
+	appTrafficLimiter *appTrafficLimiter
+	network           *networkMutationState
+	tasks             *taskRuntime
 
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
@@ -79,7 +79,6 @@ type Service struct {
 func NewService(cfg Config) *Service {
 	def := DefaultMutableSettings()
 	saved, hasSaved := loadMutableSettings(cfg.DataDir)
-	_ = os.Remove(filepath.Join(cfg.DataDir, "app_traffic_history.json"))
 	s := &Service{
 		cfg:                   cfg,
 		timeseries:            newTimeseriesStore(cfg.DataDir),
@@ -98,6 +97,8 @@ func NewService(cfg Config) *Service {
 		lan:                   newLANHub(cfg.DataDir, def),
 		notify:                newNotifyHub(cfg.DataDir, def),
 		containers:            newContainerControlState(),
+		appTraffic:            newAppTrafficState(cfg.DataDir),
+		appTrafficLimiter:     newAppTrafficLimiter(),
 		network:               newNetworkMutationState(),
 		tasks:                 newTaskRuntime(),
 	}
@@ -155,6 +156,9 @@ func (s *Service) Close() {
 	s.closeOnce.Do(func() {
 		if s.tasks != nil {
 			s.tasks.cancelAll()
+		}
+		if s.appTraffic != nil {
+			s.appTraffic.flush()
 		}
 		s.closeCancel()
 		close(s.nicStop)

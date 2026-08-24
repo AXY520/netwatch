@@ -76,6 +76,29 @@ func TestVerifyAutoDNSRequiresRuntimeNameserver(t *testing.T) {
 	}
 }
 
+func TestMergeRuntimeNetworkConfigFillsKernelGapsFromNmcli(t *testing.T) {
+	got := mergeRuntimeNetworkConfig(
+		networkDeviceRuntimeConfig{DNS: "192.168.3.1"},
+		networkDeviceRuntimeConfig{IPv4: "192.168.3.173/24", Gateway: "192.168.3.1", DNS: "1.1.1.1"},
+	)
+	if got.IPv4 != "192.168.3.173/24" || got.Gateway != "192.168.3.1" {
+		t.Fatalf("merged runtime = %+v, expected nmcli to fill missing address and gateway", got)
+	}
+	if got.DNS != "1.1.1.1" {
+		t.Fatalf("merged DNS = %q, want explicit nmcli DNS", got.DNS)
+	}
+}
+
+func TestMergeRuntimeNetworkConfigPrefersKernelValues(t *testing.T) {
+	got := mergeRuntimeNetworkConfig(
+		networkDeviceRuntimeConfig{IPv4: "192.168.3.173/24", Gateway: "192.168.3.1", DNS: "1.1.1.1"},
+		networkDeviceRuntimeConfig{IPv4: "192.168.3.200/24", Gateway: "192.168.3.254", DNS: "8.8.8.8"},
+	)
+	if got.IPv4 != "192.168.3.173/24" || got.Gateway != "192.168.3.1" || got.DNS != "8.8.8.8" {
+		t.Fatalf("merged runtime = %+v, want kernel address/gateway and explicit nmcli DNS", got)
+	}
+}
+
 func TestRequiredStepsIgnoreOptionalFailures(t *testing.T) {
 	steps := []NetworkMutationVerificationStep{
 		verificationStep("required", true, time.Now(), "", nil),

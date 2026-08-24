@@ -134,10 +134,9 @@ application:
 - `GET /api/v1/diagnostics/trace/task`：读取 trace 任务状态
 - `POST /api/v1/diagnostics/dns`：查询 A、AAAA 或 CNAME，可对比系统 DNS 与指定服务器
 - `GET /api/v1/timeseries?limit=300`：读取时序点
-- `GET /api/v1/network/app-traffic`：读取懒猫应用网桥流量
-- `GET /api/v1/network/app-traffic/history?bridge=lzc-br-xxx&limit=300`：读取指定网桥历史
-- `GET /api/v1/network/app-traffic/live?bridge=lzc-br-xxx`：立即采样指定网桥并返回当前计数与历史
-- `GET /api/v1/network/app-traffic/top?range=1h&limit=5`：读取区间流量排行
+- `GET /api/v1/network/app-traffic`：读取原始网桥计数和按应用 ID 聚合的实时、今日、本月、累计流量
+- `GET /api/v1/network/app-traffic/history?app_id=cloud.lazycat.app.example`：读取指定应用的分钟采样历史
+- `POST /api/v1/network/app-traffic/limit`：设置应用上传/下载上限，Body 为 `{"app_id":"...","upload_kbps":1024,"download_kbps":4096}`，使用 `0` 取消对应方向限速
 
 ### 应用流量语义
 
@@ -159,8 +158,13 @@ application:
 在宿主 bridge 视角下，RX 是应用容器发往宿主网桥的流量，对应应用上传；TX 是宿主
 网桥发往应用容器的流量，对应应用下载。该统计可能包含应用内部或局域网流量，不等同于
 运营商公网账单。使用 `network_mode: host` 的应用服务绕过独立应用网桥，无法通过此方式
-完整统计。历史点出现服务重启或计数器归零时会标记 `discontinuity`，调用方不得跨断点
-计算速率。
+完整统计。应用级累计值按稳定 `app_id` 持久化；新建网桥或内核计数器归零时，NetWatch
+仅重建该网桥基线，不会把重置前的旧字节数重复计入累计值。
+
+限速仅适用于拥有 `lzc-br-*` 独立网桥的应用。下载通过该网桥的 `tc tbf` 出口队列限速，
+上传通过 ingress policer 限速；`network_mode: host` 的服务没有可归属网桥，无法统计或限速。
+NetWatch 使用 `nsenter` 调用宿主机的 `tc`，不在 scratch 镜像中复制该二进制；宿主必须提供
+`tc`。NetWatch 只管理自身固定句柄/优先级的规则，发现其他 root qdisc 时会拒绝覆盖。
 
 `/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
 `netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、
@@ -211,7 +215,7 @@ application:
 - `broadband_history.json`：宽带测速历史
 - `local_transfer_history.json`：本机传输测速历史
 - `timeseries.json`：摘要时序数据，最多保留 2000 点
-- `app_traffic_history.json`：应用网桥流量历史
+- `app_traffic_history.json`：按应用 ID 的流量基线、分钟采样、日/月累计与限速配置
 
 ## 认证与访问控制
 

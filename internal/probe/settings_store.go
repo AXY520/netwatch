@@ -8,8 +8,8 @@ type settingsStore struct {
 	mu sync.RWMutex
 
 	chartTimeLabelInterval     int
+	appTrafficRealtimeEnabled  bool
 	dashboardCollapsedSections []string
-	containerControlEnabled    bool
 	backgroundMonitorEnabled   bool
 	backgroundMonitorInterval  int
 }
@@ -17,8 +17,8 @@ type settingsStore struct {
 func newSettingsStore(def MutableSettings) *settingsStore {
 	return &settingsStore{
 		chartTimeLabelInterval:     def.ChartTimeLabelInterval,
+		appTrafficRealtimeEnabled:  def.AppTrafficRealtimeEnabled,
 		dashboardCollapsedSections: normalizeDashboardCollapsedSections(def.DashboardCollapsedSections),
-		containerControlEnabled:    def.ContainerControlEnabled,
 		backgroundMonitorEnabled:   def.BackgroundMonitorEnabled,
 		backgroundMonitorInterval:  def.BackgroundMonitorIntervalSec,
 	}
@@ -28,8 +28,8 @@ func (st *settingsStore) writeToSettings(out *MutableSettings) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	out.ChartTimeLabelInterval = st.chartTimeLabelInterval
+	out.AppTrafficRealtimeEnabled = st.appTrafficRealtimeEnabled
 	out.DashboardCollapsedSections = append([]string(nil), st.dashboardCollapsedSections...)
-	out.ContainerControlEnabled = st.containerControlEnabled
 	out.BackgroundMonitorEnabled = st.backgroundMonitorEnabled
 	out.BackgroundMonitorIntervalSec = st.backgroundMonitorInterval
 }
@@ -38,8 +38,8 @@ func (st *settingsStore) apply(in MutableSettings) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.chartTimeLabelInterval = in.ChartTimeLabelInterval
+	st.appTrafficRealtimeEnabled = in.AppTrafficRealtimeEnabled
 	st.dashboardCollapsedSections = normalizeDashboardCollapsedSections(in.DashboardCollapsedSections)
-	st.containerControlEnabled = in.ContainerControlEnabled
 	if in.BackgroundMonitorIntervalSec >= 10 {
 		st.backgroundMonitorInterval = in.BackgroundMonitorIntervalSec
 	}
@@ -63,10 +63,4 @@ func (st *settingsStore) backgroundConfig() (enabled bool, intervalSec int) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.backgroundMonitorEnabled, st.backgroundMonitorInterval
-}
-
-func (st *settingsStore) containerControl() bool {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	return st.containerControlEnabled
 }

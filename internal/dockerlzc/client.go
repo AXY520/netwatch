@@ -271,6 +271,7 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 	// recreation one project can temporarily own both an old and a new network.
 	projectInfo := map[string]BridgeAppInfo{}
 	networkInfo := map[string]BridgeAppInfo{}
+	primaryByProject := PrimaryAppContainers(containers)
 	for _, c := range containers {
 		project := c.Project
 		appid := c.AppID
@@ -286,23 +287,6 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 		info.ContainerCount++
 		if c.State == "running" {
 			info.RunningCount++
-			// Use the earliest running container's precise start time.
-			if info.StatusText == "" {
-				info.StatusText = FormatContainerStarted(c.StartedAt)
-				if info.StatusText == "" {
-					info.StatusText = FormatDockerStatus(c.Status)
-				}
-				// Fallback: use created timestamp if status text can't be parsed
-				if info.StatusText == "" && c.Created > 0 {
-					info.StatusText = FormatContainerCreated(c.Created)
-				}
-			}
-		}
-		// Track earliest actual start time; creation is only a fallback.
-		if c.StartedAt > 0 && (info.CreatedAt == 0 || c.StartedAt < info.CreatedAt) {
-			info.CreatedAt = c.StartedAt
-		} else if info.CreatedAt == 0 && c.Created > 0 {
-			info.CreatedAt = c.Created
 		}
 		projectInfo[project] = info
 		for _, network := range c.Networks {
@@ -315,19 +299,27 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 			networkRuntime.ContainerCount++
 			if c.State == "running" {
 				networkRuntime.RunningCount++
-				if networkRuntime.StatusText == "" {
-					networkRuntime.StatusText = FormatContainerStarted(c.StartedAt)
-					if networkRuntime.StatusText == "" {
-						networkRuntime.StatusText = FormatDockerStatus(c.Status)
-					}
-				}
-			}
-			if c.StartedAt > 0 && (networkRuntime.CreatedAt == 0 || c.StartedAt < networkRuntime.CreatedAt) {
-				networkRuntime.CreatedAt = c.StartedAt
-			} else if networkRuntime.CreatedAt == 0 && c.Created > 0 {
-				networkRuntime.CreatedAt = c.Created
 			}
 			networkInfo[network] = networkRuntime
+		}
+	}
+	// Application lifecycle time is defined by the primary app container, not
+	// by whichever sidecar Docker happened to return first.
+	for project, primary := range primaryByProject {
+		info := projectInfo[project]
+		info.StatusText = containerStatusStart(primary)
+		if primary.StartedAt > 0 {
+			info.CreatedAt = primary.StartedAt
+		} else if primary.Created > 0 {
+			info.CreatedAt = primary.Created
+		}
+		projectInfo[project] = info
+	}
+	for network, info := range networkInfo {
+		if identity, ok := projectInfo[info.Project]; ok {
+			info.StatusText = identity.StatusText
+			info.CreatedAt = identity.CreatedAt
+			networkInfo[network] = info
 		}
 	}
 
@@ -350,6 +342,107 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 		out[bridge] = info
 	}
 	return out
+}
+
+// PrimaryAppContainers returns the Lazycat application container for each
+// compose project. The app service is identified from its container name; the
+// running/latest instance wins during a short recreate window.
+func PrimaryAppContainers(containers []ContainerRuntimeInfo) map[string]ContainerRuntimeInfo {
+	selected := map[string]ContainerRuntimeInfo{}
+	priorities := map[string]int{}
+	for _, c := range containers {
+		project := strings.TrimSpace(c.Project)
+		if project == "" {
+			continue
+		}
+		priority := primaryAppContainerPriority(c.Name)
+		if priority == 0 {
+			continue
+		}
+		current, exists := selected[project]
+		if !exists || primaryAppContainerPreferred(c, priority, current, priorities[project]) {
+			selected[project] = c
+			priorities[project] = priority
+		}
+	}
+	return selected
+}
+
+func primaryAppContainerPreferred(candidate ContainerRuntimeInfo, candidatePriority int, current ContainerRuntimeInfo, currentPriority int) bool {
+	if candidatePriority != currentPriority {
+		return candidatePriority > currentPriority
+	}
+	candidateRunning := candidate.State == "running" || candidate.Running
+	currentRunning := current.State == "running" || current.Running
+	if candidateRunning != currentRunning {
+		return candidateRunning
+	}
+	if candidate.StartedAt != current.StartedAt {
+		return candidate.StartedAt > current.StartedAt
+	}
+	if candidate.Created != current.Created {
+		return candidate.Created > current.Created
+	}
+	return candidate.Name < current.Name
+}
+
+// primaryAppContainerPriority identifies the Lazycat application service.
+// Compose sidecars may also contain "app" in the project prefix, so a suffix
+// such as "-app-1" receives the highest priority.
+func primaryAppContainerPriority(name string) int {
+	name = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(name, "/")))
+	if name == "" {
+		return 0
+	}
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == '/'
+	})
+	priority := 0
+	for i, part := range parts {
+		if part != "app" {
+			continue
+		}
+		if i == len(parts)-1 || (i == len(parts)-2 && isDecimalToken(parts[i+1])) {
+			priority = 3
+		} else {
+			priority = maxInt(priority, 1)
+		}
+	}
+	if priority == 0 && strings.Contains(name, "app") {
+		// Some runtimes use a service name such as "appserver" instead of a
+		// separate "app" token. Keep it above a project-prefix-only match.
+		return 2
+	}
+	return priority
+}
+
+func isDecimalToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func containerStatusStart(c ContainerRuntimeInfo) string {
+	if value := FormatContainerStarted(c.StartedAt); value != "" {
+		return value
+	}
+	if value := FormatDockerStatus(c.Status); value != "" {
+		return value
+	}
+	return FormatContainerCreated(c.Created)
 }
 
 func cloneBridgeMap(source map[string]BridgeAppInfo) map[string]BridgeAppInfo {

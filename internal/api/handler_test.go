@@ -449,6 +449,20 @@ func TestHandleSpeedHistoryNoteRejectsLongNote(t *testing.T) {
 	}
 }
 
+func TestHandleSpeedHistoryClear(t *testing.T) {
+	handler := newTestHandler(t)
+	handler.service.RecordLocalTransferResult(probe.LocalTransferResult{DownloadMbps: 100, UploadMbps: 50})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/history/clear", strings.NewReader(`{"kind":"local"}`))
+	rec := httptest.NewRecorder()
+	handler.handleSpeedHistoryClear(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if history := handler.service.GetLocalTransferHistory(); len(history) != 0 {
+		t.Fatalf("history = %+v, want empty", history)
+	}
+}
+
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	service := probe.NewService(testConfig(t))

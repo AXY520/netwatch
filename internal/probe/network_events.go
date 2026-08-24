@@ -314,11 +314,19 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 				app.ContainerCount++
 				if item.Running {
 					app.RunningCount++
-					if app.CreatedAt == 0 || (item.StartedAt > 0 && item.StartedAt < app.CreatedAt) {
-						app.CreatedAt = item.StartedAt
-					}
 				}
 				hostApps[item.Project] = app
+			}
+			for project, item := range dockerlzc.PrimaryAppContainers(containers) {
+				app, ok := hostApps[project]
+				if !ok {
+					continue
+				}
+				app.CreatedAt = item.StartedAt
+				if app.CreatedAt == 0 {
+					app.CreatedAt = item.Created
+				}
+				hostApps[project] = app
 			}
 			for _, app := range hostApps {
 				counters = append(counters, app)

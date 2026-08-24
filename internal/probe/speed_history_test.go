@@ -36,6 +36,28 @@ func TestUpdateSpeedHistoryNotePersists(t *testing.T) {
 	}
 }
 
+func TestClearSpeedHistoryPersistsEmptyLists(t *testing.T) {
+	dir := t.TempDir()
+	service := &Service{
+		cfg:                  Config{DataDir: dir},
+		broadbandHistory:     []BroadbandSpeedResult{{ID: "b-1"}},
+		localTransferHistory: []LocalTransferResult{{ID: "l-1"}},
+	}
+	if !service.ClearSpeedHistory("broadband") || !service.ClearSpeedHistory("local") {
+		t.Fatal("history clear failed")
+	}
+	if len(service.GetBroadbandHistory()) != 0 || len(service.GetLocalTransferHistory()) != 0 {
+		t.Fatal("history was not cleared")
+	}
+	var broadband []BroadbandSpeedResult
+	readSpeedHistory(t, filepath.Join(dir, "broadband_history.json"), &broadband)
+	var local []LocalTransferResult
+	readSpeedHistory(t, filepath.Join(dir, "local_transfer_history.json"), &local)
+	if broadband == nil || local == nil {
+		t.Fatalf("cleared history should persist as JSON arrays: broadband=%#v local=%#v", broadband, local)
+	}
+}
+
 func readSpeedHistory(t *testing.T, path string, target any) {
 	t.Helper()
 	body, err := os.ReadFile(path)

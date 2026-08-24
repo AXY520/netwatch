@@ -14,6 +14,9 @@ function applySettingsToForm() {
         els.settingNICRealtimeIntervalSec.disabled = !state.settings.nic_realtime_enabled;
         if (window.syncCustomSelect) window.syncCustomSelect(els.settingNICRealtimeIntervalSec);
     }
+    if (els.settingAppTrafficRealtimeEnabled) {
+        els.settingAppTrafficRealtimeEnabled.checked = state.settings.app_traffic_realtime_enabled !== false;
+    }
     if (els.settingBackgroundMonitorEnabled) {
         els.settingBackgroundMonitorEnabled.checked = !!state.settings.background_monitor_enabled;
     }
@@ -22,7 +25,6 @@ function applySettingsToForm() {
         els.settingBackgroundMonitorIntervalSec.disabled = !state.settings.background_monitor_enabled;
         if (window.syncCustomSelect) window.syncCustomSelect(els.settingBackgroundMonitorIntervalSec);
     }
-    if (els.settingContainerControlEnabled) els.settingContainerControlEnabled.checked = !!state.settings.container_control_enabled;
     var notificationsDisabled = !state.settings.background_monitor_enabled || !state.settings.notifications_enabled;
     if (els.settingNotificationsEnabled) {
         els.settingNotificationsEnabled.checked = !!state.settings.notifications_enabled;
@@ -123,6 +125,7 @@ async function loadSettings() {
             refresh_interval_sec: settingsData.refresh_interval_sec || state.refreshInterval || 10,
             nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
+            app_traffic_realtime_enabled: settingsData.app_traffic_realtime_enabled !== false,
             chart_time_label_interval: settingsData.chart_time_label_interval || 0,
             dashboard_collapsed_sections: settingsData.dashboard_collapsed_sections || [],
             background_monitor_enabled: !!settingsData.background_monitor_enabled,
@@ -155,10 +158,10 @@ async function loadSettings() {
             dnd_end: settingsData.dnd_end || '08:00',
             scheduled_notify_enabled: !!settingsData.scheduled_notify_enabled,
             scheduled_notify_time: settingsData.scheduled_notify_time || '09:00',
-            notification_device_ids: settingsData.notification_device_ids || [],
-            container_control_enabled: !!settingsData.container_control_enabled
+            notification_device_ids: settingsData.notification_device_ids || []
         };
         applySettingsToForm();
+        if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
         loadLazycatDevices();
     } catch (error) {
         console.error(error);
@@ -170,8 +173,8 @@ async function saveSettings() {
         refresh_interval_sec: state.settings.refresh_interval_sec,
         nic_realtime_enabled: !!(els.settingNICRealtimeEnabled && els.settingNICRealtimeEnabled.checked),
         nic_realtime_interval_sec: parseInt((els.settingNICRealtimeIntervalSec && els.settingNICRealtimeIntervalSec.value) || '1', 10) || 1,
+        app_traffic_realtime_enabled: !!(els.settingAppTrafficRealtimeEnabled && els.settingAppTrafficRealtimeEnabled.checked),
         chart_time_label_interval: state.settings.chart_time_label_interval,
-        container_control_enabled: !!(els.settingContainerControlEnabled && els.settingContainerControlEnabled.checked),
         background_monitor_enabled: !!(els.settingBackgroundMonitorEnabled && els.settingBackgroundMonitorEnabled.checked),
         background_monitor_interval_sec: parseInt((els.settingBackgroundMonitorIntervalSec && els.settingBackgroundMonitorIntervalSec.value) || '60', 10) || 60,
         notifications_enabled: !!(els.settingNotificationsEnabled && els.settingNotificationsEnabled.checked),
@@ -232,6 +235,7 @@ async function saveSettings() {
         state.nicRealtimeInitialized = false;
         if (window.__app.initNICRealtime) window.__app.initNICRealtime();
         if (window.__app.refreshAppTraffic) window.__app.refreshAppTraffic();
+        if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
         NetwatchShared.showToast(i18n('save_settings_success'), 'success');
     } catch (error) {
         console.error(error);

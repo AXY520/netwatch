@@ -44,6 +44,7 @@ func (h *Handler) registerSpeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/speed/broadband/history", h.handleBroadbandHistory)
 	mux.HandleFunc("/api/v1/speed/local/history", h.handleLocalHistory)
 	mux.HandleFunc("/api/v1/speed/history/note", h.handleSpeedHistoryNote)
+	mux.HandleFunc("/api/v1/speed/history/clear", h.handleSpeedHistoryClear)
 	mux.HandleFunc("/api/v1/speed/local/result", h.handleLocalResult)
 	mux.HandleFunc("/api/v1/speed/local/ping", h.handleLocalPing)
 	mux.HandleFunc("/api/v1/speed/local/download", h.handleLocalDownload)
@@ -61,6 +62,8 @@ func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
 
 func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
+	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
+	mux.HandleFunc("/api/v1/network/app-traffic/limit", h.handleAppTrafficLimit)
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {

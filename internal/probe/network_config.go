@@ -164,7 +164,7 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 	out1, err := nmcli(ctx, args, 10*time.Second)
 	if err == nil {
 		var out2 string
-		out2, err = nmcli(ctx, []string{"device", "reapply", req.Device}, 20*time.Second)
+		out2, err = activateNetworkConfigConnection(ctx, req.Device, dev.Connection)
 		out1 = strings.TrimSpace(strings.Join([]string{out1, out2}, "\n"))
 	}
 	if err != nil {
@@ -505,9 +505,33 @@ func restoreNetworkConfigSnapshot(ctx context.Context, device string, snap netwo
 	if err != nil {
 		return strings.TrimSpace(out1), err
 	}
-	out2, err := nmcli(ctx, []string{"device", "reapply", device}, 20*time.Second)
+	out2, err := activateNetworkConfigConnection(ctx, device, snap.Connection)
 	invalidateHostNetworkDeviceInventoryCache()
 	return strings.TrimSpace(strings.Join([]string{out1, out2}, "\n")), err
+}
+
+// activateNetworkConfigConnection makes profile changes effective immediately.
+// `device reapply` reports success for some ipv4.method transitions without
+// replacing the active address, so reconnect the profile first. Older
+// NetworkManager versions may reject that operation; retain reapply as a
+// compatibility fallback for profiles that can be updated in place.
+func activateNetworkConfigConnection(ctx context.Context, device, connection string) (string, error) {
+	device = strings.TrimSpace(device)
+	connection = strings.TrimSpace(connection)
+	if device == "" || connection == "" {
+		return "", errors.New("device and connection required")
+	}
+	upOut, upErr := nmcli(ctx, []string{"connection", "up", connection, "ifname", device}, 30*time.Second)
+	if upErr == nil {
+		return strings.TrimSpace(upOut), nil
+	}
+
+	reapplyOut, reapplyErr := nmcli(ctx, []string{"device", "reapply", device}, 20*time.Second)
+	combined := strings.TrimSpace(strings.Join([]string{upOut, reapplyOut}, "\n"))
+	if reapplyErr == nil {
+		return combined, nil
+	}
+	return combined, fmt.Errorf("connection up 失败: %v；device reapply 失败: %v", upErr, reapplyErr)
 }
 
 func validateNetworkConfigRequest(req NetworkConfigApplyRequest) error {

@@ -22,8 +22,8 @@ async function loadSpeedConfig() {
     } catch (error) {
         console.error(error);
     }
-    els.broadbandNote.textContent = broadbandModeText(currentBroadbandMode()) + ' · ' + state.speedConfig.broadband_duration_sec + i18n('seconds_unit');
-    els.transferNote.textContent = i18n('transfer_note_prefix') + state.speedConfig.local_transfer_duration_sec + i18n('seconds_unit');
+    els.broadbandNote.textContent = i18n('standby');
+    els.transferNote.textContent = i18n('standby');
 }
 
 function speedAPIGet(path) {
@@ -50,10 +50,6 @@ function speedAPIPost(path, body) {
 
 function currentBroadbandMode() {
     return state.broadbandMode === 'server' ? 'server' : 'client';
-}
-
-function broadbandModeText(mode) {
-    return mode === 'server' ? i18n('broadband_mode_server') : i18n('broadband_mode_client');
 }
 
 function builtinBroadbandNodes() {
@@ -87,13 +83,13 @@ function renderBroadbandMode() {
         button.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     renderBroadbandNodeOptions();
-    if (els.broadbandNodeStatus) els.broadbandNodeStatus.textContent = mode === 'server' ? i18n('broadband_server_note') : i18n('broadband_client_note');
+    if (els.broadbandNodeStatus && !els.broadbandNodeStatus.dataset.refreshing) els.broadbandNodeStatus.textContent = '';
 }
 
 function setBroadbandMode(mode) {
     if (state.runningTest || (mode !== 'client' && mode !== 'server')) return;
     state.broadbandMode = mode;
-    localStorage.setItem('netwatch_broadband_mode', mode);
+    localStorage.setItem('netwatch_broadband_mode_v2', mode);
     renderBroadbandMode();
     resetBroadbandMetrics();
 }
@@ -139,6 +135,9 @@ function updateBroadbandControls() {
         element.disabled = busy;
         if (element.tagName === 'SELECT' && window.syncCustomSelect) window.syncCustomSelect(element);
     });
+    [els.clearBroadbandHistory, els.clearTransferHistory].forEach(function (element) {
+        if (element) element.disabled = busy;
+    });
 }
 
 async function loadSpeedHistory() {
@@ -156,7 +155,7 @@ async function loadSpeedHistory() {
 
 function renderBroadbandHistory(items) {
     els.broadbandHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + (item.provider ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.provider) : '') + (item.node_source ? ' \u00B7 ' + NetwatchShared.escapeHtml(item.node_source) : '') + '</small></div>' + historyNoteHTML('broadband', item) + '<div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms</small></div></div></div>';
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + '</small></div>' + historyNoteHTML('broadband', item) + '<div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms · ' + i18n('latency_jitter') + ' ' + (item.jitter_ms || 0) + ' ms</small></div></div></div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
@@ -178,6 +177,32 @@ async function saveSpeedHistoryNote(kind, id, note) {
     var data = await response.json().catch(function () { return {}; });
     if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
     return data;
+}
+
+async function clearSpeedHistory(kind) {
+    var ok = await NetwatchShared.confirmDialog({
+        title: i18n('clear_history_title'),
+        message: i18n('clear_history_confirm'),
+        okText: i18n('clear_btn'),
+        cancelText: i18n('close_btn'),
+        danger: true
+    });
+    if (!ok) return;
+    try {
+        if (window.NetwatchAPI) {
+            await window.NetwatchAPI.post('/api/v1/speed/history/clear', { kind: kind });
+        } else {
+            var response = await fetch('/api/v1/speed/history/clear', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind: kind })
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+        }
+        await loadSpeedHistory();
+    } catch (error) {
+        NetwatchShared.showToast(error.message || i18n('clear_failed'), 'error');
+    }
 }
 
 function bindSpeedHistoryNotes() {
@@ -212,19 +237,6 @@ function bindSpeedHistoryNotes() {
     });
 }
 
-function resetBroadbandDetails() {
-    window.__app.setText(els.broadbandNodeName, '--');
-    window.__app.setText(els.broadbandNodeProvider, '--');
-    window.__app.setText(els.broadbandNodeRegion, '--');
-}
-
-function renderBroadbandDetails(result) {
-    result = result || {};
-    window.__app.setText(els.broadbandNodeName, result.node_name || result.server_name || result.server_region || '--');
-    window.__app.setText(els.broadbandNodeProvider, result.test_mode === 'server' ? i18n('broadband_mode_server') : i18n('broadband_mode_client'));
-    window.__app.setText(els.broadbandNodeRegion, result.node_category || result.server_country || result.server_region || '--');
-}
-
 function formatMeasuredMS(value, measured) {
     return measured && Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value)) + ' ms' : '--';
 }
@@ -242,18 +254,17 @@ function renderTransferDetails(stats) {
 }
 
 function resetBroadbandMetrics() {
-    els.broadbandNote.textContent = broadbandModeText(currentBroadbandMode()) + ' · ' + state.speedConfig.broadband_duration_sec + i18n('seconds_unit');
+    els.broadbandNote.textContent = i18n('standby');
     window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Idle', i18n('standby'));
     window.__app.setSpeedPanelMode('broadband', 'Idle');
     els.broadbandDownload.textContent = '--';
     els.broadbandUpload.textContent = '--';
     els.broadbandLatency.textContent = '--';
     els.broadbandJitter.textContent = '--';
-    resetBroadbandDetails();
 }
 
 function resetTransferMetrics() {
-    els.transferNote.textContent = i18n('transfer_note_prefix') + state.speedConfig.local_transfer_duration_sec + i18n('seconds_unit');
+    els.transferNote.textContent = i18n('standby');
     window.__app.setPrimaryStatus(els.transferPrimaryMode, els.transferPrimaryCaption, 'Idle', i18n('standby'));
     window.__app.setSpeedPanelMode('transfer', 'Idle');
     els.transferDownload.textContent = '--';
@@ -270,7 +281,6 @@ function renderBroadbandResult(result, stage, caption) {
     els.broadbandJitter.textContent = formatMeasuredMS(result.jitter_ms, latencyMeasured);
     els.broadbandDownload.textContent = window.__app.formatMbps(result.download_mbps);
     els.broadbandUpload.textContent = window.__app.formatMbps(result.upload_mbps);
-    renderBroadbandDetails(result);
     var mode = stage === 'latency' ? 'Ping' : (stage === 'download' ? 'Download' : (stage === 'upload' ? 'Upload' : 'Result'));
     window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, mode, caption || i18n('standby'));
     window.__app.setSpeedPanelMode('broadband', mode);
@@ -344,7 +354,6 @@ function startClientBroadbandTest(request) {
     var result = { test_mode: 'client', node_id: request.nodeID, node_name: node.label, node_category: node.category || 'public', download_mbps: 0, upload_mbps: 0, latency_ms: 0, jitter_ms: 0 };
     var worker = new Worker('/broadband-speedtest-worker.js?r=' + Math.random());
     state.broadbandWorker = worker;
-    renderBroadbandDetails(result);
     worker.onmessage = async function (event) {
         if (worker !== state.broadbandWorker) return;
         var data = event.data || {};
@@ -674,5 +683,7 @@ window.__app.startBroadbandTest = startBroadbandTest;
 window.__app.cancelBroadbandTest = cancelBroadbandTest;
 window.__app.runTransferTest = runTransferTest;
 window.__app.cancelTransferTest = cancelTransferTest;
+window.__app.clearSpeedHistory = clearSpeedHistory;
+renderBroadbandMode();
 bindSpeedHistoryNotes();
 })();

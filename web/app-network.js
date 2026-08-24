@@ -298,7 +298,7 @@ async function runWebsiteRefresh() {
     els.websiteRefreshBtn.disabled = true;
     var previous = (state.summary && state.summary.website_connectivity) || {};
     updateWebsiteObservationStatus(previous, previous.generated_at ? 'refreshing' : 'loading');
-    document.querySelector('.connectivity-card')?.setAttribute('aria-busy', 'true');
+    document.getElementById('connectivity-card')?.setAttribute('aria-busy', 'true');
     try {
         var websiteData = window.NetwatchAPI
             ? await window.NetwatchAPI.post('/api/v1/connectivity/websites/run')
@@ -322,7 +322,7 @@ async function runWebsiteRefresh() {
         NetwatchShared.showToast(i18n('check_failed'), 'error');
     } finally {
         els.websiteRefreshBtn.disabled = false;
-        document.querySelector('.connectivity-card')?.removeAttribute('aria-busy');
+        document.getElementById('connectivity-card')?.removeAttribute('aria-busy');
     }
 }
 

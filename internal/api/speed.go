@@ -156,6 +156,27 @@ func (h *Handler) handleSpeedHistoryNote(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": request.Note})
 }
 
+func (h *Handler) handleSpeedHistoryClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var request struct {
+		Kind string `json:"kind"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if request.Kind != "broadband" && request.Kind != "local" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid history kind"})
+		return
+	}
+	h.service.ClearSpeedHistory(request.Kind)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (h *Handler) handleLocalResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

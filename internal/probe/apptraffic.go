@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"netwatch/internal/appmeta"
@@ -88,11 +89,66 @@ type AppBridgeStats struct {
 }
 
 type AppTrafficSnapshot struct {
-	GeneratedAt        string           `json:"generated_at"`
-	Bridges            []AppBridgeStats `json:"bridges"`
-	Note               string           `json:"note,omitempty"`
-	CounterPerspective string           `json:"counter_perspective"`
-	Source             string           `json:"source"`
+	GeneratedAt        string            `json:"generated_at"`
+	Bridges            []AppBridgeStats  `json:"bridges"`
+	Apps               []AppTrafficUsage `json:"apps,omitempty"`
+	LimitSupport       bool              `json:"limit_support"`
+	Note               string            `json:"note,omitempty"`
+	CounterPerspective string            `json:"counter_perspective"`
+	Source             string            `json:"source"`
+}
+
+type appTrafficMetadata struct {
+	bridgeMap   map[string]dockerlzc.BridgeAppInfo
+	appMap      map[string]lzcsdk.AppInfo
+	boxDomain   string
+	localTitles map[string]string
+	localAppIDs []string
+}
+
+var appTrafficMetadataCache struct {
+	sync.RWMutex
+	at   time.Time
+	data appTrafficMetadata
+}
+
+func InvalidateAppTrafficMetadataCache() {
+	appTrafficMetadataCache.Lock()
+	appTrafficMetadataCache.at = time.Time{}
+	appTrafficMetadataCache.data = appTrafficMetadata{}
+	appTrafficMetadataCache.Unlock()
+}
+
+func cachedAppTrafficMetadata() appTrafficMetadata {
+	appTrafficMetadataCache.RLock()
+	if time.Since(appTrafficMetadataCache.at) < time.Minute {
+		metadata := appTrafficMetadataCache.data
+		appTrafficMetadataCache.RUnlock()
+		return metadata
+	}
+	appTrafficMetadataCache.RUnlock()
+
+	metadata := appTrafficMetadata{}
+	if dockerlzc.Available() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		metadata.bridgeMap, _ = dockerlzc.BuildBridgeMap(ctx)
+		cancel()
+	}
+	if lzcsdk.Available() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		metadata.appMap, _ = lzcsdk.ListApps(ctx)
+		metadata.boxDomain = lzcsdk.BoxDomain(ctx)
+		cancel()
+	}
+	if appmeta.Available() {
+		metadata.localTitles, _ = appmeta.LoadTitles()
+		metadata.localAppIDs, _ = appmeta.LoadAppIDs()
+	}
+	appTrafficMetadataCache.Lock()
+	appTrafficMetadataCache.at = time.Now()
+	appTrafficMetadataCache.data = metadata
+	appTrafficMetadataCache.Unlock()
+	return metadata
 }
 
 const (
@@ -287,43 +343,12 @@ func CollectAppTraffic() AppTrafficSnapshot {
 
 	addrByName := bridgeAddresses()
 
-	// Best-effort: when the socket isn't mounted or the call fails, we still
-	// return bridge-level stats — just without the app name column.
-	var bridgeMap map[string]dockerlzc.BridgeAppInfo
-	if dockerlzc.Available() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		if m, err := dockerlzc.BuildBridgeMap(ctx); err == nil {
-			bridgeMap = m
-		}
-		cancel()
-	}
-
-	// 通过 SDK PackageManager.QueryApplication 拿应用中文 title。失败时回落到
-	// 直接使用 appid（不影响主流程）。
-	var appMap map[string]lzcsdk.AppInfo
-	boxDomain := ""
-	if lzcsdk.Available() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if m, err := lzcsdk.ListApps(ctx); err == nil {
-			appMap = m
-		}
-		boxDomain = lzcsdk.BoxDomain(ctx)
-		cancel()
-	} else {
-	}
-
-	// 兜底：从 /lzcapp/run/pkgm/<appid>/pkg/package.yml 读 name 字段。
-	// 测试机上 SDK 返回的 Title 经常为空，本地扫描更稳。
-	var localTitles map[string]string
-	var localAppIDs []string
-	if appmeta.Available() {
-		if m, err := appmeta.LoadTitles(); err == nil {
-			localTitles = m
-		}
-		if ids, err := appmeta.LoadAppIDs(); err == nil {
-			localAppIDs = ids
-		}
-	}
+	metadata := cachedAppTrafficMetadata()
+	bridgeMap := metadata.bridgeMap
+	appMap := metadata.appMap
+	boxDomain := metadata.boxDomain
+	localTitles := metadata.localTitles
+	localAppIDs := metadata.localAppIDs
 	projectAppIDs := map[string]string{}
 	for appID := range appMap {
 		projectAppIDs[normalizeAppProject(appID)] = appID

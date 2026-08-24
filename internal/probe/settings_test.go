@@ -16,6 +16,9 @@ func TestDefaultMutableSettingsStableCore(t *testing.T) {
 	if def.BarkServerURL == "" || def.BarkGroup == "" {
 		t.Fatal("bark defaults missing")
 	}
+	if !def.AppTrafficRealtimeEnabled {
+		t.Fatal("app traffic realtime refresh must default to enabled")
+	}
 }
 
 func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
@@ -48,6 +51,9 @@ func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
 	}
 	if got.LANDeviceOfflineAfterSec != def.LANDeviceOfflineAfterSec {
 		t.Fatalf("LANDeviceOfflineAfterSec=%d", got.LANDeviceOfflineAfterSec)
+	}
+	if got.AppTrafficRealtimeEnabled != def.AppTrafficRealtimeEnabled {
+		t.Fatalf("AppTrafficRealtimeEnabled=%t want %t", got.AppTrafficRealtimeEnabled, def.AppTrafficRealtimeEnabled)
 	}
 }
 

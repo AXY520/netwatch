@@ -22,6 +22,7 @@ var state = {
         nic_realtime_enabled: true,
         nic_realtime_interval_sec: 1,
         chart_time_label_interval: 0,
+        app_traffic_realtime_enabled: true,
         per_app_sampling_interval: {},
         persistent_traffic_bridges: [],
         background_monitor_enabled: false,
@@ -49,7 +50,7 @@ var state = {
     activeWindow: null,
     runningTest: null,
     broadbandPoller: null,
-    broadbandMode: localStorage.getItem('netwatch_broadband_mode') || 'client',
+    broadbandMode: localStorage.getItem('netwatch_broadband_mode_v2') || 'server',
     broadbandWorker: null,
     broadbandNodes: [],
     transferAbortController: null,
@@ -70,6 +71,7 @@ var state = {
         key: 'total',
         direction: 'desc'
     },
+    appTrafficRealtimeTimer: null,
     hostPortsSort: {
         key: 'port',
         direction: 'asc'
@@ -128,7 +130,7 @@ var els = {
     settingNICRealtimeIntervalSec: document.getElementById('setting-nic-realtime-interval-sec'),
     settingBackgroundMonitorEnabled: document.getElementById('setting-background-monitor-enabled'),
     settingBackgroundMonitorIntervalSec: document.getElementById('setting-background-monitor-interval-sec'),
-    settingContainerControlEnabled: document.getElementById('setting-container-control-enabled'),
+    settingAppTrafficRealtimeEnabled: document.getElementById('setting-app-traffic-realtime-enabled'),
     settingNotificationsEnabled: document.getElementById('setting-notifications-enabled'),
     settingClientNotificationEnabled: document.getElementById('setting-client-notification-enabled'),
     settingNotifyAbnormalTraffic: document.getElementById('setting-notify-abnormal-traffic'),
@@ -164,9 +166,6 @@ var els = {
     broadbandUpload: document.getElementById('broadband-upload'),
     broadbandLatency: document.getElementById('broadband-latency'),
     broadbandJitter: document.getElementById('broadband-jitter'),
-    broadbandNodeName: document.getElementById('broadband-node-name'),
-    broadbandNodeProvider: document.getElementById('broadband-node-provider'),
-    broadbandNodeRegion: document.getElementById('broadband-node-region'),
     transferPrimaryMode: document.getElementById('transfer-primary-mode'),
     transferPrimaryCaption: document.getElementById('transfer-primary-caption'),
     transferDownload: document.getElementById('transfer-download'),
@@ -174,12 +173,14 @@ var els = {
     transferLatency: document.getElementById('transfer-latency'),
     transferJitter: document.getElementById('transfer-jitter'),
     broadbandHistory: document.getElementById('broadband-history'),
+    clearBroadbandHistory: document.getElementById('clear-broadband-history'),
     broadbandModeClient: document.getElementById('broadband-mode-client'),
     broadbandModeServer: document.getElementById('broadband-mode-server'),
     broadbandNodeSelect: document.getElementById('broadband-node-select'),
     broadbandNodeRefresh: document.getElementById('broadband-node-refresh'),
     broadbandNodeStatus: document.getElementById('broadband-node-status'),
-    transferHistory: document.getElementById('transfer-history')
+    transferHistory: document.getElementById('transfer-history'),
+    clearTransferHistory: document.getElementById('clear-transfer-history')
 };
 window.__app.els = els;
 

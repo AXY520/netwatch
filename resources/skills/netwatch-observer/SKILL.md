@@ -86,11 +86,9 @@ Interface list includes physical ethernet/Wi-Fi, netwatch-managed host bridges (
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/network/app-traffic` | Per-app cumulative traffic with packets/errors/dropped, container count, domain |
-| GET | `/api/v1/network/app-traffic/history?bridge=<name>&limit=1440&range=1h` | Traffic history (rx/tx) for a bridge; `limit` clamped to 1–1440 |
-| POST | `/api/v1/network/app-traffic/live?bridge=<name>&limit=1440&range=1m` | Fresh sample + history for one bridge |
-| GET | `/api/v1/network/app-traffic/top?limit=15&range=1h` | Top apps by traffic; `limit` clamped to 1–30 |
-| POST | `/api/v1/settings/persistent-traffic-bridges` | Enable/disable persistent sampling for a bridge. Body: `{"bridge":"...","enabled":true}` |
+| GET | `/api/v1/network/app-traffic` | Raw bridge counters plus per-app live rate, today/month/total usage, and active limits |
+| GET | `/api/v1/network/app-traffic/history?app_id=<id>` | Persisted minute-level totals for one app ID |
+| POST | `/api/v1/network/app-traffic/limit` | Set app traffic ceiling. Body: `{"app_id":"...","upload_kbps":1024,"download_kbps":4096}`; zero removes a direction limit |
 
 ### Container network control
 

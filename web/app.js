@@ -256,7 +256,9 @@ function bindControls() {
     if (els.broadbandModeClient) els.broadbandModeClient.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('client'); });
     if (els.broadbandModeServer) els.broadbandModeServer.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('server'); });
     if (els.broadbandNodeRefresh) els.broadbandNodeRefresh.addEventListener('click', function () { if (A.loadBroadbandNodes) A.loadBroadbandNodes(); });
+    if (els.clearBroadbandHistory) els.clearBroadbandHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('broadband'); });
     els.runTransferTest.addEventListener('click', function () { if (A.runTransferTest) A.runTransferTest(); });
+    if (els.clearTransferHistory) els.clearTransferHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('local'); });
     if (els.saveSettings) els.saveSettings.addEventListener('click', function () { if (A.saveSettings) A.saveSettings(); });
 
     if (els.settingNICRealtimeEnabled) {
@@ -266,6 +268,13 @@ function bindControls() {
             if (els.settingNICRealtimeIntervalSec) {
                 els.settingNICRealtimeIntervalSec.disabled = !isEnabled;
             }
+        });
+    }
+
+    if (els.settingAppTrafficRealtimeEnabled) {
+        els.settingAppTrafficRealtimeEnabled.addEventListener('change', function () {
+            state.settings.app_traffic_realtime_enabled = !!els.settingAppTrafficRealtimeEnabled.checked;
+            if (A.updateAppTrafficRealtime) A.updateAppTrafficRealtime();
         });
     }
 
