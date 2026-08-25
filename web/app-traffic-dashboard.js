@@ -33,6 +33,8 @@ function initAppTraffic() {
     // again on every counter sample. A later URL change (or expiry) can retry.
     var failedAppIcons = Object.create(null);
     var failedAppIconRetryMs = 10 * 60 * 1000;
+    var lastTrafficRenderSignature = '';
+    var renderedTrafficMode = null;
     if (!tbody) return;
     var appTrafficRealtimeEnabled = function () {
         return state.settings.app_traffic_realtime_enabled !== false;
@@ -76,36 +78,80 @@ function initAppTraffic() {
             button.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
         });
     };
-    var renderTraffic = function (data) {
-        latestTrafficData = data;
-        var containerMap = appTrafficContainerMap();
-        var list = Array.isArray(data.apps) ? data.apps.slice() : [];
-        var showRealtime = syncAppTrafficRealtimeColumn();
-        updateSortHeaders();
-        if (list.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="' + (showRealtime ? 6 : 5) + '" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
-        } else {
-            var key = state.appTrafficSort.key;
-            var direction = state.appTrafficSort.direction;
-            list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
-            tbody.innerHTML = list.map(function (b) {
-                var iconURL = String(b.icon || '').trim();
-                var iconKey = appTrafficIconKey(b);
-                var failed = iconKey && iconURL ? failedAppIcons[iconKey] : null;
-                var iconRetryAllowed = !failed || failed.url !== iconURL || (Date.now() - failed.at) >= failedAppIconRetryMs;
-                var iconHtml = iconURL && iconRetryAllowed ? '<img class="app-icon" src="' + NetwatchShared.escapeHtml(iconURL) + '" data-app-icon-key="' + NetwatchShared.escapeHtml(iconKey) + '" alt="" loading="lazy">' : '';
-                var name = b.app_title || b.app_id || b.project || i18n('unknown_status');
-                var statusLine = b.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(b.status_text) + '</div>' : '';
-                return '<tr data-app-id="' + NetwatchShared.escapeHtml(b.app_id || '') + '">' +
-                    '<td class="col-app"><div class="app-cell">' + iconHtml + '<div class="app-cell-info"><strong>' + NetwatchShared.escapeHtml(name) + '</strong>' + statusLine + '</div></div></td>' +
-                    (showRealtime ? '<td class="col-rate">' + appTrafficDualValue(b.upload_bps, b.download_bps, true) + '</td>' : '') +
-                    '<td class="col-period">' + appTrafficDualValue(b.today_upload, b.today_download, false) + '</td>' +
-                    '<td class="col-period">' + appTrafficDualValue(b.month_upload, b.month_download, false) + '</td>' +
-                    '<td class="col-total">' + appTrafficDualValue(b.total_upload, b.total_download, false) + '</td>' +
-                    '<td class="col-actions">' + appTrafficMoreMenu(b, data.limit_support, containerMap, activeMenuAppID) + '</td>' +
-                '</tr>';
-            }).join('');
+    var trafficRowKey = function (item, index) {
+        return String((item && (item.app_id || item.project || item.app_title)) || ('row-' + index));
+    };
+    var trafficRenderSignature = function (list, showRealtime, data, containerMap) {
+        return JSON.stringify({
+            mode: showRealtime,
+            sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
+            menu: activeMenuAppID,
+            limit: !!data.limit_support,
+            containers: containerMap,
+            apps: list.map(function (item, index) {
+                return [
+                    trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
+                    item.upload_bps || 0, item.download_bps || 0,
+                    item.today_upload || 0, item.today_download || 0,
+                    item.month_upload || 0, item.month_download || 0,
+                    item.total_upload || 0, item.total_download || 0,
+                    item.limit || null, item.bridges || []
+                ];
+            })
+        });
+    };
+    var setTrafficCellHTML = function (cell, html) {
+        if (cell && cell.innerHTML !== html) cell.innerHTML = html;
+    };
+    var updateTrafficAppCell = function (cell, item) {
+        var wrapper = cell.querySelector('.app-cell');
+        var info = cell.querySelector('.app-cell-info');
+        if (!wrapper || !info) return;
+        var iconURL = String(item.icon || '').trim();
+        var iconKey = appTrafficIconKey(item);
+        var failed = iconKey && iconURL ? failedAppIcons[iconKey] : null;
+        var iconRetryAllowed = !failed || failed.url !== iconURL || (Date.now() - failed.at) >= failedAppIconRetryMs;
+        var image = wrapper.querySelector('img.app-icon');
+        if (iconURL && iconRetryAllowed) {
+            if (!image) {
+                image = document.createElement('img');
+                image.className = 'app-icon';
+                image.alt = '';
+                image.loading = 'lazy';
+                wrapper.insertBefore(image, info);
+            }
+            image.dataset.appIconKey = iconKey;
+            if (image.getAttribute('src') !== iconURL) image.src = iconURL;
+            image.style.display = '';
+        } else if (image) {
+            image.style.display = 'none';
         }
+        var name = item.app_title || item.app_id || item.project || i18n('unknown_status');
+        setTrafficCellHTML(info, '<strong>' + NetwatchShared.escapeHtml(name) + '</strong>' +
+            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : ''));
+    };
+    var createTrafficRow = function (item, showRealtime) {
+        var row = document.createElement('tr');
+        row.innerHTML = '<td class="col-app"><div class="app-cell"><div class="app-cell-info"></div></div></td>' +
+            (showRealtime ? '<td class="col-rate"></td>' : '') +
+            '<td class="col-period"></td><td class="col-period"></td><td class="col-total"></td><td class="col-actions"></td>';
+        return row;
+    };
+    var updateTrafficRow = function (row, item, showRealtime, data, containerMap, index) {
+        row.dataset.appId = String(item.app_id || '');
+        row.dataset.appRowKey = trafficRowKey(item, index);
+        updateTrafficAppCell(row.querySelector('.col-app'), item);
+        var rateCell = row.querySelector('.col-rate');
+        if (showRealtime) setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
+        var periods = row.querySelectorAll('.col-period');
+        setTrafficCellHTML(periods[0], appTrafficDualValue(item.today_upload, item.today_download, false));
+        setTrafficCellHTML(periods[1], appTrafficDualValue(item.month_upload, item.month_download, false));
+        var total = row.querySelector('.col-total');
+        setTrafficCellHTML(total, appTrafficDualValue(item.total_upload, item.total_download, false));
+        var actions = row.querySelector('.col-actions');
+        setTrafficCellHTML(actions, appTrafficMoreMenu(item, data.limit_support, containerMap, activeMenuAppID));
+    };
+    var updateTrafficStatus = function (data, list) {
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
             state: list.length ? 'fresh' : 'empty',
             count: list.length,
@@ -114,6 +160,41 @@ function initAppTraffic() {
             title: data.note || ''
         });
         if (noteEl) noteEl.textContent = data.note || '';
+    };
+    var renderTraffic = function (data) {
+        latestTrafficData = data;
+        var containerMap = appTrafficContainerMap();
+        var list = Array.isArray(data.apps) ? data.apps.slice() : [];
+        var showRealtime = syncAppTrafficRealtimeColumn();
+        updateSortHeaders();
+        var key = state.appTrafficSort.key;
+        var direction = state.appTrafficSort.direction;
+        list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
+        var signature = trafficRenderSignature(list, showRealtime, data, containerMap);
+        if (signature === lastTrafficRenderSignature) {
+            updateTrafficStatus(data, list);
+            return;
+        }
+        lastTrafficRenderSignature = signature;
+        if (list.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="' + (showRealtime ? 6 : 5) + '" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
+            renderedTrafficMode = showRealtime;
+        } else {
+            if (renderedTrafficMode !== showRealtime || tbody.querySelector('.placeholder')) tbody.replaceChildren();
+            var existingRows = new Map(Array.from(tbody.querySelectorAll('tr[data-app-row-key]')).map(function (row) {
+                return [row.dataset.appRowKey, row];
+            }));
+            var fragment = document.createDocumentFragment();
+            list.forEach(function (item, index) {
+                var row = existingRows.get(trafficRowKey(item, index));
+                if (!row) row = createTrafficRow(item, showRealtime);
+                updateTrafficRow(row, item, showRealtime, data, containerMap, index);
+                fragment.appendChild(row);
+            });
+            tbody.replaceChildren(fragment);
+            renderedTrafficMode = showRealtime;
+        }
+        updateTrafficStatus(data, list);
     };
 
     function appTrafficIconKey(item) {
@@ -340,10 +421,10 @@ function appTrafficMoreMenu(item, limitSupported, containerMap, activeAppID) {
     if (!open) return '<div class="app-traffic-action-menu">' + menu + '</div>';
     var panel = '<div class="app-traffic-more-panel" role="menu">';
     if (limitSupported) {
-        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '">' + i18n('app_traffic_limit') + '</button>';
+        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
     }
     if (bridges.length) {
-        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '">' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</button>';
+        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
     return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
 }

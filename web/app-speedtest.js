@@ -85,10 +85,8 @@ function renderBroadbandMode() {
     });
     var portPolicy = mode === 'port-policy';
     if (els.broadbandPublicControls) els.broadbandPublicControls.hidden = portPolicy;
-    if (els.broadbandPortPolicyControls) els.broadbandPortPolicyControls.hidden = !portPolicy;
     if (els.broadbandStandardResults) els.broadbandStandardResults.hidden = portPolicy;
     if (els.broadbandPortPolicyResults) els.broadbandPortPolicyResults.hidden = !portPolicy;
-    if (els.broadbandHistorySection) els.broadbandHistorySection.hidden = portPolicy;
     if (!portPolicy) renderBroadbandNodeOptions();
     if (els.broadbandNodeStatus && !els.broadbandNodeStatus.dataset.refreshing) els.broadbandNodeStatus.textContent = '';
     if (portPolicy) resetPortPolicyMetrics();
@@ -163,7 +161,10 @@ async function loadSpeedHistory() {
 
 function renderBroadbandHistory(items) {
     els.broadbandHistory.innerHTML = items.map(function (item) {
-        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small>' + NetwatchShared.escapeHtml(item.timestamp || '--') + '</small></div>' + historyNoteHTML('broadband', item) + '<div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms · ' + i18n('latency_jitter') + ' ' + (item.jitter_ms || 0) + ' ms</small></div></div></div>';
+        var clientMode = item.test_mode === 'client';
+        var modeClass = clientMode ? 'client' : 'server';
+        var modeLabel = i18n(clientMode ? 'broadband_mode_client' : 'broadband_mode_server');
+        return '<div class="history-item"><div class="history-item-main"><div class="history-item-info"><span class="history-item-value">' + (item.download_mbps && item.download_mbps.toFixed ? item.download_mbps.toFixed(2) : '0.00') + ' / ' + (item.upload_mbps && item.upload_mbps.toFixed ? item.upload_mbps.toFixed(2) : '0.00') + ' <small>Mbit/s</small></span><small class="history-item-meta"><span class="history-mode-badge ' + modeClass + '">' + NetwatchShared.escapeHtml(modeLabel) + '</span><span>' + NetwatchShared.escapeHtml(item.timestamp || '--') + '</span></small></div>' + historyNoteHTML('broadband', item) + '<div class="history-item-metrics"><small>' + i18n('latency_col') + ' ' + (item.latency_ms || 0) + ' ms · ' + i18n('latency_jitter') + ' ' + (item.jitter_ms || 0) + ' ms</small></div></div></div>';
     }).join('') || '<div class="history-item"><small>' + i18n('no_history') + '</small></div>';
 }
 
@@ -277,17 +278,9 @@ function resetPortPolicyMetrics() {
         els.broadbandPortPolicyLowDownload, els.broadbandPortPolicyLowUpload,
         els.broadbandPortPolicyLowLatency, els.broadbandPortPolicyLowJitter,
         els.broadbandPortPolicyHighDownload, els.broadbandPortPolicyHighUpload,
-        els.broadbandPortPolicyHighLatency, els.broadbandPortPolicyHighJitter,
-        els.broadbandPortPolicyDownloadDelta, els.broadbandPortPolicyUploadDelta
+        els.broadbandPortPolicyHighLatency, els.broadbandPortPolicyHighJitter
     ];
     fields.forEach(function (element) { if (element) element.textContent = '--'; });
-    if (els.broadbandPortPolicyTarget) els.broadbandPortPolicyTarget.textContent = 'ispeedtest.com.cn';
-    if (els.broadbandPortPolicyProtocol) els.broadbandPortPolicyProtocol.textContent = 'HTTP';
-    if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = i18n('broadband_port_policy_ready');
-    if (els.broadbandPortPolicyVerdict) {
-        els.broadbandPortPolicyVerdict.textContent = i18n('broadband_port_policy_ready');
-        els.broadbandPortPolicyVerdict.className = 'port-policy-verdict';
-    }
 }
 
 function portPolicySpeed(value) {
@@ -296,14 +289,6 @@ function portPolicySpeed(value) {
 
 function portPolicyLatency(value) {
     return Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.round(Number(value)) + ' ms' : '--';
-}
-
-function portPolicyDelta(high, low) {
-    high = portPolicySpeed(high);
-    low = portPolicySpeed(low);
-    if (high === null || low === null || low <= 0) return '--';
-    var percent = (high - low) / low * 100;
-    return (percent > 0 ? '+' : '') + percent.toFixed(1) + '%';
 }
 
 function renderPortPolicyResults(results) {
@@ -331,46 +316,29 @@ function renderPortPolicyResults(results) {
     if (els.broadbandPortPolicyHighUpload) els.broadbandPortPolicyHighUpload.textContent = portPolicySpeed(highUpload) === null ? '--' : portPolicySpeed(highUpload).toFixed(2);
     if (els.broadbandPortPolicyHighLatency) els.broadbandPortPolicyHighLatency.textContent = portPolicyLatency(highLatency);
     if (els.broadbandPortPolicyHighJitter) els.broadbandPortPolicyHighJitter.textContent = portPolicyLatency(highJitter);
-    if (els.broadbandPortPolicyDownloadDelta) els.broadbandPortPolicyDownloadDelta.textContent = portPolicyDelta(highDownload, lowDownload);
-    if (els.broadbandPortPolicyUploadDelta) els.broadbandPortPolicyUploadDelta.textContent = portPolicyDelta(highUpload, lowUpload);
 }
 
-function renderPortPolicyVerdict(results, final) {
+function portPolicyResultMessage(results) {
     results = results || {};
     var low = results.low || {};
     var high = results.high || {};
-    var verdict = i18n('broadband_port_policy_running');
-    var className = 'port-policy-verdict';
-    if (final) {
-        if (high.error && !high.ok) {
-            verdict = i18n('broadband_port_policy_high_failed');
-            className += ' error';
-        } else if (low.error && !low.ok) {
-            verdict = i18n('broadband_port_policy_low_failed');
-            className += ' error';
-        } else {
-            var field = function (object, camel, snake) {
-                return object[camel] !== undefined && object[camel] !== null ? object[camel] : object[snake];
-            };
-            var lowDownload = portPolicySpeed(field(low, 'downloadMbps', 'download_mbps'));
-            var highDownload = portPolicySpeed(field(high, 'downloadMbps', 'download_mbps'));
-            var lowUpload = portPolicySpeed(field(low, 'uploadMbps', 'upload_mbps'));
-            var highUpload = portPolicySpeed(field(high, 'uploadMbps', 'upload_mbps'));
-            var downloadDrop = lowDownload > 0 && highDownload !== null ? (highDownload - lowDownload) / lowDownload : 0;
-            var uploadDrop = lowUpload > 0 && highUpload !== null ? (highUpload - lowUpload) / lowUpload : 0;
-            if (downloadDrop <= -0.3 || uploadDrop <= -0.3) {
-                verdict = i18n('broadband_port_policy_likely_limited');
-                className += ' warn';
-            } else {
-                verdict = i18n('broadband_port_policy_no_obvious_limit');
-                className += ' ok';
-            }
-        }
-    }
-    if (els.broadbandPortPolicyVerdict) {
-        els.broadbandPortPolicyVerdict.textContent = verdict;
-        els.broadbandPortPolicyVerdict.className = className;
-    }
+    if (high.error && !high.ok) return i18n('broadband_port_policy_high_failed');
+    if (low.error && !low.ok) return i18n('broadband_port_policy_low_failed');
+    var field = function (object, camel, snake) {
+        return object[camel] !== undefined && object[camel] !== null ? object[camel] : object[snake];
+    };
+    var lowDownload = portPolicySpeed(field(low, 'downloadMbps', 'download_mbps'));
+    var highDownload = portPolicySpeed(field(high, 'downloadMbps', 'download_mbps'));
+    var lowUpload = portPolicySpeed(field(low, 'uploadMbps', 'upload_mbps'));
+    var highUpload = portPolicySpeed(field(high, 'uploadMbps', 'upload_mbps'));
+    var comparableDownload = lowDownload !== null && lowDownload > 0 && highDownload !== null;
+    var comparableUpload = lowUpload !== null && lowUpload > 0 && highUpload !== null;
+    if (!comparableDownload && !comparableUpload) return i18n('speedtest_complete');
+    var downloadDrop = comparableDownload ? (highDownload - lowDownload) / lowDownload : 0;
+    var uploadDrop = comparableUpload ? (highUpload - lowUpload) / lowUpload : 0;
+    return downloadDrop <= -0.3 || uploadDrop <= -0.3
+        ? i18n('broadband_port_policy_likely_limited')
+        : i18n('broadband_port_policy_no_obvious_limit');
 }
 
 function finishPortPolicyTest() {
@@ -391,17 +359,20 @@ function renderBroadbandPortPolicyTask(task) {
     task = task || {};
     var results = portPolicyTaskResults(task);
     renderPortPolicyResults(results);
-    if (els.broadbandPortPolicyTarget && task.host) els.broadbandPortPolicyTarget.textContent = task.host;
-    if (els.broadbandPortPolicyProtocol && task.protocol) els.broadbandPortPolicyProtocol.textContent = String(task.protocol).toUpperCase();
-    if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = task.message || i18n('broadband_port_policy_running');
-    renderPortPolicyVerdict(results, !!task.finished || !!task.error || !!task.canceled);
-    if (task.error && els.broadbandPortPolicyVerdict) {
-        els.broadbandPortPolicyVerdict.textContent = task.error;
-        els.broadbandPortPolicyVerdict.className = 'port-policy-verdict error';
-    } else if (task.canceled && els.broadbandPortPolicyVerdict) {
-        els.broadbandPortPolicyVerdict.textContent = i18n('speedtest_stopped');
-        els.broadbandPortPolicyVerdict.className = 'port-policy-verdict';
+    var mode = 'Testing';
+    var caption = task.message || i18n('broadband_port_policy_running');
+    if (task.error) {
+        mode = 'Error';
+        caption = task.error;
+    } else if (task.canceled) {
+        mode = 'Stopped';
+        caption = i18n('speedtest_stopped');
+    } else if (task.finished || task.running === false) {
+        mode = 'Result';
+        caption = portPolicyResultMessage(results);
     }
+    window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, mode, caption);
+    window.__app.setSpeedPanelMode('broadband', 'Idle');
 }
 
 function stopBroadbandPortPolicyPolling() {
@@ -426,7 +397,7 @@ async function pollBroadbandPortPolicyTask(generation) {
     } catch (error) {
         if (generation !== state.broadbandPortPolicyPollGeneration) return;
         console.error(error);
-        if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = error.message || i18n('broadband_start_failed');
+        window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Error', error.message || i18n('broadband_start_failed'));
     } finally {
         if (generation === state.broadbandPortPolicyPollGeneration) state.broadbandPortPolicyPollInFlight = false;
     }
@@ -441,7 +412,7 @@ function startBroadbandPortPolicyPolling() {
 
 async function startBroadbandPortPolicyTest() {
     resetPortPolicyMetrics();
-    if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = i18n('broadband_port_policy_allocating');
+    window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Testing', i18n('broadband_port_policy_allocating'));
     var task = await speedAPIPost('/api/v1/speed/broadband/port-policy/start');
     renderBroadbandPortPolicyTask(task);
     startBroadbandPortPolicyPolling();
@@ -617,16 +588,10 @@ async function startBroadbandTest() {
         console.error(error);
         state.runningTest = null;
         window.__app.updateWindowControls();
-        if (currentBroadbandMode() === 'port-policy') {
-            var message = error && error.message ? error.message : i18n('broadband_start_failed');
-            if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = message;
-            if (els.broadbandPortPolicyVerdict) {
-                els.broadbandPortPolicyVerdict.textContent = message;
-                els.broadbandPortPolicyVerdict.className = 'port-policy-verdict error';
-            }
-        } else {
-            els.broadbandNote.textContent = i18n('broadband_start_failed');
-        }
+        var message = error && error.message ? error.message : i18n('broadband_start_failed');
+        els.broadbandNote.textContent = message;
+        window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Error', message);
+        window.__app.setSpeedPanelMode('broadband', 'Error');
     }
 }
 
@@ -653,11 +618,7 @@ async function cancelBroadbandTest(showStopped) {
         window.__app.updateWindowControls();
         if (showStopped) {
             if (currentBroadbandMode() === 'port-policy') {
-                if (els.broadbandPortPolicyStatus) els.broadbandPortPolicyStatus.textContent = i18n('speedtest_stopped');
-                if (els.broadbandPortPolicyVerdict) {
-                    els.broadbandPortPolicyVerdict.textContent = i18n('speedtest_stopped');
-                    els.broadbandPortPolicyVerdict.className = 'port-policy-verdict';
-                }
+                window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Stopped', i18n('speedtest_stopped'));
             } else {
                 els.broadbandNote.textContent = i18n('speedtest_stopped');
                 window.__app.setPrimaryStatus(els.broadbandPrimaryMode, els.broadbandPrimaryCaption, 'Stopped', i18n('manual_stop'));

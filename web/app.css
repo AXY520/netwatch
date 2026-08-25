@@ -57,10 +57,7 @@
 
         body {
             background-color: var(--bg-color);
-            background-image:
-                radial-gradient(1200px 520px at 8% -10%, rgba(61, 214, 198, 0.08), transparent 55%),
-                radial-gradient(900px 420px at 100% 0%, rgba(224, 164, 88, 0.05), transparent 50%),
-                linear-gradient(180deg, rgba(255,255,255,0.015), transparent 28%);
+            background-image: none;
             background-attachment: fixed;
             color: var(--text-main);
             font-family: var(--font-ui);
@@ -95,10 +92,10 @@
             align-items: center;
             margin-bottom: 1.4rem;
             border: 1px solid var(--border-color);
-            background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+            background: var(--bg-elevated);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
-            border-radius: calc(var(--radius-card) + 2px);
+            border-radius: 12px;
             padding: 0.95rem 1.1rem;
             gap: 1rem;
             box-shadow: var(--shadow-card);
@@ -414,9 +411,11 @@
 .ui-icon--check { --ui-icon: url('/icons/ui/check.svg'); }
 .ui-icon--gauge { --ui-icon: url('/icons/ui/gauge.svg'); }
 .ui-icon--transfer { --ui-icon: url('/icons/ui/arrow-up-down.svg'); }
+.ui-icon--history { --ui-icon: url('/icons/ui/activity.svg'); }
 .ui-icon--lan { --ui-icon: url('/icons/ui/monitor-smartphone.svg'); }
 .ui-icon--traffic { --ui-icon: url('/icons/ui/activity.svg'); }
 .ui-icon--netcfg { --ui-icon: url('/icons/ui/cable.svg'); }
+.ui-icon--network { --ui-icon: url('/icons/ui/network.svg'); }
 .ui-icon--trace { --ui-icon: url('/icons/ui/route.svg'); }
 .ui-icon--help { --ui-icon: url('/icons/ui/info.svg'); }
 .ui-icon--bell { --ui-icon: url('/icons/ui/bell.svg'); }
@@ -583,6 +582,22 @@ button.icon-button,
             overflow: visible;
             text-overflow: clip;
             white-space: normal;
+        }
+        #app-traffic-section .card-title .title-tools {
+            flex: 1 1 auto;
+            min-width: 0;
+            justify-content: flex-end;
+        }
+        #app-traffic-status {
+            flex: 1 1 18rem;
+            min-width: 0;
+            max-width: none;
+            overflow: visible;
+            text-align: right;
+            text-overflow: clip;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            line-height: 1.35;
         }
 
         .compact-btn {
@@ -1239,24 +1254,26 @@ button.icon-button,
             right: 0;
             z-index: 80;
             display: grid;
-            min-width: 10.25rem;
-            padding: 0.28rem;
+            min-width: 11.5rem;
+            gap: 0.14rem;
+            padding: 0.34rem;
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: 10px;
             background: var(--card-bg);
             background: color-mix(in srgb, var(--card-bg) 84%, transparent);
             -webkit-backdrop-filter: blur(14px) saturate(135%);
             backdrop-filter: blur(14px) saturate(135%);
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
         }
         .app-traffic-menu-item {
             display: flex;
             align-items: center;
             width: 100%;
             min-height: 2rem;
-            padding: 0.36rem 0.5rem;
+            gap: 0.5rem;
+            padding: 0.42rem 0.54rem;
             border: 0;
-            border-radius: 4px;
+            border-radius: 7px;
             background: transparent;
             color: var(--text-main);
             font: inherit;
@@ -1265,9 +1282,24 @@ button.icon-button,
             white-space: nowrap;
             cursor: pointer;
         }
-        .app-traffic-menu-item:hover { background: var(--hover-bg); }
-        .app-traffic-menu-item.danger { color: var(--accent-orange); }
+        .app-traffic-menu-item .ui-icon {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: 0.82;
+        }
+        .app-traffic-menu-item:hover {
+            background: var(--hover-bg);
+            color: var(--text-main);
+        }
+        .app-traffic-menu-item:active { transform: scale(0.985); }
+        .app-traffic-menu-item.danger { color: #c74343; }
+        .app-traffic-menu-item.danger:hover { background: rgba(199, 67, 67, 0.09); color: #b73535; }
         .app-traffic-menu-item.restore { color: var(--accent-cyan); }
+        .app-traffic-menu-item.restore:hover {
+            background: color-mix(in srgb, var(--accent-cyan) 10%, transparent);
+            color: var(--accent-cyan);
+        }
         .app-traffic-limit-window { width: min(360px, calc(100vw - 2rem)); padding: 1rem; }
         .app-traffic-limit-form { display: grid; gap: 0.75rem; margin-top: 0.55rem; }
         .app-traffic-limit-form label { display: grid; gap: 0.3rem; color: var(--text-muted); font-size: 0.78rem; }
@@ -1827,13 +1859,8 @@ button.icon-button,
         #transfer-window {
             width: min(720px, calc(100vw - 2rem));
             height: auto;
-            max-height: calc(100vh - 4rem);
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-        }
-        #broadband-window::-webkit-scrollbar,
-        #transfer-window::-webkit-scrollbar {
-            display: none;
+            max-height: calc(100dvh - 4rem);
+            overflow-y: auto;
         }
 
         #broadband-window.active,
@@ -1843,16 +1870,61 @@ button.icon-button,
             gap: 1rem;
         }
 
-        #broadband-window.active .history-list,
-        #transfer-window.active .history-list {
-            flex: 0 0 auto;
-            min-height: 140px;
-            margin-top: 0;
-        }
-
         #broadband-window.active > .window-head,
         #transfer-window.active > .window-head {
             margin-bottom: 0;
+        }
+
+        #broadband-standard-results,
+        #broadband-port-policy-results,
+        #transfer-window > .speedtest-layout {
+            flex: 0 0 auto;
+            min-height: 0;
+            overflow: visible;
+        }
+
+        .broadband-shared-status {
+            flex: 0 0 auto;
+        }
+
+        .speed-history-backdrop {
+            z-index: 1290;
+        }
+
+        .speed-history-window {
+            z-index: 1300;
+            width: min(680px, calc(100vw - 2rem));
+            height: auto;
+            max-height: calc(100dvh - 4rem);
+            overflow: hidden;
+        }
+
+        .speed-history-window.active {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .speed-history-window > .window-head {
+            flex: 0 0 auto;
+            flex-direction: row;
+            align-items: center;
+            margin-bottom: 0;
+        }
+
+        .speed-history-window .window-actions {
+            width: auto;
+            display: flex;
+            flex-direction: row;
+        }
+
+        .speed-history-window .history-list {
+            flex: 0 1 auto;
+            min-height: 0;
+            max-height: min(60dvh, 420px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
         }
 
         /* The stage chip/caption below is the single source of test status. */
@@ -2086,6 +2158,14 @@ button.icon-button,
             display: flex;
             align-items: center;
             gap: 0.6rem;
+        }
+        /* Put the binary decision at the far right of mixed control groups. */
+        .settings-inline-controls .settings-toggle {
+            order: 2;
+            flex: 0 0 auto;
+        }
+        .settings-inline-controls > :not(.settings-toggle) {
+            order: 1;
         }
         .settings-toggle.inline {
             gap: 0;
@@ -2341,40 +2421,6 @@ button.icon-button,
             background: color-mix(in srgb, var(--accent-cyan) 16%, var(--glass-bg));
             color: var(--text-primary);
         }
-        .broadband-port-policy-controls {
-            display: flex;
-            flex-direction: column;
-            gap: .65rem;
-        }
-        .broadband-port-policy-meta {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: .65rem;
-        }
-        .broadband-port-policy-meta > div {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            gap: .75rem;
-            min-width: 0;
-            padding: .45rem .55rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            background: rgba(255,255,255,.015);
-        }
-        .broadband-port-policy-meta span {
-            color: var(--text-muted);
-            font-size: .7rem;
-        }
-        .broadband-port-policy-meta strong {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            color: var(--text-main);
-            font-family: var(--font-mono);
-            font-size: .76rem;
-        }
         .broadband-port-policy-results {
             display: flex;
             flex-direction: column;
@@ -2395,8 +2441,7 @@ button.icon-button,
         .port-policy-card.high { border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--border-color)); }
         .port-policy-card-head,
         .port-policy-metric,
-        .port-policy-submetrics,
-        .port-policy-deltas > div {
+        .port-policy-submetrics {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -2416,31 +2461,6 @@ button.icon-button,
         .port-policy-submetrics span { display: inline-flex; align-items: baseline; gap: .25rem; }
         .port-policy-submetrics i { font-style: normal; }
         .port-policy-submetrics strong { color: var(--text-main); font-family: var(--font-mono); font-size: .72rem; }
-        .port-policy-deltas {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: .65rem;
-        }
-        .port-policy-deltas > div {
-            padding: .6rem .7rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            background: rgba(255,255,255,.015);
-        }
-        .port-policy-deltas span { color: var(--text-muted); font-size: .7rem; }
-        .port-policy-deltas strong { color: var(--text-main); font-family: var(--font-number); font-size: .9rem; font-variant-numeric: tabular-nums; }
-        .port-policy-verdict {
-            padding: .72rem .8rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-muted);
-            font-size: .76rem;
-            text-align: center;
-            background: rgba(255,255,255,.015);
-        }
-        .port-policy-verdict.ok { color: var(--accent-green); border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border-color)); }
-        .port-policy-verdict.warn { color: var(--accent-amber); border-color: color-mix(in srgb, var(--accent-amber) 45%, var(--border-color)); }
-        .port-policy-verdict.error { color: var(--accent-red); border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)); }
         .broadband-node-fields {
             display: grid;
             gap: .65rem;
@@ -2662,6 +2682,35 @@ button.icon-button,
             gap: 0.2rem;
         }
 
+        .history-item-meta {
+            display: flex;
+            align-items: center;
+            gap: .45rem;
+            min-width: 0;
+            flex-wrap: wrap;
+        }
+
+        .history-mode-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 1.35rem;
+            padding: .1rem .4rem;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            background: var(--bg-color);
+            color: var(--text-muted);
+            font-size: .66rem;
+            font-weight: 500;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+
+        .history-mode-badge.client {
+            border-color: color-mix(in srgb, var(--accent-cyan) 36%, var(--border-color));
+            background: color-mix(in srgb, var(--accent-cyan) 8%, var(--card-bg));
+            color: var(--accent-cyan);
+        }
+
         .history-item small {
             color: var(--text-muted);
             font-size: 0.75rem;
@@ -2796,6 +2845,7 @@ button.icon-button,
             #broadband-window,
             #transfer-window {
                 width: calc(100vw - 1rem);
+                height: auto;
                 max-height: calc(100vh - 1rem);
                 max-height: calc(100dvh - 1rem);
                 padding: .9rem;
@@ -2811,13 +2861,24 @@ button.icon-button,
             }
             .window-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
             .window-actions button { width: 100%; }
+            #broadband-window > .window-head .window-actions,
+            #transfer-window > .window-head .window-actions {
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
+            }
+            .speed-history-window > .window-head {
+                flex-direction: column;
+                align-items: stretch;
+                gap: .75rem;
+            }
+            .speed-history-window .window-actions {
+                width: 100%;
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 36px;
+            }
             .settings-layout { grid-template-columns: 1fr; }
             .speedtest-layout { gap: .75rem; margin-bottom: 0; }
             .broadband-control-console { margin-bottom: 0; padding: .7rem; }
             .broadband-node-fields { grid-template-columns: 1fr; }
-            .broadband-port-policy-meta,
-            .port-policy-grid,
-            .port-policy-deltas { grid-template-columns: 1fr; }
             .st-header { align-items: flex-start; gap: .55rem; }
             .st-stage-chip { padding: .32rem .62rem; font-size: .66rem; letter-spacing: .07em; }
             .st-caption { font-size: .76rem; text-align: right; }
@@ -2839,13 +2900,6 @@ button.icon-button,
             .st-detail-row { gap: .5rem; padding: .18rem 0; }
             .st-detail-row span { font-size: .7rem; }
             .st-detail-row strong { font-size: .75rem; }
-            #broadband-window .history-list,
-            #transfer-window .history-list {
-                min-height: 0;
-                max-height: 132px;
-                overflow-y: auto;
-                margin-top: 0;
-            }
             .history-list { max-height: none; }
             .history-item { gap: .4rem; }
             .history-item-main { align-items: flex-start; }
@@ -2867,6 +2921,12 @@ button.icon-button,
             body {
                 padding: .75rem;
                 padding-right: calc(.75rem + var(--scrollbar-compensation, 0px));
+            }
+            .port-policy-grid { grid-template-columns: 1fr; }
+            .traffic-page > header.traffic-topbar,
+            .traffic-page > header {
+                padding-bottom: 1rem;
+                border-radius: 12px;
             }
             .container,
             .system-layout,
@@ -2911,6 +2971,9 @@ button.icon-button,
                 overflow: visible;
                 text-overflow: clip;
                 line-height: 1.35;
+            }
+            #app-traffic-status {
+                text-align: left;
             }
             .dashboard-collapsible.collapsed .card-title {
                 display: flex;
@@ -3137,6 +3200,7 @@ button.icon-button,
             #broadband-window,
             #transfer-window {
                 width: calc(100vw - .5rem);
+                height: auto;
                 max-height: calc(100vh - .5rem);
                 max-height: calc(100dvh - .5rem);
                 padding: .75rem;
@@ -3171,10 +3235,6 @@ button.icon-button,
             .st-panel { min-height: 5.8rem; padding: .65rem; }
             .st-num { font-size: clamp(1.25rem, 8vw, 1.9rem); }
             .st-chip { padding: .5rem .56rem; }
-            #broadband-window .history-list,
-            #transfer-window .history-list {
-                max-height: 112px;
-            }
         }
 
         .legend-rx {
@@ -3263,19 +3323,18 @@ button.icon-button,
             margin-top: 1px;
         }
 
-        /* Traffic analysis page */
-        /* Flat topbar: no card frame (avoids amber-tinted “yellow box” under body radial). */
+        /* Secondary pages use the dashboard header geometry as their baseline. */
         .traffic-page > header.traffic-topbar,
         .traffic-page > header {
-            border: none;
-            background: transparent;
-            box-shadow: none;
-            backdrop-filter: none;
-            -webkit-backdrop-filter: none;
-            border-radius: 0;
-            padding: 0.2rem 0 0.95rem;
-            margin-bottom: 1.15rem;
-            border-bottom: 1px solid var(--border-subtle);
+            border: 1px solid var(--border-color);
+            background: var(--bg-elevated);
+            box-shadow: var(--shadow-card);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 0.95rem 1.1rem;
+            margin-bottom: 1.4rem;
+            border-bottom: 1px solid var(--border-color);
         }
         .traffic-header-copy {
             display: flex;
@@ -4250,8 +4309,8 @@ button.icon-button,
     position: absolute;
     inset: 0 0 auto 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent-cyan) 55%, transparent), transparent);
-    opacity: 0.55;
+    background: var(--border-subtle);
+    opacity: 1;
     pointer-events: none;
 }
 
@@ -4550,7 +4609,7 @@ button.icon-button,
 }
 
 /* Network event center */
-.events-page { max-width: 1180px; }
+.events-page { max-width: 1440px; }
 .events-layout { display: grid; gap: 0.85rem; }
 .events-toolbar {
     display: grid;
@@ -4871,6 +4930,584 @@ button.icon-button,
     .dns-device-picker { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
     .dns-resolver-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dns-diag-results--compare { grid-template-columns: 1fr; }
+}
+
+/*
+ * Netwatch visual language: preserve the existing information architecture and
+ * interaction targets, but give every surface the same calm light-system
+ * treatment. This override intentionally lives at the end so older component
+ * rules can remain functional while the visual tokens converge in one place.
+ */
+:root {
+    --bg-color: #f5f6f7;
+    --bg-elevated: #ffffff;
+    --card-bg: #ffffff;
+    --border-color: #e7e9ed;
+    --border-subtle: #eef0f3;
+    --text-main: #333333;
+    --text-primary: #333333;
+    --text-muted: #8a8f99;
+    --accent-cyan: #3370ff;
+    --accent-green: #3370ff;
+    --accent-red: #8a8f99;
+    --accent-amber: #8a8f99;
+    --accent-orange: #8a8f99;
+    --danger: #8a8f99;
+    --success: #3370ff;
+    --accent: #3370ff;
+    --accent-rose: #8a8f99;
+    --hover-bg: #f5f6f7;
+    --card: #ffffff;
+    --glass-bg: #ffffff;
+    --backdrop-bg: rgba(51, 51, 51, 0.16);
+    --input-bg: #ffffff;
+    --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --radius-card: 12px;
+    --radius-control: 8px;
+    --grid-gap: 1rem;
+    --font-ui: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
+    --font-number: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --font-mono: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+[data-theme="dark"] {
+    --bg-color: #202124;
+    --bg-elevated: #292b2f;
+    --card-bg: #292b2f;
+    --border-color: #3b3e45;
+    --border-subtle: #34373d;
+    --text-main: #f2f3f5;
+    --text-primary: #f2f3f5;
+    --text-muted: #a2a7b0;
+    --accent-cyan: #79a2ff;
+    --accent-green: #79a2ff;
+    --accent-red: #a2a7b0;
+    --accent-amber: #a2a7b0;
+    --accent-orange: #a2a7b0;
+    --danger: #a2a7b0;
+    --success: #79a2ff;
+    --accent: #79a2ff;
+    --accent-rose: #a2a7b0;
+    --hover-bg: #34373d;
+    --card: #292b2f;
+    --glass-bg: #292b2f;
+    --backdrop-bg: rgba(0, 0, 0, 0.44);
+    --input-bg: #24262a;
+    --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+
+html,
+body {
+    background: var(--bg-color);
+}
+
+body {
+    background-image: none;
+    color: var(--text-main);
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+header {
+    border-color: var(--border-color);
+    background: var(--bg-elevated);
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+}
+
+.logo {
+    color: var(--accent-cyan);
+    font-size: 20px;
+    letter-spacing: 0.08em;
+}
+
+.brand-kicker,
+.card-title,
+.table-subtitle,
+.settings-section-title {
+    color: var(--text-muted);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.brand-kicker { font-size: 12px; }
+
+button,
+select,
+.button-link {
+    border-color: var(--border-color);
+    border-radius: var(--radius-control);
+    background: var(--bg-elevated);
+    color: var(--text-main);
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: none;
+}
+
+button:hover,
+select:hover,
+.button-link:hover {
+    border-color: var(--border-color);
+    background: #f5f6f7;
+    color: var(--text-main);
+}
+
+[data-theme="dark"] button:hover,
+[data-theme="dark"] select:hover,
+[data-theme="dark"] .button-link:hover {
+    background: #34373d;
+}
+
+button:active,
+.button-link:active,
+select:active {
+    transform: scale(0.98);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+.button-link:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--accent-cyan) 22%, transparent);
+    outline-offset: 2px;
+}
+
+button:disabled,
+select:disabled {
+    border-color: var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-muted);
+}
+
+.controls { gap: 8px; }
+.controls .btn-with-icon { padding-inline: 12px; }
+
+.card {
+    border-color: var(--border-color);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: var(--shadow-card);
+}
+
+.card-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.card-title .title-tools { gap: 8px; }
+.placeholder,
+.observation-status { color: var(--text-muted); }
+
+input,
+textarea,
+.settings-field input,
+.settings-field select {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-control);
+    background: var(--input-bg);
+    color: var(--text-main);
+}
+
+input:hover,
+textarea:hover,
+.settings-field input:hover,
+.settings-field select:hover {
+    border-color: color-mix(in srgb, var(--accent-cyan) 42%, var(--border-color));
+}
+
+input:focus,
+textarea:focus,
+.settings-field input:focus,
+.settings-field select:focus {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-cyan) 14%, transparent);
+    outline: none;
+}
+
+.custom-select-trigger {
+    border-color: var(--border-color);
+    border-radius: var(--radius-control);
+    background: var(--input-bg);
+    color: var(--text-main);
+}
+
+.custom-select-trigger:hover,
+.custom-select.open .custom-select-trigger {
+    border-color: var(--accent-cyan);
+    background: var(--input-bg);
+    color: var(--text-main);
+}
+
+.custom-select-menu {
+    border-color: var(--border-color);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--card-bg) 90%, transparent);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    -webkit-backdrop-filter: blur(18px) saturate(115%);
+    backdrop-filter: blur(18px) saturate(115%);
+}
+
+.custom-select-option {
+    border-radius: 8px;
+    color: var(--text-main);
+}
+
+.custom-select-option:hover {
+    background: #f5f6f7;
+    color: var(--text-main);
+}
+
+.custom-select-option.active {
+    background: color-mix(in srgb, var(--accent-cyan) 10%, var(--card-bg));
+    color: var(--accent-cyan);
+}
+
+.custom-select-option.active::after {
+    content: "✓";
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.notification-device-panel {
+    border-color: var(--border-color);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--card-bg) 90%, transparent);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    -webkit-backdrop-filter: blur(18px) saturate(115%);
+    backdrop-filter: blur(18px) saturate(115%);
+}
+
+.window-backdrop {
+    background: var(--backdrop-bg);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+}
+
+.floating-window {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.window-head {
+    border-bottom-color: var(--border-subtle);
+}
+
+.window-title { font-size: 16px; font-weight: 600; }
+.window-head .note { color: var(--text-muted); font-size: 12px; }
+
+.icon-button {
+    border-color: var(--border-color) !important;
+    background: var(--bg-elevated) !important;
+    color: var(--text-muted) !important;
+}
+
+.icon-button:hover {
+    border-color: var(--border-color) !important;
+    background: #f5f6f7 !important;
+    color: var(--text-main) !important;
+}
+
+.sort-header,
+.sort-header:hover {
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+}
+
+.sort-header.active {
+    color: var(--accent-cyan);
+}
+
+.data-table thead th {
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.data-table tbody tr {
+    border-color: var(--border-subtle);
+    background: transparent;
+    transition: background-color 0.2s ease;
+}
+
+.data-table tbody tr:hover,
+.data-table tbody td {
+    background: transparent !important;
+}
+
+.connectivity-table-fixed tbody td,
+[data-theme="light"] .connectivity-table-fixed tbody td {
+    background: transparent !important;
+}
+
+.connectivity-table-fixed thead th {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.connectivity-table-fixed tbody tr + tr td {
+    border-top: 1px solid var(--border-color);
+}
+
+[data-theme="dark"] .data-table thead th,
+[data-theme="dark"] .data-table tbody tr:hover,
+[data-theme="dark"] .custom-select-option:hover,
+[data-theme="dark"] button:hover,
+[data-theme="dark"] select:hover,
+[data-theme="dark"] .button-link:hover,
+[data-theme="dark"] .icon-button:hover { background: #34373d; }
+
+[data-theme="dark"] .data-table thead th,
+[data-theme="dark"] .data-table tbody tr:hover,
+[data-theme="dark"] .data-table tbody td,
+[data-theme="dark"] .connectivity-table-fixed tbody td {
+    background: transparent !important;
+}
+
+/* Limit theme transitions to structural surfaces. Animating every descendant
+ * creates thousands of short-lived animation objects on this dense dashboard. */
+html.theme-transition body,
+html.theme-transition header,
+html.theme-transition .card,
+html.theme-transition .floating-window,
+html.theme-transition .window-backdrop,
+html.theme-transition .settings-section,
+html.theme-transition .identity-strip,
+html.theme-transition .broadband-control-console,
+html.theme-transition .history-item,
+html.theme-transition button,
+html.theme-transition input,
+html.theme-transition textarea,
+html.theme-transition select {
+    transition-property: color, background-color, border-color, box-shadow, fill, stroke, opacity !important;
+    transition-duration: 240ms !important;
+    transition-timing-function: ease !important;
+}
+
+html.theme-transition #theme-toggle .ui-icon {
+    animation: theme-icon-swap 240ms ease both;
+}
+
+@keyframes theme-icon-swap {
+    0% { opacity: 0.35; transform: rotate(-28deg) scale(0.78); }
+    100% { opacity: 1; transform: rotate(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html.theme-transition body,
+    html.theme-transition header,
+    html.theme-transition .card,
+    html.theme-transition .floating-window,
+    html.theme-transition .window-backdrop,
+    html.theme-transition .settings-section,
+    html.theme-transition .identity-strip,
+    html.theme-transition .broadband-control-console,
+    html.theme-transition .history-item,
+    html.theme-transition button,
+    html.theme-transition input,
+    html.theme-transition textarea,
+    html.theme-transition select,
+    html.theme-transition #theme-toggle .ui-icon {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+.settings-section,
+.broadband-control-console,
+.speedtest-history,
+.history-item,
+.identity-strip,
+.port-policy-card,
+.dns-resolver-inventory,
+.dns-diag-toolbar,
+.dns-result-panel {
+    border-color: var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+}
+
+.broadband-mode-switch,
+.dns-type-segments {
+    border-color: var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-color);
+}
+
+.broadband-mode-switch button,
+.dns-type-segments button {
+    border-color: var(--border-color);
+    background: transparent;
+    color: var(--text-muted);
+}
+
+.broadband-mode-switch button:hover,
+.dns-type-segments button:hover {
+    background: #f5f6f7;
+    color: var(--text-main);
+}
+
+.broadband-mode-switch button[aria-selected="true"],
+.dns-type-segments button.active {
+    background: color-mix(in srgb, var(--accent-cyan) 10%, var(--card-bg));
+    color: var(--accent-cyan);
+}
+
+.settings-toggle input,
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--accent-cyan);
+}
+
+/* Keep the existing checkbox DOM and behavior, but present settings controls
+ * as compact Fluent-style switches. */
+.settings-toggle input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    display: block;
+    width: 40px;
+    height: 22px;
+    min-width: 40px;
+    min-height: 22px;
+    max-height: 22px;
+    flex: 0 0 40px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 11px;
+    background: #e3e6eb;
+    box-shadow: inset 0 0 0 1px #d4d8df;
+    cursor: pointer;
+    font-size: 0;
+    line-height: 0;
+    vertical-align: middle;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.settings-toggle input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+    transition: transform 0.2s ease;
+}
+
+.settings-toggle input[type="checkbox"]:checked {
+    background: var(--accent-cyan);
+    box-shadow: inset 0 0 0 1px var(--accent-cyan);
+}
+
+.settings-toggle input[type="checkbox"]:checked::after {
+    transform: translateX(18px);
+}
+
+.settings-toggle input[type="checkbox"]:hover:not(:disabled) {
+    background: #d9dde4;
+}
+
+.settings-toggle input[type="checkbox"]:checked:hover:not(:disabled) {
+    background: #2f67ed;
+    box-shadow: inset 0 0 0 1px #2f67ed;
+}
+
+.settings-toggle input[type="checkbox"]:focus-visible {
+    outline: 3px solid rgba(51, 112, 255, 0.2);
+    outline-offset: 2px;
+}
+
+.settings-toggle input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
+[data-theme="dark"] .settings-toggle input[type="checkbox"] {
+    background: #484c54;
+    box-shadow: inset 0 0 0 1px #5a5f68;
+}
+
+[data-theme="dark"] .settings-toggle input[type="checkbox"]:checked {
+    background: var(--accent-cyan);
+    box-shadow: inset 0 0 0 1px var(--accent-cyan);
+}
+
+.toast {
+    border-color: var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    color: var(--text-main);
+}
+
+#loading-overlay,
+.loading-overlay {
+    background: rgba(245, 246, 247, 0.82);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+
+[data-theme="dark"] .loading-overlay { background: rgba(32, 33, 36, 0.82); }
+[data-theme="dark"] #loading-overlay { background: rgba(32, 33, 36, 0.82); }
+
+/* Keep semantic states quiet in the light system; blue remains the only
+ * highlighted state while errors and warnings use the secondary gray. */
+.status-ok,
+.status-down,
+.status-warn,
+.lan-status-badge.online,
+.lan-status-badge.offline,
+.lan-status-badge.unknown {
+    border-color: var(--border-color);
+    background: var(--bg-color);
+    color: var(--text-muted);
+}
+
+.status-ok,
+.lan-status-badge.online {
+    border-color: var(--accent-cyan);
+    background: rgba(51, 112, 255, 0.08);
+    color: var(--accent-cyan);
+}
+
+.st-panel.upload .st-panel-head .arrow,
+.st-panel.upload .st-num {
+    color: var(--accent-cyan);
+    background: transparent;
+}
+
+.app-detail-chart .upload {
+    stroke: var(--accent-cyan);
+}
+
+.app-detail-legend .upload::before,
+.legend-rx {
+    background: var(--accent-cyan);
+}
+
+.app-detail-chart .download,
+.app-detail-legend .download::before,
+.legend-tx {
+    color: var(--text-muted);
+    stroke: var(--text-muted);
+    background: var(--text-muted);
+}
+
+.notification-device-status.online {
+    background: var(--accent-cyan);
+    box-shadow: none;
+}
+
+@media (max-width: 640px) {
+    .card { border-radius: 10px; }
 }
 @media (max-width: 680px) {
     .dns-diag-window { width: calc(100vw - 1rem); height: auto; max-height: 92dvh; }

@@ -244,27 +244,6 @@ async function loadSummary(showOverlay, refresh) {
     }
 }
 
-async function runFastRefresh(showOverlay) {
-    if (showOverlay === undefined) showOverlay = true;
-    if (state.fastRefreshing) return;
-    state.fastRefreshing = true;
-    els.refreshBtn.disabled = true;
-    if (showOverlay) els.overlay.style.display = 'flex';
-    try {
-        var data = window.NetwatchAPI
-            ? await window.NetwatchAPI.post('/api/v1/probe/run')
-            : await (await fetch('/api/v1/probe/run', { method: 'POST' })).json();
-        renderSummary(data);
-    } catch (error) {
-        console.error(error);
-        NetwatchShared.showToast(i18n('refresh_failed'), 'error');
-    } finally {
-        state.fastRefreshing = false;
-        if (showOverlay) els.overlay.style.display = 'none';
-        els.refreshBtn.disabled = false;
-    }
-}
-
 async function refreshInterfacesOnly() {
     if (!els.interfacesRefreshBtn || state.interfacesRefreshing) return;
     state.interfacesRefreshing = true;
@@ -637,7 +616,6 @@ window.__app.refreshNetworkDetailCards = refreshNetworkDetailCards;
 window.__app.renderSummary = renderSummary;
 window.__app.applyIncomingSummary = applyIncomingSummary;
 window.__app.mergeIncomingSummary = mergeIncomingSummary;
-window.__app.runFastRefresh = runFastRefresh;
 window.__app.refreshInterfacesOnly = refreshInterfacesOnly;
 window.__app.runWebsiteRefresh = runWebsiteRefresh;
 window.__app.runNATRefresh = runNATRefresh;

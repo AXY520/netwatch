@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0b0f14">
+    <meta name="theme-color" content="#F5F6F7">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
     <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
     <link rel="icon" href="/icons/lzc-icon.png" type="image/png">
     <script>
         var savedTheme = localStorage.getItem('theme');
         if (!savedTheme) {
-            savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            savedTheme = 'light';
         }
         document.documentElement.setAttribute('data-theme', savedTheme);
     </script>
     <script src="/i18n.js" defer></script>
-    <script src="/vendor/lazycat-sdk.js" defer></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
     <div id="loading-overlay"><div class="spinner"></div></div>
     <div id="toast" class="toast"></div>
     <div id="window-backdrop" class="window-backdrop"></div>
+    <div id="speed-history-backdrop" class="window-backdrop speed-history-backdrop"></div>
     <div id="trace-window-backdrop" class="window-backdrop"></div>
     <div id="dns-diag-window-backdrop" class="window-backdrop"></div>
     <div id="app-confirm-backdrop" class="window-backdrop app-confirm-backdrop"></div>
@@ -50,7 +50,6 @@
                 <button id="open-transfer-window" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--transfer" aria-hidden="true"></span><span data-i18n="transfer_btn">传输测速</span></button>
                 <a class="button-link btn-with-icon" href="/lan.html"><span class="ui-icon ui-icon--lan" aria-hidden="true"></span><span data-i18n="lan_devices_btn">局域网设备</span></a>
                 <a class="button-link btn-with-icon" href="/events.html"><span class="ui-icon ui-icon--bell" aria-hidden="true"></span><span data-i18n="events_center_btn">事件中心</span></a>
-                <button id="refresh-btn" class="icon-button" title="刷新" aria-label="刷新" data-i18n-title="refresh_btn" data-i18n-aria-label="refresh_btn"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
             </div>
         </header>
 
@@ -280,6 +279,7 @@
                 <div class="note speedtest-window-note" id="broadband-note" data-i18n="standby">等待测速开始</div>
             </div>
             <div class="window-actions">
+                <button type="button" class="btn-with-icon" id="open-broadband-history"><span class="ui-icon ui-icon--history" aria-hidden="true"></span><span data-i18n="history_title">历史记录</span></button>
                 <button id="run-broadband-test" data-i18n="start_test_btn">开始测速</button>
                 <button type="button" class="icon-button window-close-btn" id="close-broadband-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
@@ -297,20 +297,12 @@
                 </div>
                 <div class="note" id="broadband-node-status"></div>
             </div>
-            <div class="broadband-port-policy-controls" id="broadband-port-policy-controls" hidden>
-                <div class="broadband-port-policy-meta">
-                    <div><span data-i18n="broadband_port_policy_target">公网测速节点</span><strong id="broadband-port-policy-target">ispeedtest.com.cn</strong></div>
-                    <div><span data-i18n="broadband_port_policy_protocol">测试协议</span><strong id="broadband-port-policy-protocol">HTTP</strong></div>
-                </div>
-                <div class="note" id="broadband-port-policy-status" data-i18n="broadband_port_policy_ready">对比同一公网节点的高低端口速度</div>
-            </div>
         </section>
+        <div class="st-header broadband-shared-status">
+            <div class="st-stage-chip" id="broadband-primary-mode">Idle</div>
+            <div class="st-caption" id="broadband-primary-caption" data-i18n="standby">等待测速开始</div>
+        </div>
         <div id="broadband-standard-results" class="speedtest-layout">
-            <div class="st-header">
-                <div class="st-stage-chip" id="broadband-primary-mode">Idle</div>
-                <div class="st-caption" id="broadband-primary-caption" data-i18n="standby">等待测速开始</div>
-            </div>
-
             <div class="st-dual">
                 <div class="st-panel download" id="broadband-panel-download">
                     <div class="st-panel-head"><span data-i18n="download">下载</span><span class="arrow">↓</span></div>
@@ -343,18 +335,6 @@
                     <div class="port-policy-submetrics"><span><i data-i18n="latency_col">延迟</i><strong id="broadband-port-policy-high-latency">--</strong></span><span><i data-i18n="latency_jitter">抖动</i><strong id="broadband-port-policy-high-jitter">--</strong></span></div>
                 </article>
             </div>
-            <div class="port-policy-deltas">
-                <div><span data-i18n="broadband_port_policy_download_delta">高位端口下载差异</span><strong id="broadband-port-policy-download-delta">--</strong></div>
-                <div><span data-i18n="broadband_port_policy_upload_delta">高位端口上传差异</span><strong id="broadband-port-policy-upload-delta">--</strong></div>
-            </div>
-            <div class="port-policy-verdict" id="broadband-port-policy-verdict" data-i18n="broadband_port_policy_ready">等待开始端口策略测速</div>
-        </section>
-        <section id="broadband-history-section">
-            <div class="window-head">
-                <div class="window-title" data-i18n="history_title">历史记录</div>
-                <button type="button" class="btn-with-icon clear-history-btn" id="clear-broadband-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
-            </div>
-            <div class="history-list" id="broadband-history"></div>
         </section>
     </section>
 
@@ -365,6 +345,7 @@
                 <div class="note speedtest-window-note" id="transfer-note" data-i18n="standby">等待测速开始</div>
             </div>
             <div class="window-actions">
+                <button type="button" class="btn-with-icon" id="open-transfer-history"><span class="ui-icon ui-icon--history" aria-hidden="true"></span><span data-i18n="history_title">历史记录</span></button>
                 <button id="run-transfer-test" data-i18n="start_test_btn">开始测速</button>
                 <button type="button" class="icon-button window-close-btn" id="close-transfer-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
@@ -391,10 +372,27 @@
                 <div class="broadband-fact"><span data-i18n="latency_jitter">抖动</span><strong id="transfer-jitter">--</strong></div>
             </div>
 
-        </div>
+            </div>
+    </section>
+
+    <section class="floating-window speed-history-window" id="broadband-history-window" role="dialog" aria-modal="true" aria-labelledby="broadband-history-title">
         <div class="window-head">
-            <div class="window-title" data-i18n="history_title">历史记录</div>
-            <button type="button" class="btn-with-icon clear-history-btn" id="clear-transfer-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
+            <div class="window-title" id="broadband-history-title" data-i18n="broadband_history_title">宽带测速历史</div>
+            <div class="window-actions">
+                <button type="button" class="btn-with-icon clear-history-btn" id="clear-broadband-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-broadband-history-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
+        </div>
+        <div class="history-list" id="broadband-history"></div>
+    </section>
+
+    <section class="floating-window speed-history-window" id="transfer-history-window" role="dialog" aria-modal="true" aria-labelledby="transfer-history-title">
+        <div class="window-head">
+            <div class="window-title" id="transfer-history-title" data-i18n="transfer_history_title">传输测速历史</div>
+            <div class="window-actions">
+                <button type="button" class="btn-with-icon clear-history-btn" id="clear-transfer-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-transfer-history-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
         </div>
         <div class="history-list" id="transfer-history"></div>
     </section>

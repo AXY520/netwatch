@@ -162,7 +162,6 @@ async function loadSettings() {
         };
         applySettingsToForm();
         if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
-        loadLazycatDevices();
     } catch (error) {
         console.error(error);
     }

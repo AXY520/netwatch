@@ -2,7 +2,7 @@ window.__app = window.__app || {};
 
 (function () {
 var state = {
-    theme: localStorage.getItem('theme') || 'dark',
+    theme: localStorage.getItem('theme') || 'light',
     refreshInterval: 10,
     lastRefreshTime: Date.now(),
     timerInterval: null,
@@ -88,7 +88,6 @@ window.__app.state = state;
 
 var els = {
     themeToggle: document.getElementById('theme-toggle'),
-    refreshBtn: document.getElementById('refresh-btn'),
     overlay: document.getElementById('loading-overlay'),
     websiteRefreshBtn: document.getElementById('website-refresh-btn'),
     websiteStatus: document.getElementById('website-status'),
@@ -107,15 +106,20 @@ var els = {
     interfacesStatus: document.getElementById('interfaces-status'),
     nicRealtimeStatus: document.getElementById('nic-realtime-status'),
     backdrop: document.getElementById('window-backdrop'),
+    speedHistoryBackdrop: document.getElementById('speed-history-backdrop'),
     traceBackdrop: document.getElementById('trace-window-backdrop'),
     dnsDiagBackdrop: document.getElementById('dns-diag-window-backdrop'),
     openSettingsWindow: document.getElementById('open-settings-window'),
     openBroadbandWindow: document.getElementById('open-broadband-window'),
     openTransferWindow: document.getElementById('open-transfer-window'),
+    openBroadbandHistory: document.getElementById('open-broadband-history'),
+    openTransferHistory: document.getElementById('open-transfer-history'),
     openNetworkConfigWindow: document.getElementById('open-network-config-window'),
     closeSettingsWindow: document.getElementById('close-settings-window'),
     closeBroadbandWindow: document.getElementById('close-broadband-window'),
     closeTransferWindow: document.getElementById('close-transfer-window'),
+    closeBroadbandHistoryWindow: document.getElementById('close-broadband-history-window'),
+    closeTransferHistoryWindow: document.getElementById('close-transfer-history-window'),
     closeNetworkConfigWindow: document.getElementById('close-network-config-window'),
     closeTraceWindow: document.getElementById('close-trace-window'),
     openDNSDiagWindow: document.getElementById('open-dns-diag-window'),
@@ -123,6 +127,8 @@ var els = {
     settingsWindow: document.getElementById('settings-window'),
     broadbandWindow: document.getElementById('broadband-window'),
     transferWindow: document.getElementById('transfer-window'),
+    broadbandHistoryWindow: document.getElementById('broadband-history-window'),
+    transferHistoryWindow: document.getElementById('transfer-history-window'),
     networkConfigWindow: document.getElementById('network-config-window'),
     traceWindow: document.getElementById('trace-window'),
     dnsDiagWindow: document.getElementById('dns-diag-window'),
@@ -186,10 +192,6 @@ var els = {
     broadbandNodeRefresh: document.getElementById('broadband-node-refresh'),
     broadbandNodeStatus: document.getElementById('broadband-node-status'),
     broadbandPublicControls: document.getElementById('broadband-public-controls'),
-    broadbandPortPolicyControls: document.getElementById('broadband-port-policy-controls'),
-    broadbandPortPolicyTarget: document.getElementById('broadband-port-policy-target'),
-    broadbandPortPolicyProtocol: document.getElementById('broadband-port-policy-protocol'),
-    broadbandPortPolicyStatus: document.getElementById('broadband-port-policy-status'),
     broadbandPortPolicyLowPort: document.getElementById('broadband-port-policy-low-port'),
     broadbandPortPolicyHighPort: document.getElementById('broadband-port-policy-high-port'),
     broadbandStandardResults: document.getElementById('broadband-standard-results'),
@@ -202,10 +204,6 @@ var els = {
     broadbandPortPolicyHighUpload: document.getElementById('broadband-port-policy-high-upload'),
     broadbandPortPolicyHighLatency: document.getElementById('broadband-port-policy-high-latency'),
     broadbandPortPolicyHighJitter: document.getElementById('broadband-port-policy-high-jitter'),
-    broadbandPortPolicyDownloadDelta: document.getElementById('broadband-port-policy-download-delta'),
-    broadbandPortPolicyUploadDelta: document.getElementById('broadband-port-policy-upload-delta'),
-    broadbandPortPolicyVerdict: document.getElementById('broadband-port-policy-verdict'),
-    broadbandHistorySection: document.getElementById('broadband-history-section'),
     transferHistory: document.getElementById('transfer-history'),
     clearTransferHistory: document.getElementById('clear-transfer-history')
 };
@@ -372,9 +370,9 @@ function setPrimaryStatus(modeEl, captionEl, mode, caption) {
     if (modeEl) {
         modeEl.textContent = mode;
         modeEl.classList.remove('active', 'done', 'error');
-        if (mode === 'Download' || mode === 'Upload' || mode === 'Ping') modeEl.classList.add('active');
+        if (mode === 'Download' || mode === 'Upload' || mode === 'Ping' || mode === 'Testing') modeEl.classList.add('active');
         else if (mode === 'Result') modeEl.classList.add('done');
-        else if (mode === 'Stopped') modeEl.classList.add('error');
+        else if (mode === 'Stopped' || mode === 'Error') modeEl.classList.add('error');
     }
     if (captionEl) captionEl.textContent = caption || '';
 }

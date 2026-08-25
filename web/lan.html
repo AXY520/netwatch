@@ -3,18 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0a0a0b">
+    <meta name="theme-color" content="#F5F6F7">
     <title data-i18n="lan_page_title">NETWATCH // 局域网设备发现</title>
     <link rel="icon" href="/icons/lzc-icon.png" type="image/png">
     <script>
         var savedTheme = localStorage.getItem('theme');
         if (!savedTheme) {
-            savedTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            savedTheme = 'light';
         }
         document.documentElement.setAttribute('data-theme', savedTheme);
     </script>
     <script src="/i18n.js" defer></script>
-    <script src="/vendor/lazycat-sdk.js" defer></script>
     <link rel="stylesheet" href="/app.css">
 </head>
 <body>
