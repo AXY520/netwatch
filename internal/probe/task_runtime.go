@@ -12,6 +12,10 @@ type taskRuntime struct {
 	broadbandTask   BroadbandTaskStatus
 	broadbandCancel context.CancelFunc
 
+	portPolicyMu     sync.Mutex
+	portPolicyTask   BroadbandPortPolicyTaskStatus
+	portPolicyCancel context.CancelFunc
+
 	traceMu     sync.Mutex
 	traceTask   TraceResult
 	traceCancel context.CancelFunc
@@ -27,6 +31,12 @@ func (t *taskRuntime) cancelAll() {
 	t.broadbandMu.Unlock()
 	if cancelBB != nil {
 		cancelBB()
+	}
+	t.portPolicyMu.Lock()
+	cancelPortPolicy := t.portPolicyCancel
+	t.portPolicyMu.Unlock()
+	if cancelPortPolicy != nil {
+		cancelPortPolicy()
 	}
 	t.traceMu.Lock()
 	cancelTrace := t.traceCancel

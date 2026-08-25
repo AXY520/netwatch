@@ -2341,6 +2341,106 @@ button.icon-button,
             background: color-mix(in srgb, var(--accent-cyan) 16%, var(--glass-bg));
             color: var(--text-primary);
         }
+        .broadband-port-policy-controls {
+            display: flex;
+            flex-direction: column;
+            gap: .65rem;
+        }
+        .broadband-port-policy-meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .65rem;
+        }
+        .broadband-port-policy-meta > div {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: .75rem;
+            min-width: 0;
+            padding: .45rem .55rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: rgba(255,255,255,.015);
+        }
+        .broadband-port-policy-meta span {
+            color: var(--text-muted);
+            font-size: .7rem;
+        }
+        .broadband-port-policy-meta strong {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text-main);
+            font-family: var(--font-mono);
+            font-size: .76rem;
+        }
+        .broadband-port-policy-results {
+            display: flex;
+            flex-direction: column;
+            gap: .8rem;
+        }
+        .port-policy-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .75rem;
+        }
+        .port-policy-card {
+            min-width: 0;
+            padding: .85rem;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--glass-bg);
+        }
+        .port-policy-card.high { border-color: color-mix(in srgb, var(--accent-cyan) 48%, var(--border-color)); }
+        .port-policy-card-head,
+        .port-policy-metric,
+        .port-policy-submetrics,
+        .port-policy-deltas > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: .65rem;
+        }
+        .port-policy-card-head {
+            padding-bottom: .65rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .port-policy-card-head strong { color: var(--text-main); font-size: .82rem; }
+        .port-policy-card-head span { color: var(--text-muted); font-family: var(--font-mono); font-size: .72rem; }
+        .port-policy-metric { padding-top: .7rem; }
+        .port-policy-metric span { color: var(--text-muted); font-size: .76rem; }
+        .port-policy-metric strong { margin-left: auto; color: var(--text-main); font-family: var(--font-number); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+        .port-policy-metric small { color: var(--text-muted); font-size: .65rem; }
+        .port-policy-submetrics { padding-top: .7rem; color: var(--text-muted); font-size: .68rem; }
+        .port-policy-submetrics span { display: inline-flex; align-items: baseline; gap: .25rem; }
+        .port-policy-submetrics i { font-style: normal; }
+        .port-policy-submetrics strong { color: var(--text-main); font-family: var(--font-mono); font-size: .72rem; }
+        .port-policy-deltas {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: .65rem;
+        }
+        .port-policy-deltas > div {
+            padding: .6rem .7rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: rgba(255,255,255,.015);
+        }
+        .port-policy-deltas span { color: var(--text-muted); font-size: .7rem; }
+        .port-policy-deltas strong { color: var(--text-main); font-family: var(--font-number); font-size: .9rem; font-variant-numeric: tabular-nums; }
+        .port-policy-verdict {
+            padding: .72rem .8rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-muted);
+            font-size: .76rem;
+            text-align: center;
+            background: rgba(255,255,255,.015);
+        }
+        .port-policy-verdict.ok { color: var(--accent-green); border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border-color)); }
+        .port-policy-verdict.warn { color: var(--accent-amber); border-color: color-mix(in srgb, var(--accent-amber) 45%, var(--border-color)); }
+        .port-policy-verdict.error { color: var(--accent-red); border-color: color-mix(in srgb, var(--accent-red) 45%, var(--border-color)); }
         .broadband-node-fields {
             display: grid;
             gap: .65rem;
@@ -2715,6 +2815,9 @@ button.icon-button,
             .speedtest-layout { gap: .75rem; margin-bottom: 0; }
             .broadband-control-console { margin-bottom: 0; padding: .7rem; }
             .broadband-node-fields { grid-template-columns: 1fr; }
+            .broadband-port-policy-meta,
+            .port-policy-grid,
+            .port-policy-deltas { grid-template-columns: 1fr; }
             .st-header { align-items: flex-start; gap: .55rem; }
             .st-stage-chip { padding: .32rem .62rem; font-size: .66rem; letter-spacing: .07em; }
             .st-caption { font-size: .76rem; text-align: right; }

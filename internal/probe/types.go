@@ -760,6 +760,36 @@ type BroadbandTaskStatus struct {
 	Steps           []BroadbandTaskStep  `json:"steps,omitempty"`
 }
 
+type BroadbandPortPolicyTargetResult struct {
+	ID           string  `json:"id"`
+	Label        string  `json:"label"`
+	Host         string  `json:"host"`
+	Port         int     `json:"port"`
+	Protocol     string  `json:"protocol"`
+	LatencyMS    int64   `json:"latency_ms,omitempty"`
+	JitterMS     int64   `json:"jitter_ms,omitempty"`
+	DownloadMbps float64 `json:"download_mbps,omitempty"`
+	UploadMbps   float64 `json:"upload_mbps,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	OK           bool    `json:"ok,omitempty"`
+}
+
+type BroadbandPortPolicyTaskStatus struct {
+	ID              string                            `json:"id,omitempty"`
+	Stage           string                            `json:"stage"`
+	ProgressPercent int                               `json:"progress_percent"`
+	Running         bool                              `json:"running"`
+	Finished        bool                              `json:"finished"`
+	Canceled        bool                              `json:"canceled"`
+	Message         string                            `json:"message,omitempty"`
+	UpdatedAt       string                            `json:"updated_at"`
+	Provider        string                            `json:"provider,omitempty"`
+	Host            string                            `json:"host,omitempty"`
+	Protocol        string                            `json:"protocol,omitempty"`
+	Targets         []BroadbandPortPolicyTargetResult `json:"targets,omitempty"`
+	Error           string                            `json:"error,omitempty"`
+}
+
 // BroadbandTaskStep 记录测速过程中的一步操作,供前端实时展示后端正在做什么。
 // Status 取值:running(进行中) / ok(成功) / fail(失败) / info(信息)。
 type BroadbandTaskStep struct {

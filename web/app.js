@@ -255,6 +255,7 @@ function bindControls() {
     els.runBroadbandTest.addEventListener('click', function () { if (A.startBroadbandTest) A.startBroadbandTest(); });
     if (els.broadbandModeClient) els.broadbandModeClient.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('client'); });
     if (els.broadbandModeServer) els.broadbandModeServer.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('server'); });
+    if (els.broadbandModePortPolicy) els.broadbandModePortPolicy.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('port-policy'); });
     if (els.broadbandNodeRefresh) els.broadbandNodeRefresh.addEventListener('click', function () { if (A.loadBroadbandNodes) A.loadBroadbandNodes(); });
     if (els.clearBroadbandHistory) els.clearBroadbandHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('broadband'); });
     els.runTransferTest.addEventListener('click', function () { if (A.runTransferTest) A.runTransferTest(); });

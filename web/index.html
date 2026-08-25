@@ -288,16 +288,24 @@
             <div class="broadband-mode-switch" role="tablist" aria-label="测速位置">
                 <button type="button" id="broadband-mode-client" data-broadband-mode="client" role="tab" aria-selected="false" data-i18n="broadband_mode_client">用户设备到公网</button>
                 <button type="button" id="broadband-mode-server" data-broadband-mode="server" role="tab" aria-selected="true" data-i18n="broadband_mode_server">服务器出口到公网</button>
+                <button type="button" id="broadband-mode-port-policy" data-broadband-mode="port-policy" role="tab" aria-selected="false" data-i18n="broadband_mode_port_policy">公网端口策略</button>
             </div>
-            <div class="broadband-node-fields">
+            <div class="broadband-node-fields" id="broadband-public-controls">
                 <div class="broadband-node-select-field">
                     <label class="settings-field"><span data-i18n="broadband_node_label">公共测速节点</span><select id="broadband-node-select"></select></label>
                     <button type="button" id="broadband-node-refresh" class="icon-button" title="刷新公共测速节点" aria-label="刷新公共测速节点" data-i18n-title="broadband_nodes_refresh" data-i18n-aria-label="broadband_nodes_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
                 </div>
+                <div class="note" id="broadband-node-status"></div>
             </div>
-            <div class="note" id="broadband-node-status"></div>
+            <div class="broadband-port-policy-controls" id="broadband-port-policy-controls" hidden>
+                <div class="broadband-port-policy-meta">
+                    <div><span data-i18n="broadband_port_policy_target">公网测速节点</span><strong id="broadband-port-policy-target">ispeedtest.com.cn</strong></div>
+                    <div><span data-i18n="broadband_port_policy_protocol">测试协议</span><strong id="broadband-port-policy-protocol">HTTP</strong></div>
+                </div>
+                <div class="note" id="broadband-port-policy-status" data-i18n="broadband_port_policy_ready">对比同一公网节点的高低端口速度</div>
+            </div>
         </section>
-        <div class="speedtest-layout">
+        <div id="broadband-standard-results" class="speedtest-layout">
             <div class="st-header">
                 <div class="st-stage-chip" id="broadband-primary-mode">Idle</div>
                 <div class="st-caption" id="broadband-primary-caption" data-i18n="standby">等待测速开始</div>
@@ -320,11 +328,34 @@
             </div>
 
         </div>
-        <div class="window-head">
-            <div class="window-title" data-i18n="history_title">历史记录</div>
-            <button type="button" class="btn-with-icon clear-history-btn" id="clear-broadband-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
-        </div>
-        <div class="history-list" id="broadband-history"></div>
+        <section id="broadband-port-policy-results" class="broadband-port-policy-results" hidden>
+            <div class="port-policy-grid">
+                <article class="port-policy-card">
+                    <div class="port-policy-card-head"><strong data-i18n="broadband_port_policy_low">低位端口</strong><span id="broadband-port-policy-low-port">--</span></div>
+                    <div class="port-policy-metric"><span data-i18n="download">下载</span><strong id="broadband-port-policy-low-download">--</strong><small>Mbit/s</small></div>
+                    <div class="port-policy-metric"><span data-i18n="upload">上传</span><strong id="broadband-port-policy-low-upload">--</strong><small>Mbit/s</small></div>
+                    <div class="port-policy-submetrics"><span><i data-i18n="latency_col">延迟</i><strong id="broadband-port-policy-low-latency">--</strong></span><span><i data-i18n="latency_jitter">抖动</i><strong id="broadband-port-policy-low-jitter">--</strong></span></div>
+                </article>
+                <article class="port-policy-card high">
+                    <div class="port-policy-card-head"><strong data-i18n="broadband_port_policy_high">高位端口</strong><span id="broadband-port-policy-high-port">--</span></div>
+                    <div class="port-policy-metric"><span data-i18n="download">下载</span><strong id="broadband-port-policy-high-download">--</strong><small>Mbit/s</small></div>
+                    <div class="port-policy-metric"><span data-i18n="upload">上传</span><strong id="broadband-port-policy-high-upload">--</strong><small>Mbit/s</small></div>
+                    <div class="port-policy-submetrics"><span><i data-i18n="latency_col">延迟</i><strong id="broadband-port-policy-high-latency">--</strong></span><span><i data-i18n="latency_jitter">抖动</i><strong id="broadband-port-policy-high-jitter">--</strong></span></div>
+                </article>
+            </div>
+            <div class="port-policy-deltas">
+                <div><span data-i18n="broadband_port_policy_download_delta">高位端口下载差异</span><strong id="broadband-port-policy-download-delta">--</strong></div>
+                <div><span data-i18n="broadband_port_policy_upload_delta">高位端口上传差异</span><strong id="broadband-port-policy-upload-delta">--</strong></div>
+            </div>
+            <div class="port-policy-verdict" id="broadband-port-policy-verdict" data-i18n="broadband_port_policy_ready">等待开始端口策略测速</div>
+        </section>
+        <section id="broadband-history-section">
+            <div class="window-head">
+                <div class="window-title" data-i18n="history_title">历史记录</div>
+                <button type="button" class="btn-with-icon clear-history-btn" id="clear-broadband-history" title="清除历史记录" aria-label="清除历史记录" data-i18n-title="clear_history_btn" data-i18n-aria-label="clear_history_btn"><span class="ui-icon ui-icon--x" aria-hidden="true"></span><span data-i18n="clear_history_btn">清除历史记录</span></button>
+            </div>
+            <div class="history-list" id="broadband-history"></div>
+        </section>
     </section>
 
     <section class="floating-window" id="transfer-window">
