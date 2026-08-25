@@ -207,13 +207,31 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 	}
 	s.appTraffic.sample(snapshot.Bridges, time.Now())
 	s.reconcileAppTrafficLimits(snapshot.Bridges)
-	overview := s.appTraffic.overview(trafficControlAvailable())
+	overview := s.appTraffic.overviewForActiveApps(trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges))
 	snapshot.Apps = overview.Apps
 	snapshot.LimitSupport = overview.LimitSupport
 	if snapshot.Note == "" && overview.Note != "" {
 		snapshot.Note = overview.Note
 	}
 	return snapshot
+}
+
+// activeAppTrafficIDs identifies applications that currently have at least
+// one running container. An empty result intentionally hides persisted
+// history when current runtime metadata cannot identify a live application;
+// showing old rows in that case would make deleted apps look active.
+func activeAppTrafficIDs(items []AppBridgeStats) map[string]bool {
+	active := make(map[string]bool)
+	for _, item := range items {
+		appID := strings.TrimSpace(item.AppID)
+		if appID == "" {
+			continue
+		}
+		if item.RunningCount > 0 {
+			active[appID] = true
+		}
+	}
+	return active
 }
 
 func (s *Service) AppTrafficHistory(appID string) []AppTrafficSample {

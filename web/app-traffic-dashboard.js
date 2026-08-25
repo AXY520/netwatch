@@ -103,7 +103,7 @@ function initAppTraffic() {
     var setTrafficCellHTML = function (cell, html) {
         if (cell && cell.innerHTML !== html) cell.innerHTML = html;
     };
-    var updateTrafficAppCell = function (cell, item) {
+    var updateTrafficAppCell = function (cell, item, containerMap) {
         var wrapper = cell.querySelector('.app-cell');
         var info = cell.querySelector('.app-cell-info');
         if (!wrapper || !info) return;
@@ -128,7 +128,8 @@ function initAppTraffic() {
         }
         var name = item.app_title || item.app_id || item.project || i18n('unknown_status');
         setTrafficCellHTML(info, '<strong>' + NetwatchShared.escapeHtml(name) + '</strong>' +
-            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : ''));
+            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : '') +
+            appTrafficControlStatusMarkup(item, containerMap));
     };
     var createTrafficRow = function (item, showRealtime) {
         var row = document.createElement('tr');
@@ -140,7 +141,7 @@ function initAppTraffic() {
     var updateTrafficRow = function (row, item, showRealtime, data, containerMap, index) {
         row.dataset.appId = String(item.app_id || '');
         row.dataset.appRowKey = trafficRowKey(item, index);
-        updateTrafficAppCell(row.querySelector('.col-app'), item);
+        updateTrafficAppCell(row.querySelector('.col-app'), item, containerMap);
         var rateCell = row.querySelector('.col-rate');
         if (showRealtime) setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
         var periods = row.querySelectorAll('.col-period');
@@ -395,6 +396,15 @@ function appTrafficRate(item) {
     return appTrafficNumber(item.upload_bps) + appTrafficNumber(item.download_bps);
 }
 
+function formatAppTrafficLimit(kbps) {
+    kbps = Math.max(0, Math.round(appTrafficNumber(kbps)));
+    if (kbps >= 1000) {
+        var mbps = kbps / 1000;
+        return (mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1).replace(/\.0$/, '')) + ' Mbit/s';
+    }
+    return kbps + ' kbit/s';
+}
+
 function appTrafficContainerMap() {
     var map = {};
     if (!window.__app.lastContainerData || !Array.isArray(window.__app.lastContainerData.applications)) return map;
@@ -408,6 +418,28 @@ function appTrafficControllableBridges(item) {
     return (Array.isArray(item && item.bridges) ? item.bridges : []).filter(function (bridge) {
         return String(bridge).indexOf('lzc-br-') === 0;
     });
+}
+
+function appTrafficControlStatusMarkup(item, containerMap) {
+    var parts = [];
+    var limit = item && item.limit || {};
+    var uploadLimit = appTrafficNumber(limit.upload_kbps);
+    var downloadLimit = appTrafficNumber(limit.download_kbps);
+    if (uploadLimit > 0 || downloadLimit > 0) {
+        var limitValues = [];
+        if (uploadLimit > 0) limitValues.push('↑ ' + formatAppTrafficLimit(uploadLimit));
+        if (downloadLimit > 0) limitValues.push('↓ ' + formatAppTrafficLimit(downloadLimit));
+        parts.push('<span class="app-control-status app-control-status-limit" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '</span></span>' +
+            '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
+    }
+    var bridges = appTrafficControllableBridges(item);
+    var blocked = bridges.some(function (bridge) { return !!(containerMap && containerMap[bridge]); });
+    if (blocked) {
+        parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '</span></span></span>');
+    }
+    return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
 }
 
 function appTrafficMoreMenu(item, limitSupported, containerMap, activeAppID) {
@@ -424,6 +456,7 @@ function appTrafficMoreMenu(item, limitSupported, containerMap, activeAppID) {
         panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
     }
     if (bridges.length) {
+        if (limitSupported) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
         panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
     return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';

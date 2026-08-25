@@ -92,6 +92,31 @@ func TestAppTrafficStateKeepsBaselineDuringMetadataGap(t *testing.T) {
 	}
 }
 
+func TestAppTrafficOverviewFiltersInactiveAppsWithoutDroppingHistory(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	start := time.Date(2026, 8, 21, 9, 0, 0, 0, time.Local)
+	activeID := "cloud.lazycat.app.active"
+	stoppedID := "cloud.lazycat.app.stopped"
+
+	state.sample([]AppBridgeStats{
+		trafficBridge(activeID, "lzc-br-active", 100, 200),
+		trafficBridge(stoppedID, "lzc-br-stopped", 300, 400),
+	}, start)
+	state.sample([]AppBridgeStats{
+		trafficBridge(activeID, "lzc-br-active", 160, 260),
+		{AppID: stoppedID, AppTitle: "已停止应用", Bridge: "lzc-br-stopped", ContainerCount: 1, RunningCount: 0, UploadBytes: 300, DownloadBytes: 400},
+	}, start.Add(2*time.Second))
+
+	allHistory := state.overview(true).Apps
+	if len(allHistory) != 2 {
+		t.Fatalf("persisted history apps = %d, want 2", len(allHistory))
+	}
+	visible := state.overviewForActiveApps(true, map[string]bool{activeID: true}).Apps
+	if len(visible) != 1 || visible[0].AppID != activeID {
+		t.Fatalf("visible apps = %#v, want only %q", visible, activeID)
+	}
+}
+
 func TestAppTrafficStateTracksDailyAndMonthlyTotals(t *testing.T) {
 	state := newAppTrafficState(t.TempDir())
 	appID := "cloud.lazycat.app.example"

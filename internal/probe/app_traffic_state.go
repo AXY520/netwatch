@@ -652,12 +652,24 @@ func dedupeSortedStrings(in []string) []string {
 }
 
 func (s *appTrafficState) overview(limitSupported bool) AppTrafficOverview {
+	return s.overviewForActiveApps(limitSupported, nil)
+}
+
+// overviewForActiveApps returns the persisted application history while
+// optionally limiting the visible list to applications that are present in
+// the current runtime snapshot. History stays on disk so a stopped app can
+// resume with its previous totals when it is started again, but inactive
+// applications do not remain as zero-rate rows in the live dashboard.
+func (s *appTrafficState) overviewForActiveApps(limitSupported bool, activeAppIDs map[string]bool) AppTrafficOverview {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	apps := make([]AppTrafficUsage, 0, len(s.apps))
 	for appID, entry := range s.apps {
 		if entry.AppID == "" {
 			entry.AppID = appID
+		}
+		if activeAppIDs != nil && !activeAppIDs[entry.AppID] {
+			continue
 		}
 		entry.Limit = s.limits[appID]
 		entry.Samples = nil
