@@ -484,14 +484,14 @@ function appTrafficControlStatusMarkup(item, containerMap) {
         if (uploadLimit > 0) limitValues.push('↑ ' + formatAppTrafficLimit(uploadLimit));
         if (downloadLimit > 0) limitValues.push('↓ ' + formatAppTrafficLimit(downloadLimit));
         parts.push('<span class="app-control-status app-control-status-limit" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '">' +
-            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '</span></span>' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(i18n('app_traffic_limit_status')) + '</span></span>' +
             '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
     }
     var bridges = appTrafficControllableBridges(item);
     var blocked = bridges.some(function (bridge) { return !!(containerMap && containerMap[bridge]); });
     if (blocked) {
         parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
-            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '</span></span></span>');
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled_status')) + '</span></span></span>');
     }
     return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
 }

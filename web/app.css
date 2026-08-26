@@ -1224,6 +1224,8 @@ button.icon-button,
         #app-traffic-table .col-status {
             font-family: var(--font-ui);
             vertical-align: middle;
+            container-type: inline-size;
+            white-space: nowrap;
         }
         #app-traffic-table .col-rate,
         #app-traffic-table .col-period,
@@ -3336,11 +3338,12 @@ button.icon-button,
         }
         .app-control-status-row {
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 0.28rem;
+            gap: 0.36rem;
+            width: 100%;
             min-width: 0;
+            overflow: hidden;
             font-size: 0.69rem;
             line-height: 1.25;
         }
@@ -3348,21 +3351,27 @@ button.icon-button,
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            flex: 0 1 auto;
+            max-width: 100%;
             min-width: 0;
-            gap: 0.32rem;
+            gap: 0.24rem;
             white-space: nowrap;
+            overflow: hidden;
         }
         .app-control-status-label {
             display: inline-flex;
             align-items: center;
             gap: 0.24rem;
+            flex: 0 1 auto;
             min-width: 0;
-            padding: 0.12rem 0.34rem;
+            max-width: 100%;
+            padding: 0.12rem 0.28rem;
             border: 1px solid color-mix(in srgb, var(--accent-cyan) 34%, var(--border-color));
             border-radius: 5px;
             background: color-mix(in srgb, var(--accent-cyan) 8%, transparent);
             color: var(--accent-cyan);
             font-weight: 600;
+            overflow: hidden;
         }
         .app-control-status-label .ui-icon {
             width: 12px;
@@ -3370,9 +3379,37 @@ button.icon-button,
             flex: 0 0 12px;
         }
         .app-control-status-values {
+            flex: 0 1 auto;
+            min-width: 0;
+            max-width: 100%;
             color: var(--text-muted);
             font-family: var(--font-number);
             font-variant-numeric: tabular-nums;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .app-control-status-label-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @container (max-width: 10rem) {
+            .app-control-status-values {
+                display: none;
+            }
+        }
+        @container (max-width: 5.5rem) {
+            .app-control-status-label {
+                padding-left: 0.12rem;
+                padding-right: 0.12rem;
+                border-color: transparent;
+                background: transparent;
+            }
+            .app-control-status-label-text {
+                display: none;
+            }
         }
         .app-control-status-blocked .app-control-status-label {
             border-color: color-mix(in srgb, var(--danger) 42%, var(--border-color));
