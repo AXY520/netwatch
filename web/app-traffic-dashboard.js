@@ -28,12 +28,13 @@ function initAppTraffic() {
     var limitDownload = document.getElementById('app-traffic-limit-download');
     var limitError = document.getElementById('app-traffic-limit-error');
     var trafficLoading = false;
-    // Realtime refresh rebuilds the table every two seconds. Keep failed icon
-    // URLs out of subsequent renders so a missing/broken icon is not fetched
-    // again on every counter sample. A later URL change (or expiry) can retry.
+    // Keep failed icon URLs out of subsequent renders so a missing/broken icon
+    // is not fetched again on every counter sample. A later URL change (or
+    // expiry) can retry.
     var failedAppIcons = Object.create(null);
     var failedAppIconRetryMs = 10 * 60 * 1000;
     var lastTrafficRenderSignature = '';
+    var lastTrafficStructureSignature = '';
     var renderedTrafficMode = null;
     if (!tbody) return;
     var appTrafficRealtimeEnabled = function () {
@@ -100,10 +101,24 @@ function initAppTraffic() {
             })
         });
     };
+    var trafficStructureSignature = function (list, showRealtime, data, containerMap) {
+        return JSON.stringify({
+            mode: showRealtime,
+            sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
+            limit: !!data.limit_support,
+            containers: containerMap,
+            apps: list.map(function (item, index) {
+                return [
+                    trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
+                    item.limit || null, item.bridges || []
+                ];
+            })
+        });
+    };
     var setTrafficCellHTML = function (cell, html) {
         if (cell && cell.innerHTML !== html) cell.innerHTML = html;
     };
-    var updateTrafficAppCell = function (cell, item, containerMap) {
+    var updateTrafficAppCell = function (cell, item) {
         var wrapper = cell.querySelector('.app-cell');
         var info = cell.querySelector('.app-cell-info');
         if (!wrapper || !info) return;
@@ -128,12 +143,12 @@ function initAppTraffic() {
         }
         var name = item.app_title || item.app_id || item.project || i18n('unknown_status');
         setTrafficCellHTML(info, '<strong>' + NetwatchShared.escapeHtml(name) + '</strong>' +
-            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : '') +
-            appTrafficControlStatusMarkup(item, containerMap));
+            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : ''));
     };
     var createTrafficRow = function (item, showRealtime) {
         var row = document.createElement('tr');
         row.innerHTML = '<td class="col-app"><div class="app-cell"><div class="app-cell-info"></div></div></td>' +
+            '<td class="col-status"></td>' +
             (showRealtime ? '<td class="col-rate"></td>' : '') +
             '<td class="col-period"></td><td class="col-period"></td><td class="col-total"></td><td class="col-actions"></td>';
         return row;
@@ -141,7 +156,8 @@ function initAppTraffic() {
     var updateTrafficRow = function (row, item, showRealtime, data, containerMap, index) {
         row.dataset.appId = String(item.app_id || '');
         row.dataset.appRowKey = trafficRowKey(item, index);
-        updateTrafficAppCell(row.querySelector('.col-app'), item, containerMap);
+        updateTrafficAppCell(row.querySelector('.col-app'), item);
+        setTrafficCellHTML(row.querySelector('.col-status'), appTrafficControlStatusMarkup(item, containerMap));
         var rateCell = row.querySelector('.col-rate');
         if (showRealtime) setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
         var periods = row.querySelectorAll('.col-period');
@@ -162,7 +178,39 @@ function initAppTraffic() {
         });
         if (noteEl) noteEl.textContent = data.note || '';
     };
-    var renderTraffic = function (data) {
+    var updateRealtimeTrafficCells = function (list, showRealtime) {
+        if (!showRealtime || renderedTrafficMode !== true) return false;
+        var rows = new Map(Array.from(tbody.querySelectorAll('tr[data-app-row-key]')).map(function (row) {
+            return [row.dataset.appRowKey, row];
+        }));
+        if (rows.size !== list.length) return false;
+        for (var index = 0; index < list.length; index++) {
+            var item = list[index];
+            var row = rows.get(trafficRowKey(item, index));
+            if (!row) return false;
+            setTrafficCellHTML(row.querySelector('.col-rate'), appTrafficDualValue(item.upload_bps, item.download_bps, true));
+        }
+        if (state.appTrafficSort.key === 'rate') {
+            // Reorder existing rows without replacing them. This preserves
+            // hover/focus state for the action menu while keeping rate sort
+            // semantics correct.
+            var orderedRows = list.map(function (item, index) {
+                return rows.get(trafficRowKey(item, index));
+            });
+            var currentRows = Array.from(tbody.children);
+            var needsReorder = orderedRows.some(function (row, index) {
+                return currentRows[index] !== row;
+            });
+            if (needsReorder) {
+                var fragment = document.createDocumentFragment();
+                orderedRows.forEach(function (row) { fragment.appendChild(row); });
+                tbody.appendChild(fragment);
+            }
+        }
+        return true;
+    };
+    var renderTraffic = function (data, options) {
+        options = options || {};
         latestTrafficData = data;
         var containerMap = appTrafficContainerMap();
         var list = Array.isArray(data.apps) ? data.apps.slice() : [];
@@ -171,14 +219,20 @@ function initAppTraffic() {
         var key = state.appTrafficSort.key;
         var direction = state.appTrafficSort.direction;
         list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
+        var structureSignature = trafficStructureSignature(list, showRealtime, data, containerMap);
+        if (options.realtimeOnly && structureSignature === lastTrafficStructureSignature && updateRealtimeTrafficCells(list, showRealtime)) {
+            updateTrafficStatus(data, list);
+            return;
+        }
         var signature = trafficRenderSignature(list, showRealtime, data, containerMap);
         if (signature === lastTrafficRenderSignature) {
             updateTrafficStatus(data, list);
             return;
         }
         lastTrafficRenderSignature = signature;
+        lastTrafficStructureSignature = structureSignature;
         if (list.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="' + (showRealtime ? 6 : 5) + '" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="' + (showRealtime ? 7 : 6) + '" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
             renderedTrafficMode = showRealtime;
         } else {
             if (renderedTrafficMode !== showRealtime || tbody.querySelector('.placeholder')) tbody.replaceChildren();
@@ -227,7 +281,7 @@ function initAppTraffic() {
                 await window.__app.fetchContainers().catch(function () {});
             }
             var trafficData = await netwatchGet('/api/v1/network/app-traffic');
-            renderTraffic(trafficData);
+            renderTraffic(trafficData, { realtimeOnly: silent });
         } catch (e) {
             if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
                 state: 'error',

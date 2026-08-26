@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -55,8 +56,42 @@ func TestConfigureBridgeTrafficLimitsUseDedicatedRuleIDs(t *testing.T) {
 	if !strings.Contains(all, "qdisc add dev lzc-br-example clsact") {
 		t.Fatalf("missing clsact creation: %s", all)
 	}
-	if !strings.Contains(all, "ingress pref 49152 protocol all matchall action police rate 2048kbit") {
+	if !strings.Contains(all, "ingress pref 49152 handle 194 protocol all matchall action police rate 2048kbit") {
 		t.Fatalf("missing owned upload filter: %s", all)
+	}
+}
+
+func TestConfigureBridgeUploadLimitMigratesLegacyFilter(t *testing.T) {
+	previous := runTrafficControlCommand
+	t.Cleanup(func() { runTrafficControlCommand = previous })
+	var commands [][]string
+	runTrafficControlCommand = func(_ context.Context, args ...string) (string, error) {
+		commands = append(commands, append([]string(nil), args...))
+		if len(args) >= 2 && args[0] == "qdisc" && args[1] == "show" {
+			return "qdisc clsact ffff: parent ffff:fff1", nil
+		}
+		if len(args) >= 2 && args[0] == "filter" && args[1] == "replace" {
+			return "RTNETLINK answers: File exists", fmt.Errorf("filter exists")
+		}
+		return "", nil
+	}
+
+	if err := configureBridgeUploadLimit(context.Background(), "lzc-br-example", 4096); err != nil {
+		t.Fatal(err)
+	}
+	joined := make([]string, len(commands))
+	for i, command := range commands {
+		joined[i] = strings.Join(command, " ")
+	}
+	all := strings.Join(joined, "\n")
+	if !strings.Contains(all, "filter replace dev lzc-br-example ingress pref 49152 handle 194") {
+		t.Fatalf("missing handle-based replacement: %s", all)
+	}
+	if !strings.Contains(all, "filter del dev lzc-br-example ingress pref 49152") {
+		t.Fatalf("missing legacy filter removal: %s", all)
+	}
+	if !strings.Contains(all, "filter add dev lzc-br-example ingress pref 49152 handle 194") {
+		t.Fatalf("missing deterministic filter creation: %s", all)
 	}
 }
 

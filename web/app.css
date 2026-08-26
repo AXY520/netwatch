@@ -1206,18 +1206,24 @@ button.icon-button,
             text-overflow: ellipsis;
             padding-right: 0.5rem;
         }
-        .app-traffic-table-fixed .col-app     { width: 28%; }
-        .app-traffic-table-fixed .col-rate    { width: 16%; text-align: right; }
-        .app-traffic-table-fixed .col-period  { width: 16%; text-align: right; }
-        .app-traffic-table-fixed .col-total   { width: 16%; text-align: right; font-weight: 600; }
-        .app-traffic-table-fixed .col-actions { width: 8%; text-align: right; overflow: visible; padding-right: 0; }
-        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-app { width: 33%; }
+        .app-traffic-table-fixed .col-app     { width: 24%; }
+        .app-traffic-table-fixed .col-status  { width: 16%; text-align: center; }
+        .app-traffic-table-fixed .col-rate    { width: 14%; text-align: right; }
+        .app-traffic-table-fixed .col-period  { width: 13%; text-align: right; }
+        .app-traffic-table-fixed .col-total   { width: 13%; text-align: right; font-weight: 600; }
+        .app-traffic-table-fixed .col-actions { width: 7%; text-align: right; overflow: visible; padding-right: 0; }
+        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-app { width: 26%; }
+        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-status { width: 16%; }
         .app-traffic-table-fixed.app-traffic-realtime-hidden .col-rate { display: none; }
-        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-period { width: 19%; }
-        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-total { width: 19%; }
-        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-actions { width: 10%; }
+        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-period { width: 16%; }
+        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-total { width: 18%; }
+        .app-traffic-table-fixed.app-traffic-realtime-hidden .col-actions { width: 8%; }
         #app-traffic-table .col-app {
             font-family: var(--font-ui);
+        }
+        #app-traffic-table .col-status {
+            font-family: var(--font-ui);
+            vertical-align: middle;
         }
         #app-traffic-table .col-rate,
         #app-traffic-table .col-period,
@@ -3330,10 +3336,10 @@ button.icon-button,
         }
         .app-control-status-row {
             display: flex;
+            flex-direction: column;
             align-items: center;
-            flex-wrap: wrap;
-            gap: 0.28rem 0.5rem;
-            margin-top: 0.22rem;
+            justify-content: center;
+            gap: 0.28rem;
             min-width: 0;
             font-size: 0.69rem;
             line-height: 1.25;
@@ -3341,6 +3347,7 @@ button.icon-button,
         .app-control-status {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             min-width: 0;
             gap: 0.32rem;
             white-space: nowrap;

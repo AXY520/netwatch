@@ -16,6 +16,7 @@ import (
 const (
 	appTrafficTCHandle       = "194:"
 	appTrafficTCFilterPref   = "49152"
+	appTrafficTCFilterHandle = "194"
 	appTrafficTCCommandLimit = 5 * time.Second
 	maxAppTrafficLimitKbps   = int64(10_000_000)
 )
@@ -198,9 +199,20 @@ func configureBridgeUploadLimit(ctx context.Context, bridge string, kbps int64) 
 		return err
 	}
 	burst := appTrafficBurstBytes(kbps)
-	out, err := runTrafficControlCommand(ctx, "filter", "replace", "dev", bridge, "ingress", "pref", appTrafficTCFilterPref,
-		"protocol", "all", "matchall", "action", "police", "rate", strconv.FormatInt(kbps, 10)+"kbit",
-		"burst", strconv.FormatInt(burst, 10), "conform-exceed", "ok/drop")
+	filterArgs := []string{"dev", bridge, "ingress", "pref", appTrafficTCFilterPref, "handle", appTrafficTCFilterHandle,
+		"protocol", "all", "matchall", "action", "police", "rate", strconv.FormatInt(kbps, 10) + "kbit",
+		"burst", strconv.FormatInt(burst, 10), "conform-exceed", "ok/drop"}
+	out, err := runTrafficControlCommand(ctx, append([]string{"filter", "replace"}, filterArgs...)...)
+	if err != nil && trafficControlAlreadyExists(out) {
+		// Versions before the dedicated handle was added created this rule with
+		// only a priority. That rule cannot be replaced by handle, so remove the
+		// old rule at our reserved priority and recreate it deterministically.
+		removed, removeErr := runTrafficControlCommand(ctx, "filter", "del", "dev", bridge, "ingress", "pref", appTrafficTCFilterPref)
+		if removeErr != nil && !trafficControlNotFound(removed) {
+			return trafficControlError("replace upload limit", bridge, removed, removeErr)
+		}
+		out, err = runTrafficControlCommand(ctx, append([]string{"filter", "add"}, filterArgs...)...)
+	}
 	if err != nil {
 		return trafficControlError("set upload limit", bridge, out, err)
 	}
@@ -257,6 +269,11 @@ func appTrafficBurstBytes(kbps int64) int64 {
 func trafficControlNotFound(output string) bool {
 	value := strings.ToLower(output)
 	return strings.Contains(value, "cannot find") || strings.Contains(value, "no such file") || strings.Contains(value, "not found")
+}
+
+func trafficControlAlreadyExists(output string) bool {
+	value := strings.ToLower(output)
+	return strings.Contains(value, "file exists") || strings.Contains(value, "already exists")
 }
 
 func trafficControlError(action, bridge, output string, err error) error {
