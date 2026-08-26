@@ -1224,7 +1224,6 @@ button.icon-button,
         #app-traffic-table .col-status {
             font-family: var(--font-ui);
             vertical-align: middle;
-            container-type: inline-size;
             white-space: nowrap;
         }
         #app-traffic-table .col-rate,
@@ -3344,6 +3343,8 @@ button.icon-button,
             width: 100%;
             min-width: 0;
             overflow: hidden;
+            container-type: inline-size;
+            container-name: app-traffic-status;
             font-size: 0.69rem;
             line-height: 1.25;
         }
@@ -3390,17 +3391,19 @@ button.icon-button,
             white-space: nowrap;
         }
         .app-control-status-label-text {
+            display: inline-block;
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
+            text-align: left;
             white-space: nowrap;
         }
-        @container (max-width: 10rem) {
+        @container app-traffic-status (max-width: 10rem) {
             .app-control-status-values {
                 display: none;
             }
         }
-        @container (max-width: 5.5rem) {
+        @container app-traffic-status (max-width: 5.5rem) {
             .app-control-status-label {
                 padding-left: 0.12rem;
                 padding-right: 0.12rem;

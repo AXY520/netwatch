@@ -36,6 +36,9 @@ func TestConfigureBridgeTrafficLimitsUseDedicatedRuleIDs(t *testing.T) {
 		if len(args) >= 2 && args[0] == "qdisc" && args[1] == "show" {
 			return "qdisc noqueue 0: root refcnt 2", nil
 		}
+		if len(args) >= 2 && args[0] == "filter" && args[1] == "del" {
+			return "RTNETLINK answers: No such file or directory", fmt.Errorf("filter missing")
+		}
 		return "", nil
 	}
 	ctx := context.Background()
@@ -56,22 +59,37 @@ func TestConfigureBridgeTrafficLimitsUseDedicatedRuleIDs(t *testing.T) {
 	if !strings.Contains(all, "qdisc add dev lzc-br-example clsact") {
 		t.Fatalf("missing clsact creation: %s", all)
 	}
-	if !strings.Contains(all, "ingress pref 49152 handle 194 protocol all matchall action police rate 2048kbit") {
+	if !strings.Contains(all, "filter add dev lzc-br-example ingress pref 49152 handle 194 protocol all matchall action police rate 2048kbit") {
 		t.Fatalf("missing owned upload filter: %s", all)
+	}
+	if !strings.Contains(all, "filter add dev lzc-br-example ingress pref 49140 protocol ip flower dst_ip 10.0.0.0/8 action gact pass") {
+		t.Fatalf("missing local upload bypass filter: %s", all)
 	}
 }
 
-func TestConfigureBridgeUploadLimitMigratesLegacyFilter(t *testing.T) {
+func TestConfigureBridgeUploadLimitClearsDuplicateLegacyFilters(t *testing.T) {
 	previous := runTrafficControlCommand
 	t.Cleanup(func() { runTrafficControlCommand = previous })
 	var commands [][]string
+	deleteCalls := map[string]int{}
 	runTrafficControlCommand = func(_ context.Context, args ...string) (string, error) {
 		commands = append(commands, append([]string(nil), args...))
 		if len(args) >= 2 && args[0] == "qdisc" && args[1] == "show" {
 			return "qdisc clsact ffff: parent ffff:fff1", nil
 		}
-		if len(args) >= 2 && args[0] == "filter" && args[1] == "replace" {
-			return "RTNETLINK answers: File exists", fmt.Errorf("filter exists")
+		if len(args) >= 2 && args[0] == "filter" && args[1] == "del" {
+			pref := ""
+			for index := 0; index+1 < len(args); index++ {
+				if args[index] == "pref" {
+					pref = args[index+1]
+					break
+				}
+			}
+			deleteCalls[pref]++
+			if pref == appTrafficTCFilterPref && deleteCalls[pref] <= 2 {
+				return "", nil
+			}
+			return "RTNETLINK answers: No such file or directory", fmt.Errorf("filter missing")
 		}
 		return "", nil
 	}
@@ -84,14 +102,11 @@ func TestConfigureBridgeUploadLimitMigratesLegacyFilter(t *testing.T) {
 		joined[i] = strings.Join(command, " ")
 	}
 	all := strings.Join(joined, "\n")
-	if !strings.Contains(all, "filter replace dev lzc-br-example ingress pref 49152 handle 194") {
-		t.Fatalf("missing handle-based replacement: %s", all)
-	}
-	if !strings.Contains(all, "filter del dev lzc-br-example ingress pref 49152") {
-		t.Fatalf("missing legacy filter removal: %s", all)
+	if deleteCalls[appTrafficTCFilterPref] != 3 {
+		t.Fatalf("main filter cleanup calls = %d, want 3", deleteCalls[appTrafficTCFilterPref])
 	}
 	if !strings.Contains(all, "filter add dev lzc-br-example ingress pref 49152 handle 194") {
-		t.Fatalf("missing deterministic filter creation: %s", all)
+		t.Fatalf("missing deterministic filter creation after cleanup: %s", all)
 	}
 }
 

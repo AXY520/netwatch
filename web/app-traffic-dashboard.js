@@ -452,11 +452,8 @@ function appTrafficRate(item) {
 
 function formatAppTrafficLimit(kbps) {
     kbps = Math.max(0, Math.round(appTrafficNumber(kbps)));
-    if (kbps >= 1000) {
-        var mbps = kbps / 1000;
-        return (mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1).replace(/\.0$/, '')) + ' Mbit/s';
-    }
-    return kbps + ' kbit/s';
+    var mbps = kbps / 1000;
+    return mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1).replace(/\.0$/, '');
 }
 
 function appTrafficContainerMap() {
@@ -474,6 +471,15 @@ function appTrafficControllableBridges(item) {
     });
 }
 
+function appTrafficCompactStatusLabel(key, zhFallback, enFallback) {
+    var value = i18n(key);
+    if (!value || value === key) {
+        var lang = String(document.documentElement && document.documentElement.lang || '').toLowerCase();
+        return lang.indexOf('en') === 0 ? enFallback : zhFallback;
+    }
+    return value;
+}
+
 function appTrafficControlStatusMarkup(item, containerMap) {
     var parts = [];
     var limit = item && item.limit || {};
@@ -483,15 +489,17 @@ function appTrafficControlStatusMarkup(item, containerMap) {
         var limitValues = [];
         if (uploadLimit > 0) limitValues.push('↑ ' + formatAppTrafficLimit(uploadLimit));
         if (downloadLimit > 0) limitValues.push('↓ ' + formatAppTrafficLimit(downloadLimit));
+        var limitStatusLabel = appTrafficCompactStatusLabel('app_traffic_limit_status', '限速', 'Limited');
         parts.push('<span class="app-control-status app-control-status-limit" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '">' +
-            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(i18n('app_traffic_limit_status')) + '</span></span>' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(limitStatusLabel) + '</span></span>' +
             '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
     }
     var bridges = appTrafficControllableBridges(item);
     var blocked = bridges.some(function (bridge) { return !!(containerMap && containerMap[bridge]); });
     if (blocked) {
+        var blockedStatusLabel = appTrafficCompactStatusLabel('app_traffic_internet_disabled_status', '禁用外网', 'Internet blocked');
         parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
-            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled_status')) + '</span></span></span>');
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(blockedStatusLabel) + '</span></span></span>');
     }
     return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
 }

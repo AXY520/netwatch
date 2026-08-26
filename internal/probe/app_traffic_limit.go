@@ -21,6 +21,18 @@ const (
 	maxAppTrafficLimitKbps   = int64(10_000_000)
 )
 
+var appTrafficTCUploadBypassFilters = []struct {
+	pref     string
+	protocol string
+	cidr     string
+}{
+	{pref: "49140", protocol: "ip", cidr: "10.0.0.0/8"},
+	{pref: "49141", protocol: "ip", cidr: "172.16.0.0/12"},
+	{pref: "49142", protocol: "ip", cidr: "192.168.0.0/16"},
+	{pref: "49143", protocol: "ipv6", cidr: "fc00::/7"},
+	{pref: "49144", protocol: "ipv6", cidr: "fe80::/10"},
+}
+
 var hostTrafficControlPaths = []string{
 	"/usr/bin/tc",
 	"/usr/sbin/tc",
@@ -188,35 +200,61 @@ func configureBridgeDownloadLimit(ctx context.Context, bridge string, kbps int64
 }
 
 func configureBridgeUploadLimit(ctx context.Context, bridge string, kbps int64) error {
+	if err := clearBridgeUploadFilters(ctx, bridge); err != nil {
+		return err
+	}
 	if kbps == 0 {
-		out, err := runTrafficControlCommand(ctx, "filter", "del", "dev", bridge, "ingress", "pref", appTrafficTCFilterPref)
-		if err != nil && !trafficControlNotFound(out) {
-			return trafficControlError("remove upload limit", bridge, out, err)
-		}
 		return nil
 	}
 	if err := ensureBridgeClsact(ctx, bridge); err != nil {
 		return err
 	}
+	for _, bypass := range appTrafficTCUploadBypassFilters {
+		out, err := runTrafficControlCommand(ctx, "filter", "add", "dev", bridge, "ingress", "pref", bypass.pref,
+			"protocol", bypass.protocol, "flower", "dst_ip", bypass.cidr, "action", "gact", "pass")
+		if err != nil {
+			return trafficControlError("set upload local bypass", bridge, out, err)
+		}
+	}
 	burst := appTrafficBurstBytes(kbps)
 	filterArgs := []string{"dev", bridge, "ingress", "pref", appTrafficTCFilterPref, "handle", appTrafficTCFilterHandle,
 		"protocol", "all", "matchall", "action", "police", "rate", strconv.FormatInt(kbps, 10) + "kbit",
 		"burst", strconv.FormatInt(burst, 10), "conform-exceed", "ok/drop"}
-	out, err := runTrafficControlCommand(ctx, append([]string{"filter", "replace"}, filterArgs...)...)
-	if err != nil && trafficControlAlreadyExists(out) {
-		// Versions before the dedicated handle was added created this rule with
-		// only a priority. That rule cannot be replaced by handle, so remove the
-		// old rule at our reserved priority and recreate it deterministically.
-		removed, removeErr := runTrafficControlCommand(ctx, "filter", "del", "dev", bridge, "ingress", "pref", appTrafficTCFilterPref)
-		if removeErr != nil && !trafficControlNotFound(removed) {
-			return trafficControlError("replace upload limit", bridge, removed, removeErr)
-		}
-		out, err = runTrafficControlCommand(ctx, append([]string{"filter", "add"}, filterArgs...)...)
-	}
+	out, err := runTrafficControlCommand(ctx, append([]string{"filter", "add"}, filterArgs...)...)
 	if err != nil {
 		return trafficControlError("set upload limit", bridge, out, err)
 	}
 	return nil
+}
+
+// clearBridgeUploadFilters removes every filter at Netwatch's reserved
+// priority. Older releases could leave a legacy no-handle rule beside the
+// current rule, and deleting once is not enough when duplicate rules exist.
+func clearBridgeUploadFilters(ctx context.Context, bridge string) error {
+	prefs := make([]string, 0, len(appTrafficTCUploadBypassFilters)+1)
+	for _, bypass := range appTrafficTCUploadBypassFilters {
+		prefs = append(prefs, bypass.pref)
+	}
+	prefs = append(prefs, appTrafficTCFilterPref)
+	for _, pref := range prefs {
+		if err := clearBridgeTrafficFiltersAtPriority(ctx, bridge, pref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func clearBridgeTrafficFiltersAtPriority(ctx context.Context, bridge, pref string) error {
+	for attempts := 0; attempts < 16; attempts++ {
+		out, err := runTrafficControlCommand(ctx, "filter", "del", "dev", bridge, "ingress", "pref", pref)
+		if err != nil {
+			if trafficControlNotFound(out) {
+				return nil
+			}
+			return trafficControlError("remove upload limit", bridge, out, err)
+		}
+	}
+	return fmt.Errorf("remove upload limit for %s: too many filters at priority %s", bridge, pref)
 }
 
 // ensureBridgeClsact creates the ingress hook only when it does not already
