@@ -4,8 +4,9 @@ import "sync"
 
 // containerControlState owns container network isolation state.
 type containerControlState struct {
-	mu      sync.RWMutex
-	blocked map[string]string // bridge -> mode
+	mu          sync.RWMutex
+	blocked     map[string]string // legacy network target -> mode
+	blockedApps map[string]string // app_id -> mode
 }
 
 // networkMutationState serializes host network changes. IP, bridge and DNS
@@ -29,7 +30,48 @@ type networkMutationState struct {
 }
 
 func newContainerControlState() *containerControlState {
-	return &containerControlState{blocked: map[string]string{}}
+	return &containerControlState{blocked: map[string]string{}, blockedApps: map[string]string{}}
+}
+
+func (c *containerControlState) snapshotBlockedApps() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]string, len(c.blockedApps))
+	for k, v := range c.blockedApps {
+		out[k] = v
+	}
+	return out
+}
+
+func (c *containerControlState) replaceBlockedApps(in map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.blockedApps = make(map[string]string, len(in))
+	for appID, mode := range in {
+		if appID != "" && mode != "" {
+			c.blockedApps[appID] = mode
+		}
+	}
+}
+
+func (c *containerControlState) appBlocked(appID string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.blockedApps[appID]
+}
+
+func (c *containerControlState) setBlockedApp(appID, mode string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if appID != "" && mode != "" {
+		c.blockedApps[appID] = mode
+	}
+}
+
+func (c *containerControlState) clearBlockedApp(appID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.blockedApps, appID)
 }
 
 func newNetworkMutationState() *networkMutationState {

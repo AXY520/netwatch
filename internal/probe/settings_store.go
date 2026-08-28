@@ -7,20 +7,22 @@ import "sync"
 type settingsStore struct {
 	mu sync.RWMutex
 
-	chartTimeLabelInterval     int
-	appTrafficRealtimeEnabled  bool
-	dashboardCollapsedSections []string
-	backgroundMonitorEnabled   bool
-	backgroundMonitorInterval  int
+	chartTimeLabelInterval         int
+	appTrafficRealtimeEnabled      bool
+	hostNetworkExperimentalEnabled bool
+	dashboardCollapsedSections     []string
+	backgroundMonitorEnabled       bool
+	backgroundMonitorInterval      int
 }
 
 func newSettingsStore(def MutableSettings) *settingsStore {
 	return &settingsStore{
-		chartTimeLabelInterval:     def.ChartTimeLabelInterval,
-		appTrafficRealtimeEnabled:  def.AppTrafficRealtimeEnabled,
-		dashboardCollapsedSections: normalizeDashboardCollapsedSections(def.DashboardCollapsedSections),
-		backgroundMonitorEnabled:   def.BackgroundMonitorEnabled,
-		backgroundMonitorInterval:  def.BackgroundMonitorIntervalSec,
+		chartTimeLabelInterval:         def.ChartTimeLabelInterval,
+		appTrafficRealtimeEnabled:      def.AppTrafficRealtimeEnabled,
+		hostNetworkExperimentalEnabled: def.HostNetworkExperimentalEnabled,
+		dashboardCollapsedSections:     normalizeDashboardCollapsedSections(def.DashboardCollapsedSections),
+		backgroundMonitorEnabled:       def.BackgroundMonitorEnabled,
+		backgroundMonitorInterval:      def.BackgroundMonitorIntervalSec,
 	}
 }
 
@@ -29,6 +31,7 @@ func (st *settingsStore) writeToSettings(out *MutableSettings) {
 	defer st.mu.RUnlock()
 	out.ChartTimeLabelInterval = st.chartTimeLabelInterval
 	out.AppTrafficRealtimeEnabled = st.appTrafficRealtimeEnabled
+	out.HostNetworkExperimentalEnabled = st.hostNetworkExperimentalEnabled
 	out.DashboardCollapsedSections = append([]string(nil), st.dashboardCollapsedSections...)
 	out.BackgroundMonitorEnabled = st.backgroundMonitorEnabled
 	out.BackgroundMonitorIntervalSec = st.backgroundMonitorInterval
@@ -39,11 +42,18 @@ func (st *settingsStore) apply(in MutableSettings) {
 	defer st.mu.Unlock()
 	st.chartTimeLabelInterval = in.ChartTimeLabelInterval
 	st.appTrafficRealtimeEnabled = in.AppTrafficRealtimeEnabled
+	st.hostNetworkExperimentalEnabled = in.HostNetworkExperimentalEnabled
 	st.dashboardCollapsedSections = normalizeDashboardCollapsedSections(in.DashboardCollapsedSections)
 	if in.BackgroundMonitorIntervalSec >= 10 {
 		st.backgroundMonitorInterval = in.BackgroundMonitorIntervalSec
 	}
 	st.backgroundMonitorEnabled = in.BackgroundMonitorEnabled
+}
+
+func (st *settingsStore) hostNetworkExperimental() bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.hostNetworkExperimentalEnabled
 }
 
 func normalizeDashboardCollapsedSections(sections []string) []string {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#F5F6F7">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' *;">
-    <title data-i18n="page_title">NETWATCH // 网络诊断仪表盘</title>
+    <title data-i18n="page_title">NETWATCH // 微服网络诊断</title>
     <link rel="icon" href="/icons/lzc-icon.png" type="image/png">
     <script>
         var savedTheme = localStorage.getItem('theme');
@@ -492,7 +492,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="ipv6_renew_title">IPv6 地址续约</div>
-                <div class="note" data-i18n="ipv6_renew_note">当 IPv6 租约过期、地址未自动更新时，可让系统重新获取。选择网卡后执行，过程平滑不中断现有连接。</div>
+                <!-- <div class="note" data-i18n="ipv6_renew_note">当 IPv6 租约过期、地址未自动更新时，可让系统重新获取。选择网卡后执行，过程平滑不中断现有连接。</div> -->
             </div>
             <div class="window-actions">
                 <button id="ipv6-renew-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
@@ -516,7 +516,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="network_config_title">网络配置</div>
-                <div class="note" data-i18n="network_config_note">网卡 / 网桥 / DNS 同窗；改 IP 与网桥 3 分钟确认，改 DNS 60 秒确认。</div>
+                <div class="note" data-i18n="network_config_note">IP与网桥3分钟未确认回滚||DNS60秒未确认回滚</div>
             </div>
             <div class="window-actions">
                 <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
@@ -634,7 +634,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="settings_window_title">设置</div>
-                <div class="note" id="settings-note" data-i18n="settings_note">统一调整网卡实时监测和后续可配置项。</div>
+                <!-- <div class="note" id="settings-note" data-i18n="settings_note">统一调整网卡实时监测和后续可配置项。</div> -->
             </div>
             <div class="window-actions">
                 <button id="save-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
@@ -660,6 +660,10 @@
             <div class="settings-row">
                 <span data-i18n="app_traffic_realtime_monitor">应用流量实时刷新</span>
                 <label class="settings-toggle inline"><input type="checkbox" id="setting-app-traffic-realtime-enabled"></label>
+            </div>
+            <div class="settings-row settings-row-experimental">
+                <span data-i18n="host_network_experimental">Host 网络控制（实验性）</span>
+                <label class="settings-toggle inline"><input type="checkbox" id="setting-host-network-experimental-enabled"></label>
             </div>
             <div class="settings-row">
                 <span data-i18n="background_monitor">后台检测</span>

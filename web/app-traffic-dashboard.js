@@ -82,13 +82,12 @@ function initAppTraffic() {
     var trafficRowKey = function (item, index) {
         return String((item && (item.app_id || item.project || item.app_title)) || ('row-' + index));
     };
-    var trafficRenderSignature = function (list, showRealtime, data, containerMap) {
+    var trafficRenderSignature = function (list, showRealtime, data) {
         return JSON.stringify({
             mode: showRealtime,
             sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
             menu: activeMenuAppID,
             limit: !!data.limit_support,
-            containers: containerMap,
             apps: list.map(function (item, index) {
                 return [
                     trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
@@ -96,21 +95,22 @@ function initAppTraffic() {
                     item.today_upload || 0, item.today_download || 0,
                     item.month_upload || 0, item.month_download || 0,
                     item.total_upload || 0, item.total_download || 0,
-                    item.limit || null, item.bridges || []
+                    item.limit || null, item.bridges || [], item.network_modes || [],
+                    item.network_topology || '', item.network_policy || null
                 ];
             })
         });
     };
-    var trafficStructureSignature = function (list, showRealtime, data, containerMap) {
+    var trafficStructureSignature = function (list, showRealtime, data) {
         return JSON.stringify({
             mode: showRealtime,
             sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
             limit: !!data.limit_support,
-            containers: containerMap,
             apps: list.map(function (item, index) {
                 return [
                     trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
-                    item.limit || null, item.bridges || []
+                    item.limit || null, item.bridges || [], item.network_modes || [],
+                    item.network_topology || '', item.network_policy || null
                 ];
             })
         });
@@ -153,11 +153,11 @@ function initAppTraffic() {
             '<td class="col-period"></td><td class="col-period"></td><td class="col-total"></td><td class="col-actions"></td>';
         return row;
     };
-    var updateTrafficRow = function (row, item, showRealtime, data, containerMap, index) {
+    var updateTrafficRow = function (row, item, showRealtime, data, index) {
         row.dataset.appId = String(item.app_id || '');
         row.dataset.appRowKey = trafficRowKey(item, index);
         updateTrafficAppCell(row.querySelector('.col-app'), item);
-        setTrafficCellHTML(row.querySelector('.col-status'), appTrafficControlStatusMarkup(item, containerMap));
+        setTrafficCellHTML(row.querySelector('.col-status'), appTrafficControlStatusMarkup(item));
         var rateCell = row.querySelector('.col-rate');
         if (showRealtime) setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
         var periods = row.querySelectorAll('.col-period');
@@ -166,7 +166,7 @@ function initAppTraffic() {
         var total = row.querySelector('.col-total');
         setTrafficCellHTML(total, appTrafficDualValue(item.total_upload, item.total_download, false));
         var actions = row.querySelector('.col-actions');
-        setTrafficCellHTML(actions, appTrafficMoreMenu(item, data.limit_support, containerMap, activeMenuAppID));
+        setTrafficCellHTML(actions, appTrafficMoreMenu(item, data.limit_support, activeMenuAppID));
     };
     var updateTrafficStatus = function (data, list) {
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
@@ -212,19 +212,18 @@ function initAppTraffic() {
     var renderTraffic = function (data, options) {
         options = options || {};
         latestTrafficData = data;
-        var containerMap = appTrafficContainerMap();
         var list = Array.isArray(data.apps) ? data.apps.slice() : [];
         var showRealtime = syncAppTrafficRealtimeColumn();
         updateSortHeaders();
         var key = state.appTrafficSort.key;
         var direction = state.appTrafficSort.direction;
         list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
-        var structureSignature = trafficStructureSignature(list, showRealtime, data, containerMap);
+        var structureSignature = trafficStructureSignature(list, showRealtime, data);
         if (options.realtimeOnly && structureSignature === lastTrafficStructureSignature && updateRealtimeTrafficCells(list, showRealtime)) {
             updateTrafficStatus(data, list);
             return;
         }
-        var signature = trafficRenderSignature(list, showRealtime, data, containerMap);
+        var signature = trafficRenderSignature(list, showRealtime, data);
         if (signature === lastTrafficRenderSignature) {
             updateTrafficStatus(data, list);
             return;
@@ -243,7 +242,7 @@ function initAppTraffic() {
             list.forEach(function (item, index) {
                 var row = existingRows.get(trafficRowKey(item, index));
                 if (!row) row = createTrafficRow(item, showRealtime);
-                updateTrafficRow(row, item, showRealtime, data, containerMap, index);
+                updateTrafficRow(row, item, showRealtime, data, index);
                 fragment.appendChild(row);
             });
             tbody.replaceChildren(fragment);
@@ -277,9 +276,6 @@ function initAppTraffic() {
         });
         if (!silent) document.getElementById('app-traffic-section')?.setAttribute('aria-busy', 'true');
         try {
-            if ((options.refreshContainers || !latestTrafficData) && window.__app.fetchContainers) {
-                await window.__app.fetchContainers().catch(function () {});
-            }
             var trafficData = await netwatchGet('/api/v1/network/app-traffic');
             renderTraffic(trafficData, { realtimeOnly: silent });
         } catch (e) {
@@ -306,7 +302,8 @@ function initAppTraffic() {
         NetwatchShared.unlockModalScroll();
     };
     var openLimit = function (item) {
-        if (!item || !item.app_id || !limitWindow) return;
+        var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+        if (!item || !item.app_id || capabilities.upload_limit !== true || capabilities.download_limit !== true || !limitWindow) return;
         activeMenuAppID = '';
         activeLimitAppID = item.app_id;
         if (latestTrafficData) renderTraffic(latestTrafficData);
@@ -342,7 +339,7 @@ function initAppTraffic() {
                 await appTrafficSetInternetAccess(item, action.dataset.networkState === 'restore');
                 NetwatchShared.showToast(i18n('app_traffic_network_updated'), 'success');
                 activeMenuAppID = '';
-                await load({ refreshContainers: true });
+                await load();
             } catch (error) {
                 NetwatchShared.showToast(i18n('operation_failed') + ': ' + (error.message || ''), 'error');
                 action.disabled = false;
@@ -371,7 +368,7 @@ function initAppTraffic() {
         var submit = limitForm.querySelector('[type="submit"]');
         if (submit) submit.disabled = true;
         try {
-            await netwatchPost('/api/v1/network/app-traffic/limit', {
+            await netwatchPost('/api/v1/network/app-policy', {
                 app_id: activeLimitAppID,
                 upload_kbps: Math.round(upload * 1000),
                 download_kbps: Math.round(download * 1000)
@@ -418,7 +415,7 @@ function initAppTraffic() {
         });
     });
     updateSortHeaders();
-    if (btn) btn.addEventListener('click', function () { load({ refreshContainers: true }); });
+    if (btn) btn.addEventListener('click', function () { load(); });
     window.__app.updateAppTrafficRealtime = function () {
         if (state.appTrafficRealtimeTimer) {
             clearInterval(state.appTrafficRealtimeTimer);
@@ -434,7 +431,7 @@ function initAppTraffic() {
         if (!document.hidden && state.settings.app_traffic_realtime_enabled !== false) load({ silent: true });
     });
     window.__app.updateAppTrafficRealtime();
-    load({ refreshContainers: true });
+    load();
 
 }
 
@@ -456,21 +453,6 @@ function formatAppTrafficLimit(kbps) {
     return mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1).replace(/\.0$/, '');
 }
 
-function appTrafficContainerMap() {
-    var map = {};
-    if (!window.__app.lastContainerData || !Array.isArray(window.__app.lastContainerData.applications)) return map;
-    window.__app.lastContainerData.applications.forEach(function (app) {
-        if (app && app.bridge) map[app.bridge] = app.block_mode || '';
-    });
-    return map;
-}
-
-function appTrafficControllableBridges(item) {
-    return (Array.isArray(item && item.bridges) ? item.bridges : []).filter(function (bridge) {
-        return String(bridge).indexOf('lzc-br-') === 0;
-    });
-}
-
 function appTrafficCompactStatusLabel(key, zhFallback, enFallback) {
     var value = i18n(key);
     if (!value || value === key) {
@@ -480,22 +462,25 @@ function appTrafficCompactStatusLabel(key, zhFallback, enFallback) {
     return value;
 }
 
-function appTrafficControlStatusMarkup(item, containerMap) {
+function appTrafficControlStatusMarkup(item) {
     var parts = [];
     var limit = item && item.limit || {};
     var uploadLimit = appTrafficNumber(limit.upload_kbps);
     var downloadLimit = appTrafficNumber(limit.download_kbps);
-    if (uploadLimit > 0 || downloadLimit > 0) {
+    var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+    var policy = item && item.network_policy || {};
+    if ((uploadLimit > 0 || downloadLimit > 0) && capabilities.upload_limit === true && capabilities.download_limit === true) {
         var limitValues = [];
         if (uploadLimit > 0) limitValues.push('↑ ' + formatAppTrafficLimit(uploadLimit));
         if (downloadLimit > 0) limitValues.push('↓ ' + formatAppTrafficLimit(downloadLimit));
         var limitStatusLabel = appTrafficCompactStatusLabel('app_traffic_limit_status', '限速', 'Limited');
-        parts.push('<span class="app-control-status app-control-status-limit" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_limit')) + '">' +
+        var limitInSync = policy.limit_in_sync !== false;
+        var limitTitle = limitInSync ? i18n('app_traffic_limit') : (policy.diagnostic || i18n('app_traffic_limit'));
+        parts.push('<span class="app-control-status app-control-status-limit' + (limitInSync ? '' : ' app-control-status--drifted') + '" title="' + NetwatchShared.escapeHtml(limitTitle) + '">' +
             '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(limitStatusLabel) + '</span></span>' +
             '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
     }
-    var bridges = appTrafficControllableBridges(item);
-    var blocked = bridges.some(function (bridge) { return !!(containerMap && containerMap[bridge]); });
+    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
     if (blocked) {
         var blockedStatusLabel = appTrafficCompactStatusLabel('app_traffic_internet_disabled_status', '禁用外网', 'Internet blocked');
         parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
@@ -504,34 +489,38 @@ function appTrafficControlStatusMarkup(item, containerMap) {
     return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
 }
 
-function appTrafficMoreMenu(item, limitSupported, containerMap, activeAppID) {
+function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var appID = item && item.app_id;
     if (!appID) return '';
-    var bridges = appTrafficControllableBridges(item);
-    var blocked = bridges.some(function (bridge) { return !!containerMap[bridge]; });
+    var policy = item.network_policy || {};
+    var capabilities = policy.capabilities || {};
+    var limitAllowed = capabilities.upload_limit === true && capabilities.download_limit === true;
+    var internetAllowed = capabilities.internet_control === true;
+    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
     var open = activeAppID === appID;
     var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
-    if (!limitSupported && !bridges.length) return '';
+    if (!limitAllowed && !internetAllowed) return '';
     if (!open) return '<div class="app-traffic-action-menu">' + menu + '</div>';
     var panel = '<div class="app-traffic-more-panel" role="menu">';
-    if (limitSupported) {
+    // Host-network shaping is intentionally not exposed yet. The experimental
+    // switch enables mutating controls; read-only accounting is always active.
+    if (limitSupported && limitAllowed) {
         panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
     }
-    if (bridges.length) {
-        if (limitSupported) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
+    if (internetAllowed) {
+        if (limitSupported && limitAllowed) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
         panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
     return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
 }
 
 async function appTrafficSetInternetAccess(item, restore) {
-    var bridges = appTrafficControllableBridges(item);
-    if (!bridges.length) throw new Error('no controllable bridge');
-    for (var index = 0; index < bridges.length; index++) {
-        var path = restore ? '/api/v1/containers/unblock' : '/api/v1/containers/block';
-        var payload = restore ? { bridge: bridges[index] } : { bridge: bridges[index], mode: 'internet' };
-        await netwatchPost(path, payload);
-    }
+    var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+    if (!item || !item.app_id || capabilities.internet_control !== true) throw new Error('internet control is not allowed');
+    await netwatchPost('/api/v1/network/app-policy', {
+        app_id: item.app_id,
+        internet_allowed: restore === true
+    });
 }
 
 function appTrafficDualValue(upload, download, rate) {

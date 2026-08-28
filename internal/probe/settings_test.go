@@ -19,6 +19,9 @@ func TestDefaultMutableSettingsStableCore(t *testing.T) {
 	if !def.AppTrafficRealtimeEnabled {
 		t.Fatal("app traffic realtime refresh must default to enabled")
 	}
+	if def.HostNetworkExperimentalEnabled {
+		t.Fatal("host network experimental controls must default to disabled")
+	}
 }
 
 func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
@@ -54,6 +57,9 @@ func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
 	}
 	if got.AppTrafficRealtimeEnabled != def.AppTrafficRealtimeEnabled {
 		t.Fatalf("AppTrafficRealtimeEnabled=%t want %t", got.AppTrafficRealtimeEnabled, def.AppTrafficRealtimeEnabled)
+	}
+	if got.HostNetworkExperimentalEnabled != def.HostNetworkExperimentalEnabled {
+		t.Fatalf("HostNetworkExperimentalEnabled=%t want %t", got.HostNetworkExperimentalEnabled, def.HostNetworkExperimentalEnabled)
 	}
 }
 

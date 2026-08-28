@@ -3419,6 +3419,11 @@ button.icon-button,
             background: color-mix(in srgb, var(--danger) 9%, transparent);
             color: var(--danger);
         }
+        .app-control-status--drifted .app-control-status-label {
+            border-color: color-mix(in srgb, var(--warning, #d97706) 48%, var(--border-color));
+            background: color-mix(in srgb, var(--warning, #d97706) 10%, transparent);
+            color: var(--warning, #d97706);
+        }
 
         /* Secondary pages use the dashboard header geometry as their baseline. */
         .traffic-page > header.traffic-topbar,

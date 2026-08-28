@@ -325,6 +325,12 @@ function bindControls() {
         });
     }
 
+    if (els.settingHostNetworkExperimentalEnabled) {
+        els.settingHostNetworkExperimentalEnabled.addEventListener('change', function () {
+            state.settings.host_network_experimental_enabled = !!els.settingHostNetworkExperimentalEnabled.checked;
+        });
+    }
+
     if (els.settingBackgroundMonitorEnabled) {
         els.settingBackgroundMonitorEnabled.addEventListener('change', function () {
             state.settings.background_monitor_enabled = !!els.settingBackgroundMonitorEnabled.checked;

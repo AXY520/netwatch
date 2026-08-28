@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Netwatch 应用流量与网络控制实现说明</title>
+  <style>
+    :root { --bg:#f5f7fb; --panel:#fff; --text:#20242b; --muted:#667085; --line:#e5e7eb; --blue:#2563eb; --orange:#b45309; --red:#b42318; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    main { width:min(1120px,calc(100% - 32px)); margin:32px auto 64px; }
+    header, section { background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 4px 16px rgba(16,24,40,.05); }
+    header { padding:32px 36px; margin-bottom:20px; }
+    section { padding:28px 32px; margin:20px 0; }
+    h1,h2,h3 { line-height:1.3; margin:0 0 14px; }
+    h1 { font-size:30px; letter-spacing:.01em; }
+    h2 { font-size:22px; border-bottom:1px solid var(--line); padding-bottom:10px; }
+    h3 { font-size:17px; margin-top:24px; }
+    p { margin:10px 0; }
+    .lead { color:var(--muted); font-size:16px; }
+    .meta { color:var(--muted); font-size:13px; margin-top:12px; }
+    code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace; }
+    code { background:#f1f5f9; border-radius:4px; padding:1px 5px; font-size:.92em; }
+    pre { overflow:auto; background:#111827; color:#e5e7eb; border-radius:8px; padding:16px; font-size:13px; line-height:1.55; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    th,td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:10px 12px; }
+    th { background:#f8fafc; font-weight:600; }
+    .tag { display:inline-block; border-radius:999px; padding:2px 9px; font-size:12px; line-height:1.5; background:#eef2ff; color:#3730a3; white-space:nowrap; }
+    .ok { color:#027a48; font-weight:600; }
+    .warn { color:var(--orange); font-weight:600; }
+    .danger { color:var(--red); font-weight:600; }
+    .flow { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0; }
+    .flow div { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fafafa; }
+    .flow strong { display:block; color:var(--blue); margin-bottom:4px; }
+    .note { border-left:4px solid var(--blue); background:#eff6ff; padding:12px 16px; margin:16px 0; }
+    .warning { border-left-color:#f59e0b; background:#fffbeb; }
+    ul { margin:8px 0 12px 22px; padding:0; }
+    li { margin:4px 0; }
+    footer { color:var(--muted); text-align:center; font-size:13px; margin-top:28px; }
+    @media (max-width:760px) { main { width:calc(100% - 20px); margin:12px auto 32px; } header,section { padding:20px; } h1 { font-size:24px; } .flow { grid-template-columns:1fr 1fr; } th,td { padding:8px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Netwatch 应用流量与网络控制实现说明</h1>
+    <p class="lead">本文描述当前代码中“应用流量统计、限制网速、禁用外网”三个功能的统一控制模型、数据流、适用范围和限制。文档以当前分支代码为准。</p>
+    <p class="meta">适用代码：<code>internal/probe/apptraffic.go</code>、<code>app_traffic_state.go</code>、<code>app_traffic_limit.go</code>、<code>control_ops.go</code>、<code>hostnet_bpf.go</code>、<code>hostnet_control.go</code></p>
+  </header>
+
+  <section>
+    <h2>一、先看拓扑</h2>
+    <div class="flow">
+      <div><strong>Docker discovery</strong>发现运行中的应用、容器和网络元数据</div>
+      <div><strong>AppNetworkTarget</strong>把网桥或 cgroup 统一成控制目标</div>
+      <div><strong>AppNetworkPolicy</strong>以应用 ID 表达限速和外网策略</div>
+      <div><strong>Driver</strong>按目标类型调用宿主机 tc、iptables 或 eBPF</div>
+    </div>
+    <p>统一的是应用级 API、策略、能力和事务边界，不强行要求 Bridge 与 Host 使用同一种内核技术。Docker socket 是发现和生命周期控制面，不会直接提供 tc/eBPF/iptables 能力。</p>
+    <table>
+      <thead><tr><th>应用网络模式</th><th>流量统计</th><th>限制网速</th><th>禁用外网</th><th>控制目标</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag">Bridge</span></td><td class="ok">支持</td><td class="ok">支持</td><td class="ok">支持</td><td><code>lzc-br-*</code> 网桥</td></tr>
+        <tr><td><span class="tag">Host</span></td><td>尝试使用 cgroup eBPF</td><td class="warn">驱动预留，尚未实现</td><td>实验性开关开启后支持</td><td><code>host-app:&lt;app_id&gt;</code> 对应 cgroup</td></tr>
+        <tr><td><span class="tag">Mixed</span></td><td>Bridge + Host 分别统计后按应用聚合</td><td class="warn">驱动预留，尚未实现</td><td>Bridge、Host 目标分别控制</td><td>网桥和 Host cgroup 两类目标</td></tr>
+      </tbody>
+    </table>
+    <div class="note warning"><strong>重要：</strong>Host 网络实验性开关只控制 Host 应用的变更型操作。流量统计是只读操作，设计上始终尝试执行；开关关闭时，Host 应用的限速和禁用外网按钮应不可用。</div>
+  </section>
+
+  <section>
+    <h2>二、应用流量统计</h2>
+    <h3>2.1 Bridge 应用：读取 Linux 网桥累计计数</h3>
+    <p>Bridge driver 枚举当前网络命名空间中的 <code>lzc-br-*</code> 网桥，并读取：</p>
+    <pre>/sys/class/net/&lt;bridge&gt;/statistics/rx_bytes
+/sys/class/net/&lt;bridge&gt;/statistics/tx_bytes
+/sys/class/net/&lt;bridge&gt;/statistics/rx_packets
+/sys/class/net/&lt;bridge&gt;/statistics/tx_packets
+/sys/class/net/&lt;bridge&gt;/statistics/rx_errors
+/sys/class/net/&lt;bridge&gt;/statistics/tx_errors
+/sys/class/net/&lt;bridge&gt;/statistics/rx_dropped
+/sys/class/net/&lt;bridge&gt;/statistics/tx_dropped</pre>
+    <p>Docker socket 只负责把网桥、Compose project、应用 ID、容器数量和标题关联起来，不提供流量计数。网桥计数是内核累计值，网桥被删除或重建后会归零。</p>
+    <p>在当前应用语义中，网桥 <code>rx_bytes</code> 被作为应用上传计数，<code>tx_bytes</code> 被作为应用下载计数：</p>
+    <div class="flow">
+      <div><strong>应用容器</strong>产生网络包</div>
+      <div><strong>lzc-br-*</strong>网桥累计计数</div>
+      <div><strong>Netwatch</strong>读取 sysfs</div>
+      <div><strong>应用 ID</strong>聚合展示</div>
+    </div>
+
+    <h3>2.2 Host 应用：按容器 cgroup 统计</h3>
+    <p>Host driver 不能从 <code>lzc-br-*</code> 计数中得到 Host 容器自己的流量，因此代码创建两个 <code>cgroup_skb</code> eBPF 程序：</p>
+    <ul>
+      <li>ingress 程序写入 RX map；egress 程序写入 TX map。</li>
+      <li>map 的 key 是 cgroup ID，value 是字节数和包数。</li>
+      <li>程序首次读取 Host 容器时附着到该容器 cgroup，之后按 map 读取累计值。</li>
+      <li>collector 为每个 Host 容器输出独立计数记录，不在读取阶段提前按应用求和；状态层按 cgroup 路径维护独立 baseline 后再聚合。</li>
+      <li>两个计数 map 优先 pin 到宿主机 bpffs 的 <code>netwatch/</code> 目录；Netwatch 重启后会重新加载同一 map，内核累计计数可继续使用。程序和 cgroup attachment 仍由当前进程管理，服务退出后会自动解除。</li>
+    </ul>
+    <p>cgroup 路径按以下顺序解析并验证：Docker inspect 字段、宿主机 <code>/host/proc/&lt;PID&gt;/cgroup</code>、懒猫 systemd cgroup 结构。若加载、附着或读取失败，快照应携带具体诊断。</p>
+    <div class="note warning"><strong>当前状态：</strong>Host eBPF 依赖宿主机 cgroup v2、容器 PID/挂载、BPF 权限和内核支持。任何一项不满足都会导致 Host 统计不可用，但不影响 Bridge 统计。若 bpffs 可见但不可写，统计仍会使用临时 map，并在 diagnostic 中明确提示重启会重置计数。Host 统计不是 Docker 网桥统计的“另一份数据”，两者来源不同。</div>
+
+    <h3>2.3 采样、速率和历史</h3>
+    <ul>
+      <li>采样目标间隔约 2 秒；重复调用在半个采样间隔内会被跳过。</li>
+      <li>每个独立内核计数源保存上一次计数作为 baseline：Bridge 使用网桥名，Host 使用容器 cgroup 路径。只累加正向差值；网桥/cgroup 重建或计数回退时只重建对应来源的 baseline。</li>
+      <li>同一应用的多个网桥、多个容器按 <code>app_id</code> 聚合。</li>
+      <li>实时速率 = 本次正向字节差 / 两次采样间隔，单位为 B/s；没有有效间隔时速率为 0。</li>
+      <li>今日、本月流量按每日记录汇总；应用级历史和 baseline 持久化到 <code>app_traffic_history.json</code>。</li>
+      <li>应用列表只展示当前仍有运行容器的应用，删除或停止的应用不会继续作为活动条目展示。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>三、限制网速</h2>
+    <h3>3.1 当前支持范围</h3>
+    <p>当前真正可用的是纯 Bridge 应用。统一 Controller 会展开该应用所有活动的目标，并要求每个需要限速的目标都支持且成功配置后才保存应用级限速状态。Host 和 Mixed 的限速驱动已在模型中预留但尚未实现，因此当前明确拒绝，避免只限制一部分流量造成误导或破坏应用网络。</p>
+
+    <h3>3.2 Bridge driver 的 tc 执行位置</h3>
+    <table>
+      <thead><tr><th>方向</th><th>规则</th><th>作用</th></tr></thead>
+      <tbody>
+        <tr><td>下载</td><td>网桥 root qdisc：<code>tbf</code>，固定句柄 <code>194:</code></td><td>限制网桥发出的流量；rate 使用用户输入的 Kbit/s，burst 按约 100ms 计算，latency 为 50ms。</td></tr>
+        <tr><td>上传</td><td>网桥 ingress <code>clsact</code> 下的 <code>matchall + police</code></td><td>对进入网桥的流量执行限速；Netwatch 保留优先级 <code>49152</code>。</td></tr>
+        <tr><td>局域网例外</td><td>优先级 <code>49140</code> 至 <code>49144</code> 的 flower pass 规则</td><td>让 RFC1918、IPv6 ULA 和链路本地地址不受上传公网限速规则影响。</td></tr>
+      </tbody>
+    </table>
+    <p>tc 命令来自宿主机，而不是 scratch 镜像内部：Netwatch 通过 <code>nsenter -t 1 -m -n -r</code> 进入宿主机的 mount/network namespace，并调用宿主机上的 <code>tc</code>。</p>
+    <p class="danger"><strong>安全边界：</strong>下载限速会替换网桥 root qdisc，因此检测到非 Netwatch 管理的 root qdisc 时会拒绝操作，避免覆盖其他网络组件。</p>
+
+    <h3>3.3 修改、取消和恢复</h3>
+    <ul>
+      <li>限速值只有在所有活动网桥的 tc 操作成功后才写入持久化状态。</li>
+      <li>修改限速时先清理 Netwatch 自有上传 filter，再建立新规则。</li>
+      <li>取消限速时删除 root TBF 和上传 filter；不存在的 qdisc/filter 被视为已清理，操作是幂等的。</li>
+      <li>后台每约 2 秒 reconcile 一次持久化限速，并与手动限速操作串行化，避免取消操作被旧状态重新覆盖。</li>
+      <li>限速器区分三种状态：持久化的 <code>desired</code>、最近一次 tc 接受的 <code>applied</code>、实际核验结果 <code>in_sync</code>。内存中的 applied 只用于回滚，不能证明内核规则仍然存在。</li>
+      <li>首次发现网桥和策略变化时立即读取 tc；稳定状态下约每 20 秒核验一次 root TBF、ingress police、局域网 bypass filter 及 <code>conform-exceed drop/ok</code>。规则缺失、速率不一致或网桥同名重建时会自动重建。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>四、禁用外网</h2>
+    <h3>4.1 Bridge driver</h3>
+    <p>Bridge driver 使用宿主机 Netwatch 自有双缓冲 chain，并由 <code>FORWARD</code> 链跳转到当前活动 chain：</p>
+    <pre>-I FORWARD -i lzc-br-&lt;id&gt; -j DROP
+-I FORWARD -i lzc-br-&lt;id&gt; -d 10.0.0.0/8 -j ACCEPT
+-I FORWARD -i lzc-br-&lt;id&gt; -d 172.16.0.0/12 -j ACCEPT
+-I FORWARD -i lzc-br-&lt;id&gt; -d 192.168.0.0/16 -j ACCEPT</pre>
+    <p>IPv6 同样允许 <code>fc00::/7</code> 和 <code>fe80::/10</code>，其余转发流量丢弃。由于每次插入 ACCEPT 都放在链首，局域网例外会先于 catch-all DROP 生效。</p>
+    <p>规则写入宿主机的 Netwatch 自有双缓冲 chain，并由 <code>FORWARD</code> 链跳转到当前活动 chain。iptables 操作失败时不再删除容器默认路由，避免无法可靠恢复的隐式断网。</p>
+
+    <h3>4.2 Host cgroup driver</h3>
+    <p>Host 模式没有独立网桥，代码使用 iptables 的 cgroup match，在宿主机 <code>OUTPUT</code> 链按应用 cgroup 路径匹配：</p>
+    <pre>-I OUTPUT -m cgroup --path &lt;app-cgroup-path&gt; -j DROP
+-I OUTPUT -m cgroup --path &lt;app-cgroup-path&gt; -d 10.0.0.0/8 -j ACCEPT
+...（其余私有网段、IPv6 本地网段）</pre>
+    <p>Host 模式只支持“禁用外网”，不支持“禁用全部网络”；使用 Netwatch 自有 <code>NETWATCH-OUT-A/B</code> chain，在 <code>OUTPUT</code> 链按应用 cgroup 路径匹配。Host 控制使用的是应用级 cgroup 父 slice，因此同一应用的多个 Host 容器会一起受到控制。</p>
+
+    <h3>4.3 状态保存与实验开关</h3>
+    <ul>
+      <li>禁用状态权威保存在 <code>BlockedApps</code>，key 是 <code>app_id</code>；旧版本的 <code>BlockedBridges</code> 目标 ID 只作为迁移来源。</li>
+      <li>Host 控制要求“Host 网络控制（实验性）”开启；关闭开关时会尝试清理 Host cgroup iptables 规则并移除 Host 控制状态。</li>
+      <li>白名单系统应用不能执行禁用外网或限速。</li>
+      <li>Controller 负责策略事务和失败回滚；防火墙 driver 使用 Netwatch 自有双缓冲 chain，在应用生命周期、服务启动和周期 reconcile 时重建规则。网桥重建后会按 <code>app_id</code> 把禁网策略重新展开到新目标。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>五、API 与前端调用关系</h2>
+    <table>
+      <thead><tr><th>接口</th><th>用途</th><th>核心实现</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/v1/network/app-traffic</code></td><td>获取统计、实时速率、历史汇总和控制能力</td><td><code>Service.AppTrafficSnapshot</code></td></tr>
+        <tr><td><code>POST /api/v1/network/app-traffic/limit</code></td><td>设置上传/下载 Kbit/s；0 表示该方向不限速</td><td><code>Service.SetAppTrafficLimit</code></td></tr>
+        <tr><td><code>POST /api/v1/network/app-policy</code></td><td>按应用原子更新限速和外网策略；字段可部分提交</td><td><code>Service.UpdateAppNetworkPolicy</code> → <code>AppNetworkController</code></td></tr>
+        <tr><td><code>GET /api/v1/containers</code></td><td>兼容旧客户端的容器和目标信息</td><td><code>Service.ListContainers</code></td></tr>
+        <tr><td><code>POST /api/v1/containers/block</code> / <code>unblock</code></td><td>兼容旧客户端，内部转换为统一目标控制</td><td><code>Service.BlockApp</code> / <code>UnblockApp</code></td></tr>
+      </tbody>
+    </table>
+    <p><code>app-policy</code> 使用字段级更新语义：只提交限速字段时不会触碰外网规则，只提交 <code>internet_allowed</code> 时也不会重建 tc。应用包含多个目标时，Controller 先完成能力检查，再逐目标执行；任一目标失败会按相反顺序回滚已执行目标，持久化只发生在内核操作成功之后。快照中的 <code>network_policy.limit_in_sync</code>、<code>limit_state</code> 和 <code>diagnostic</code> 表示最近一次内核核验结果，不能用持久化限速值替代。</p>
+    <p>前端的“应用流量实时刷新”只影响页面是否显示并刷新实时速率列，不改变后台采样器；后台生命周期观察器仍会定期采样并维护历史、限速 reconcile。</p>
+  </section>
+
+  <section>
+    <h2>六、已知限制与排障重点</h2>
+    <ul>
+      <li><strong>禁网状态不一致：</strong>先看 <code>network_policy.internet_in_sync</code> 和目标 diagnostic，再检查 Netwatch 自有 chain 是否存在；不要只看持久化的期望状态。</li>
+      <li><strong>限速状态不一致：</strong>先看 <code>network_policy.limit_in_sync</code>；<code>limit_state=drifted</code> 表示期望限速仍在，但实际 qdisc/filter 缺失或速率不一致。后台会自动修复，连续失败时 diagnostic 保留最近错误。</li>
+      <li><strong>Host 统计不可用：</strong>先看快照中的具体 diagnostic，确认 cgroup v2、宿主机 proc/cgroup 挂载、BPF capability、程序加载和附着错误。Host 统计按每个容器 cgroup 独立读取和维护 baseline，再按 <code>app_id</code> 聚合；一个 cgroup 重启归零不会重置同应用其他容器的增量。</li>
+      <li><strong>限速后应用断网：</strong>检查网桥 ingress police 的动作顺序必须是 <code>conform-exceed drop/ok</code>；正常包应放行，超限包才丢弃。</li>
+      <li><strong>取消后仍受限：</strong>检查 root TBF <code>194:</code> 和 ingress 优先级 <code>49140-49144/49152</code> 是否残留，并确认后台 reconcile 没有重新读取旧的持久化状态。</li>
+      <li><strong>网桥统计不是应用精确进程统计：</strong>Bridge 模式下它统计的是整个应用网桥的内核计数；同一 Compose project 的多个容器可能汇总到一个应用。</li>
+      <li><strong>Host 与 Bridge 混合应用：</strong>统计可以聚合；Host 统计按容器 cgroup、Bridge 统计按网桥分别采样后汇总到应用。统一策略会展开所有目标，当前限速因 Host driver 未实现而明确禁止，禁用外网则分别调用 Bridge 和 Host driver。</li>
+      <li><strong>重启影响：</strong>Bridge sysfs 计数由内核维护，网桥重建会归零；Host eBPF map 优先持久化到 bpffs，服务重启后会复用 map。由于 cgroup attachment 由进程管理，Netwatch 完全停止期间不会产生新的 Host 统计，但已累计的 map 数据不会丢失。若宿主机不允许 pin，则 diagnostic 会提示计数将在 Netwatch 重启时重置。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>七、后续 Host 限速需要解决什么</h2>
+    <p>不能把 Bridge 的 root TBF 方案直接套到 Host 容器，因为 Host 容器共享宿主机网络命名空间，没有独立的应用网桥可塑形。Host driver 后续必须以容器 cgroup、进程级 socket 标记或 eBPF/tc cgroup hook 为目标，并同时处理：</p>
+    <ul>
+      <li>同一应用多个 Host 容器和 Bridge 容器的混合归属；</li>
+      <li>上传、下载方向的准确划分；</li>
+      <li>不影响宿主机其他进程和懒猫系统服务；</li>
+      <li>应用重启、cgroup 重建、规则清理和失败回滚；</li>
+      <li>限速失败时不能留下会导致应用完全断网的半成品规则。</li>
+    </ul>
+    <div class="note"><strong>结论：</strong>当前统一模型的边界是：所有活动应用都按 <code>app_id</code> 聚合展示；Bridge 统计使用网桥计数，Host 统计使用每容器 cgroup 计数并在应用层汇总。Bridge 应用可统计、可限速、可禁用外网；Host 应用始终尝试统计，禁用外网属于实验性能力；Host/Mixed 限速 API 和驱动已预留但暂不开放。</div>
+  </section>
+
+  <footer>Netwatch · 应用流量与网络控制实现说明</footer>
+</main>
+</body>
+</html>

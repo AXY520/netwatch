@@ -46,6 +46,7 @@ func DefaultMutableSettings() MutableSettings {
 		LANDeviceAutoRemoveDays:        30,
 		ChartTimeLabelInterval:         0,
 		AppTrafficRealtimeEnabled:      true,
+		HostNetworkExperimentalEnabled: false,
 	}
 }
 
@@ -137,6 +138,9 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	}
 	if _, ok := raw["app_traffic_realtime_enabled"]; !ok {
 		s.AppTrafficRealtimeEnabled = def.AppTrafficRealtimeEnabled
+	}
+	if _, ok := raw["host_network_experimental_enabled"]; !ok {
+		s.HostNetworkExperimentalEnabled = def.HostNetworkExperimentalEnabled
 	}
 	return s, true
 }

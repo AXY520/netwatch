@@ -124,6 +124,10 @@ type MutableSettings struct {
 	// Traffic chart settings
 	ChartTimeLabelInterval    int  `json:"chart_time_label_interval"`
 	AppTrafficRealtimeEnabled bool `json:"app_traffic_realtime_enabled"`
+	// HostNetworkExperimentalEnabled gates mutating controls for applications
+	// containing Host-network containers. Read-only traffic accounting remains
+	// enabled because it does not alter the host networking configuration.
+	HostNetworkExperimentalEnabled bool `json:"host_network_experimental_enabled"`
 
 	// Collapsed dashboard panels, persisted server-side for all clients.
 	DashboardCollapsedSections []string `json:"dashboard_collapsed_sections,omitempty"`
@@ -131,8 +135,10 @@ type MutableSettings struct {
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
 
-	// Container network block state (bridge → mode)
-	BlockedBridges map[string]string `json:"blocked_bridges,omitempty"` // bridge name → "internet" | "all"
+	// Application network policy. BlockedApps is authoritative; BlockedBridges
+	// remains a read-time migration source for releases that persisted target IDs.
+	BlockedApps    map[string]string `json:"blocked_apps,omitempty"`    // app_id → "internet"
+	BlockedBridges map[string]string `json:"blocked_bridges,omitempty"` // legacy target → "internet" | "all"
 }
 
 // ContainerRuntimeInfo is the frontend-facing container info.
@@ -143,14 +149,16 @@ type ContainerRuntimeInfo struct {
 	State string `json:"state"`
 }
 
-// AppContainerGroup groups containers by app (bridge).
+// AppContainerGroup groups containers by app and exposes the network targets
+// that can be controlled for that app (bridge and, when enabled, host cgroup).
 type AppContainerGroup struct {
-	Bridge     string                 `json:"bridge"`
-	AppID      string                 `json:"app_id,omitempty"`
-	AppTitle   string                 `json:"app_title,omitempty"`
-	Project    string                 `json:"project,omitempty"`
-	BlockMode  string                 `json:"block_mode"` // "" | "internet" | "all"
-	Containers []ContainerRuntimeInfo `json:"containers"`
+	Bridge         string                 `json:"bridge"`
+	ControlTargets []string               `json:"control_targets,omitempty"`
+	AppID          string                 `json:"app_id,omitempty"`
+	AppTitle       string                 `json:"app_title,omitempty"`
+	Project        string                 `json:"project,omitempty"`
+	BlockMode      string                 `json:"block_mode"` // "" | "internet" | "all"
+	Containers     []ContainerRuntimeInfo `json:"containers"`
 }
 
 // AppContainersResponse is the top-level response for GET /api/v1/containers.

@@ -49,3 +49,29 @@ func (h *Handler) handleAppTrafficLimit(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID), "upload_kbps": request.UploadKbps, "download_kbps": request.DownloadKbps})
 }
+
+func (h *Handler) handleAppNetworkPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var request struct {
+		AppID           string `json:"app_id"`
+		UploadKbps      *int64 `json:"upload_kbps"`
+		DownloadKbps    *int64 `json:"download_kbps"`
+		InternetAllowed *bool  `json:"internet_allowed"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if strings.TrimSpace(request.AppID) == "" || (request.UploadKbps == nil && request.DownloadKbps == nil && request.InternetAllowed == nil) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app_id and at least one policy field are required"})
+		return
+	}
+	if err := h.service.UpdateAppNetworkPolicy(r.Context(), request.AppID, request.UploadKbps, request.DownloadKbps, request.InternetAllowed); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID)})
+}

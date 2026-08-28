@@ -57,35 +57,42 @@ func sanitizeIconURL(raw, boxDomain string) string {
 // "this application's traffic". These are host-bridge directions: RX is traffic
 // entering the host bridge from app containers (application upload), while TX
 // is traffic sent from the host bridge to app containers (application download).
-// Host-network-mode app services bypass the bridge entirely and aren't counted.
+// Host-network-mode app services bypass the bridge entirely. They are counted
+// separately through the cgroup eBPF collector.
 type AppBridgeStats struct {
-	Bridge             string `json:"bridge"`
-	AppID              string `json:"app_id,omitempty"`
-	AppTitle           string `json:"app_title,omitempty"`
-	Project            string `json:"project,omitempty"`
-	SubnetV4           string `json:"subnet_v4,omitempty"`
-	SubnetV6           string `json:"subnet_v6,omitempty"`
-	RxBytes            uint64 `json:"rx_bytes"`
-	TxBytes            uint64 `json:"tx_bytes"`
-	UploadBytes        uint64 `json:"upload_bytes"`
-	DownloadBytes      uint64 `json:"download_bytes"`
-	RxPackets          uint64 `json:"rx_packets"`
-	TxPackets          uint64 `json:"tx_packets"`
-	RxErrors           uint64 `json:"rx_errors"`
-	TxErrors           uint64 `json:"tx_errors"`
-	RxDropped          uint64 `json:"rx_dropped"`
-	TxDropped          uint64 `json:"tx_dropped"`
-	ContainerCount     int    `json:"container_count,omitempty"`
-	RunningCount       int    `json:"running_count,omitempty"`
-	Domain             string `json:"domain,omitempty"`
-	Icon               string `json:"icon,omitempty"`
-	StatusText         string `json:"status_text,omitempty"`
-	CreatedAt          int64  `json:"created_at,omitempty"`
-	SampledAt          string `json:"sampled_at"`
-	AgeSeconds         int64  `json:"age_seconds"`
-	Stale              bool   `json:"stale"`
-	CounterPerspective string `json:"counter_perspective"`
-	Source             string `json:"source"`
+	Bridge             string           `json:"bridge"`
+	AppID              string           `json:"app_id,omitempty"`
+	AppTitle           string           `json:"app_title,omitempty"`
+	Project            string           `json:"project,omitempty"`
+	SubnetV4           string           `json:"subnet_v4,omitempty"`
+	SubnetV6           string           `json:"subnet_v6,omitempty"`
+	RxBytes            uint64           `json:"rx_bytes"`
+	TxBytes            uint64           `json:"tx_bytes"`
+	UploadBytes        uint64           `json:"upload_bytes"`
+	DownloadBytes      uint64           `json:"download_bytes"`
+	RxPackets          uint64           `json:"rx_packets"`
+	TxPackets          uint64           `json:"tx_packets"`
+	RxErrors           uint64           `json:"rx_errors"`
+	TxErrors           uint64           `json:"tx_errors"`
+	RxDropped          uint64           `json:"rx_dropped"`
+	TxDropped          uint64           `json:"tx_dropped"`
+	ContainerCount     int              `json:"container_count,omitempty"`
+	RunningCount       int              `json:"running_count,omitempty"`
+	Domain             string           `json:"domain,omitempty"`
+	Icon               string           `json:"icon,omitempty"`
+	StatusText         string           `json:"status_text,omitempty"`
+	CreatedAt          int64            `json:"created_at,omitempty"`
+	SampledAt          string           `json:"sampled_at"`
+	AgeSeconds         int64            `json:"age_seconds"`
+	Stale              bool             `json:"stale"`
+	CounterPerspective string           `json:"counter_perspective"`
+	Source             string           `json:"source"`
+	NetworkMode        string           `json:"network_mode,omitempty"`
+	CgroupPath         string           `json:"cgroup_path,omitempty"`
+	Experimental       bool             `json:"experimental,omitempty"`
+	ControlTarget      string           `json:"control_target,omitempty"`
+	Diagnostic         string           `json:"diagnostic,omitempty"`
+	Target             AppNetworkTarget `json:"target"`
 }
 
 type AppTrafficSnapshot struct {
@@ -99,11 +106,13 @@ type AppTrafficSnapshot struct {
 }
 
 type appTrafficMetadata struct {
-	bridgeMap   map[string]dockerlzc.BridgeAppInfo
-	appMap      map[string]lzcsdk.AppInfo
-	boxDomain   string
-	localTitles map[string]string
-	localAppIDs []string
+	bridgeMap    map[string]dockerlzc.BridgeAppInfo
+	appMap       map[string]lzcsdk.AppInfo
+	boxDomain    string
+	localTitles  map[string]string
+	localAppIDs  []string
+	hostAppIDs   map[string]bool
+	hostProjects map[string]bool
 }
 
 var appTrafficMetadataCache struct {
@@ -132,6 +141,21 @@ func cachedAppTrafficMetadata() appTrafficMetadata {
 	if dockerlzc.Available() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		metadata.bridgeMap, _ = dockerlzc.BuildBridgeMap(ctx)
+		if containers, err := dockerlzc.ListContainerRuntime(ctx); err == nil {
+			metadata.hostAppIDs = make(map[string]bool)
+			metadata.hostProjects = make(map[string]bool)
+			for _, container := range containers {
+				if !container.Running || container.NetworkMode != "host" {
+					continue
+				}
+				if appID := strings.TrimSpace(container.AppID); appID != "" {
+					metadata.hostAppIDs[appID] = true
+				}
+				if project := strings.TrimSpace(container.Project); project != "" {
+					metadata.hostProjects[project] = true
+				}
+			}
+		}
 		cancel()
 	}
 	if lzcsdk.Available() {
@@ -159,6 +183,9 @@ const (
 )
 
 func finalizeAppBridgeStats(stats *AppBridgeStats, sampledAt string) {
+	if stats.NetworkMode == "" {
+		stats.NetworkMode = "bridge"
+	}
 	stats.UploadBytes = stats.RxBytes
 	stats.DownloadBytes = stats.TxBytes
 	stats.SampledAt = sampledAt
@@ -329,6 +356,10 @@ func filterSupersededAppBridges(items []AppBridgeStats) []AppBridgeStats {
 }
 
 func CollectAppTraffic() AppTrafficSnapshot {
+	return collectAppTraffic()
+}
+
+func collectAppTraffic() AppTrafficSnapshot {
 	sampledAt := localTimestamp()
 	snap := AppTrafficSnapshot{
 		GeneratedAt:        sampledAt,
@@ -413,9 +444,42 @@ func CollectAppTraffic() AppTrafficSnapshot {
 				stats.Icon = "https://" + strings.TrimSuffix(boxDomain, "/") + "/sys/icons/" + stats.AppID + ".png"
 			}
 		}
+		if stats.AppID != "" {
+			stats.Target = AppNetworkTarget{
+				ID: stats.Bridge, Kind: AppNetworkTargetBridge, AppID: stats.AppID,
+				Interface: stats.Bridge, NetworkMode: "bridge", AccountingSource: stats.Source,
+			}
+		}
 		snap.Bridges = append(snap.Bridges, stats)
 	}
 	snap.Bridges = filterSupersededAppBridges(snap.Bridges)
+	hostStats := collectHostNetworkTraffic(metadata)
+	snap.Bridges = append(snap.Bridges, hostStats...)
+	hostStatsAvailable := false
+	hostStatsUnavailable := false
+	for _, item := range hostStats {
+		if item.Source == "cgroup_skb_ebpf" {
+			hostStatsAvailable = true
+		}
+		if item.Source == "cgroup_skb_ebpf_unavailable" {
+			hostStatsUnavailable = true
+		}
+	}
+	if len(hostStats) > 0 {
+		snap.CounterPerspective = "mixed"
+		if hostStatsAvailable {
+			snap.Source = "linux_bridge_sysfs+cgroup_skb_ebpf"
+		} else {
+			snap.Source = "linux_bridge_sysfs+cgroup_skb_ebpf_unavailable"
+		}
+	}
+	if hostStatsUnavailable {
+		diagnostic := hostTrafficDiagnostic(hostStats)
+		if diagnostic == "" {
+			diagnostic = "未获得 eBPF 诊断信息，Host 容器 cgroup 路径解析或初始化未完成"
+		}
+		snap.Note = "Host 模式流量统计不可用：" + diagnostic + "；Bridge 流量统计不受影响。"
+	}
 
 	// 按总流量降序，便于前端排序展示
 	sort.Slice(snap.Bridges, func(i, j int) bool {
@@ -429,6 +493,15 @@ func CollectAppTraffic() AppTrafficSnapshot {
 		snap.Note = "未挂载 lzc-docker socket，仅展示网桥级流量。请检查 lzc-build.yml 的 docker.sock bind"
 	}
 	return snap
+}
+
+func hostTrafficDiagnostic(items []AppBridgeStats) string {
+	for _, item := range items {
+		if item.Source == "cgroup_skb_ebpf_unavailable" && strings.TrimSpace(item.Diagnostic) != "" {
+			return strings.TrimSpace(item.Diagnostic)
+		}
+	}
+	return ""
 }
 
 type bridgeAddrs struct {

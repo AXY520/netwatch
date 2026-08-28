@@ -24,9 +24,10 @@ func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Bridge string `json:"bridge"`
+		AppID  string `json:"app_id"`
 		Mode   string `json:"mode"` // currently only "internet" is supported
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || body.Bridge == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || (body.Bridge == "" && body.AppID == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
@@ -36,6 +37,15 @@ func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
 	}
 	if mode != "internet" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "only mode=internet is supported"})
+		return
+	}
+	if strings.TrimSpace(body.AppID) != "" {
+		if err := h.service.SetAppInternetAccess(r.Context(), body.AppID, false); err != nil {
+			logger.Error("block app %s: %v", body.AppID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
 	if err := h.service.BlockApp(r.Context(), body.Bridge, mode); err != nil {
@@ -53,9 +63,19 @@ func (h *Handler) handleContainerUnblock(w http.ResponseWriter, r *http.Request)
 	}
 	var body struct {
 		Bridge string `json:"bridge"`
+		AppID  string `json:"app_id"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || body.Bridge == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || (body.Bridge == "" && body.AppID == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
+		return
+	}
+	if strings.TrimSpace(body.AppID) != "" {
+		if err := h.service.SetAppInternetAccess(r.Context(), body.AppID, true); err != nil {
+			logger.Error("unblock app %s: %v", body.AppID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
 	if err := h.service.UnblockApp(r.Context(), body.Bridge); err != nil {

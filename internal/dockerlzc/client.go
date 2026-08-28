@@ -228,6 +228,7 @@ type ContainerRuntimeInfo struct {
 	Created     int64             `json:"created,omitempty"`
 	StartedAt   int64             `json:"started_at,omitempty"`
 	NetworkMode string            `json:"network_mode,omitempty"`
+	CgroupPath  string            `json:"cgroup_path,omitempty"`
 	Networks    []string          `json:"networks,omitempty"`
 	PID         int               `json:"pid,omitempty"`
 	Running     bool              `json:"running,omitempty"`
@@ -496,6 +497,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 				info.Networks = append(info.Networks, network)
 			}
 			info.PID = inspect.State.Pid
+			info.CgroupPath = inspect.State.CgroupPath
 			info.Running = inspect.State.Running
 			if inspect.State.Status != "" {
 				info.State = inspect.State.Status
@@ -525,10 +527,11 @@ type containerInspect struct {
 	Name    string `json:"Name"`
 	Created string `json:"Created"`
 	State   struct {
-		Status    string `json:"Status"`
-		Running   bool   `json:"Running"`
-		Pid       int    `json:"Pid"`
-		StartedAt string `json:"StartedAt"`
+		Status     string `json:"Status"`
+		Running    bool   `json:"Running"`
+		Pid        int    `json:"Pid"`
+		StartedAt  string `json:"StartedAt"`
+		CgroupPath string `json:"CgroupPath"`
 	} `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`

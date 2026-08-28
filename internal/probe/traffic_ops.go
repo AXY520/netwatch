@@ -198,17 +198,28 @@ func (s *Service) observeAppTraffic() {
 		s.appTraffic.sample(items, time.Now())
 		s.reconcileAppTrafficLimits(items)
 	}
+	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, s.containers.snapshotBlockedApps())
 }
 
 func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
+	experimentalHost := s.settings.hostNetworkExperimental()
 	snapshot := CollectAppTraffic()
 	if s.appTraffic == nil {
 		return snapshot
 	}
 	s.appTraffic.sample(snapshot.Bridges, time.Now())
 	s.reconcileAppTrafficLimits(snapshot.Bridges)
-	overview := s.appTraffic.overviewForActiveApps(trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges))
+	overview := s.appTraffic.overviewForActiveAppsWithControls(
+		trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges), experimentalHost,
+	)
 	snapshot.Apps = overview.Apps
+	blocked := s.containers.snapshotBlocked()
+	for index := range snapshot.Apps {
+		app := &snapshot.Apps[index]
+		app.NetworkPolicy = s.appNetworkPolicyStatus(*app, blocked)
+		app.TrafficLimitAllowed = app.NetworkPolicy.Capabilities.UploadLimit && app.NetworkPolicy.Capabilities.DownloadLimit
+		app.InternetControlAllowed = app.NetworkPolicy.Capabilities.InternetControl
+	}
 	snapshot.LimitSupport = overview.LimitSupport
 	if snapshot.Note == "" && overview.Note != "" {
 		snapshot.Note = overview.Note
