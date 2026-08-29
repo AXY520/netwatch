@@ -1,9 +1,40 @@
 package probe
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+func TestHostFirewallPathAtAcceptsHostAbsoluteSymlink(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "usr", "sbin", "iptables")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/definitely/missing/netwatch/iptables", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("test requires an absolute symlink unresolved in the test root, stat err=%v", err)
+	}
+	got, ok := hostFirewallPathAt(root, []string{"/usr/sbin/iptables"})
+	if !ok || got != "/usr/sbin/iptables" {
+		t.Fatalf("path=%q ok=%v", got, ok)
+	}
+}
+
+func TestHostFirewallCommandArgsEnterHostCgroupNamespace(t *testing.T) {
+	got := hostFirewallCommandArgs("/usr/sbin/iptables", "-A", "NETWATCH-OUT-A")
+	want := []string{
+		"-t", "1", "-m", "-n", "-C", "-r", "--",
+		"/usr/sbin/iptables", "-w", "5", "-A", "NETWATCH-OUT-A",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("command args=%#v want=%#v", got, want)
+	}
+}
 
 func TestBuildAppFirewallRulesUsesPrivateBypassBeforeDrop(t *testing.T) {
 	v4, v6, err := buildAppFirewallRules([]AppNetworkTarget{{

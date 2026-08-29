@@ -76,8 +76,11 @@ type appNetworkTargetDriver interface {
 }
 
 type appNetworkController struct {
-	mu      sync.Mutex
-	drivers map[AppNetworkTargetKind]appNetworkTargetDriver
+	mu                    sync.Mutex
+	drivers               map[AppNetworkTargetKind]appNetworkTargetDriver
+	internetAvailable     func() bool
+	reconcileInternet     func(context.Context, []AppBridgeStats, map[string]string) error
+	persistInternetPolicy func() error
 }
 
 type bridgeNetworkDriver struct {
@@ -90,10 +93,36 @@ type cgroupNetworkDriver struct {
 }
 
 func newAppNetworkController(service *Service, limiter *appTrafficLimiter) *appNetworkController {
-	return &appNetworkController{drivers: map[AppNetworkTargetKind]appNetworkTargetDriver{
-		AppNetworkTargetBridge: bridgeNetworkDriver{service: service, limiter: limiter},
-		AppNetworkTargetCgroup: cgroupNetworkDriver{service: service},
-	}}
+	controller := &appNetworkController{
+		drivers: map[AppNetworkTargetKind]appNetworkTargetDriver{
+			AppNetworkTargetBridge: bridgeNetworkDriver{service: service, limiter: limiter},
+			AppNetworkTargetCgroup: cgroupNetworkDriver{service: service},
+		},
+		internetAvailable: appFirewallAvailable,
+	}
+	if service != nil {
+		controller.reconcileInternet = service.reconcileAppInternetControls
+		controller.persistInternetPolicy = service.persistBlockedState
+	}
+	return controller
+}
+
+func (c *appNetworkController) canControlInternet() bool {
+	return c != nil && c.internetAvailable != nil && c.internetAvailable()
+}
+
+func (c *appNetworkController) reconcileInternetPolicy(ctx context.Context, items []AppBridgeStats, desired map[string]string) error {
+	if c == nil || c.reconcileInternet == nil {
+		return errors.New("application internet policy reconciler is unavailable")
+	}
+	return c.reconcileInternet(ctx, items, desired)
+}
+
+func (c *appNetworkController) persistInternet() error {
+	if c == nil || c.persistInternetPolicy == nil {
+		return errors.New("application internet policy persistence is unavailable")
+	}
+	return c.persistInternetPolicy()
 }
 
 func (c *appNetworkController) driver(target AppNetworkTarget) (appNetworkTargetDriver, error) {
@@ -247,7 +276,7 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			targetStatus.Diagnostic = err.Error()
 		} else {
 			targetStatus.Capabilities = driver.Capabilities()
-			if !appFirewallAvailable() {
+			if !s.appNetworkController.canControlInternet() {
 				targetStatus.Capabilities.InternetControl = false
 				if targetStatus.Diagnostic == "" {
 					targetStatus.Diagnostic = "宿主机防火墙控制不可用"
@@ -419,19 +448,14 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 
 	previousLimit := s.appTraffic.limitForApp(appID)
 	previousBlockedApps := s.containers.snapshotBlockedApps()
-	type policyTarget struct {
-		target AppNetworkTarget
-		driver appNetworkTargetDriver
-		caps   AppNetworkCapabilities
-	}
-	plan := make([]policyTarget, 0, len(targets))
+	plan := make([]appNetworkPolicyTarget, 0, len(targets))
 	for _, target := range targets {
 		driver, err := s.appNetworkController.driver(target)
 		if err != nil {
 			return err
 		}
 		capabilities := driver.Capabilities()
-		if !appFirewallAvailable() {
+		if !s.appNetworkController.canControlInternet() {
 			capabilities.InternetControl = false
 		}
 		if target.Kind == AppNetworkTargetCgroup && !s.hostNetworkExperimentalEnabled() {
@@ -446,23 +470,17 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 		if internetChangedRequested && !desired.InternetAllowed && !capabilities.InternetControl {
 			return fmt.Errorf("application %s target %s does not support internet control", appID, target.ID)
 		}
-		plan = append(plan, policyTarget{target: target, driver: driver, caps: capabilities})
+		plan = append(plan, appNetworkPolicyTarget{target: target, driver: driver, caps: capabilities})
 	}
 
-	limited := make([]policyTarget, 0, len(plan))
+	limited := make([]appNetworkPolicyTarget, 0, len(plan))
 	if limitChanged {
 		for _, item := range plan {
 			if !item.caps.UploadLimit && !item.caps.DownloadLimit {
 				continue
 			}
 			if err := item.driver.ApplyLimit(ctx, item.target, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
-				for index := len(limited) - 1; index >= 0; index-- {
-					rollback := limited[index]
-					if rollbackErr := rollback.driver.ApplyLimit(ctx, rollback.target, previousLimit); rollbackErr != nil {
-						logger.Warn("rollback traffic policy on %s: %v", rollback.target.ID, rollbackErr)
-					}
-				}
-				return err
+				return errors.Join(err, rollbackAppNetworkLimits(ctx, limited, previousLimit))
 			}
 			limited = append(limited, item)
 		}
@@ -478,44 +496,67 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 		} else {
 			candidateApps[appID] = "internet"
 		}
-		if err := s.reconcileAppInternetControls(ctx, CollectAppTraffic().Bridges, candidateApps); err != nil {
-			for index := len(limited) - 1; index >= 0; index-- {
-				rollback := limited[index]
-				if rollbackErr := rollback.driver.ApplyLimit(ctx, rollback.target, previousLimit); rollbackErr != nil {
-					logger.Warn("rollback traffic policy on %s: %v", rollback.target.ID, rollbackErr)
-				}
-			}
-			return err
+		if err := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, candidateApps); err != nil {
+			return errors.Join(err, rollbackAppNetworkLimits(ctx, limited, previousLimit))
 		}
 		s.containers.replaceBlockedApps(candidateApps)
 	}
 
 	if limitChanged {
 		if err := s.appTraffic.setLimit(appID, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
+			var rollbackErrors []error
 			if internetChangedRequested {
 				s.containers.replaceBlockedApps(previousBlockedApps)
-				_ = s.reconcileAppInternetControls(ctx, CollectAppTraffic().Bridges, previousBlockedApps)
-			}
-			for index := len(limited) - 1; index >= 0; index-- {
-				rollback := limited[index]
-				if rollbackErr := rollback.driver.ApplyLimit(ctx, rollback.target, previousLimit); rollbackErr != nil {
-					logger.Warn("rollback traffic policy after persist failure on %s: %v", rollback.target.ID, rollbackErr)
+				if rollbackErr := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, previousBlockedApps); rollbackErr != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application internet policy: %w", rollbackErr))
 				}
 			}
-			_ = s.appTraffic.setLimit(appID, previousLimit)
-			return fmt.Errorf("persist application network policy: %w", err)
+			if rollbackErr := rollbackAppNetworkLimits(ctx, limited, previousLimit); rollbackErr != nil {
+				rollbackErrors = append(rollbackErrors, rollbackErr)
+			}
+			if rollbackErr := s.appTraffic.setLimit(appID, previousLimit); rollbackErr != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore persisted application traffic limit: %w", rollbackErr))
+			}
+			return errors.Join(fmt.Errorf("persist application network policy: %w", err), errors.Join(rollbackErrors...))
 		}
 	}
 	if internetChangedRequested {
-		if err := s.persistBlockedState(); err != nil {
+		if err := s.appNetworkController.persistInternet(); err != nil {
+			var rollbackErrors []error
 			s.containers.replaceBlockedApps(previousBlockedApps)
-			if rollbackErr := s.reconcileAppInternetControls(ctx, CollectAppTraffic().Bridges, previousBlockedApps); rollbackErr != nil {
-				logger.Warn("rollback internet policy after persist failure: %v", rollbackErr)
+			if rollbackErr := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, previousBlockedApps); rollbackErr != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application internet policy: %w", rollbackErr))
 			}
-			return fmt.Errorf("persist application internet policy: %w", err)
+			if rollbackErr := rollbackAppNetworkLimits(ctx, limited, previousLimit); rollbackErr != nil {
+				rollbackErrors = append(rollbackErrors, rollbackErr)
+			}
+			if limitChanged {
+				if rollbackErr := s.appTraffic.setLimit(appID, previousLimit); rollbackErr != nil {
+					rollbackErrors = append(rollbackErrors, fmt.Errorf("restore persisted application traffic limit: %w", rollbackErr))
+				}
+			}
+			return errors.Join(fmt.Errorf("persist application internet policy: %w", err), errors.Join(rollbackErrors...))
 		}
 	}
 	return nil
+}
+
+type appNetworkPolicyTarget struct {
+	target AppNetworkTarget
+	driver appNetworkTargetDriver
+	caps   AppNetworkCapabilities
+}
+
+func rollbackAppNetworkLimits(ctx context.Context, limited []appNetworkPolicyTarget, previous AppTrafficLimit) error {
+	var rollbackErrors []error
+	for index := len(limited) - 1; index >= 0; index-- {
+		item := limited[index]
+		if err := item.driver.ApplyLimit(ctx, item.target, previous); err != nil {
+			logger.Warn("rollback traffic policy on %s: %v", item.target.ID, err)
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback traffic policy on %s: %w", item.target.ID, err))
+		}
+	}
+	return errors.Join(rollbackErrors...)
 }
 
 func (s *Service) resolveLegacyAppNetworkTarget(ctx context.Context, targetID string) (AppNetworkTarget, error) {

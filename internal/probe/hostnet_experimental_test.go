@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +59,35 @@ func TestHostBPFMapPinRootAtSkipsUnavailableMounts(t *testing.T) {
 	}
 }
 
+func TestJoinHostBPFPinNotesDeduplicatesSameFallback(t *testing.T) {
+	const note = "未找到可写 bpffs，Host 统计 map 将在 Netwatch 重启时重置"
+	if got := joinHostBPFPinNotes(note, note); got != note {
+		t.Fatalf("note=%q", got)
+	}
+	if got := joinHostBPFPinNotes(" ingress ", "egress"); got != "ingress；egress" {
+		t.Fatalf("note=%q", got)
+	}
+}
+
+func TestHostCgroupBPFPrunePlanRemovesStaleAndReusedCgroups(t *testing.T) {
+	attachments := map[string]hostCgroupBPFAttachment{
+		"/host/cgroup/current": {cgroupID: 11},
+		"/host/cgroup/reused":  {cgroupID: 22},
+		"/host/cgroup/stopped": {cgroupID: 33},
+	}
+	active := map[string]uint64{
+		"/host/cgroup/current": 11,
+		"/host/cgroup/reused":  222,
+	}
+	stalePaths, staleIDs := hostCgroupBPFPrunePlan(attachments, []uint64{11, 22, 33, 44, 222}, active)
+	if got, want := strings.Join(stalePaths, ","), "/host/cgroup/reused,/host/cgroup/stopped"; got != want {
+		t.Fatalf("stale paths=%q want=%q", got, want)
+	}
+	if !slices.Equal(staleIDs, []uint64{22, 33, 44}) {
+		t.Fatalf("stale map ids=%v", staleIDs)
+	}
+}
+
 func TestHostAppTargetRoundTrip(t *testing.T) {
 	target := hostAppTarget("cloud.lazycat.app.example")
 	if target != "host-app:cloud.lazycat.app.example" {
@@ -87,6 +118,20 @@ func TestHostIptablesRuleArgs(t *testing.T) {
 	want := []string{"-m", "cgroup", "--path", "system.slice/lzcapp.slice/demo.slice", "-d", "192.168.0.0/16", "-j", "ACCEPT"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
+
+func TestHostFirewallCgroupPathsIncludeLazycatExecTree(t *testing.T) {
+	const canonical = "system.slice/runc-lzc-os.scope/lzcapp.slice/lzcapp-cloud.lazycat.app.demo.slice"
+	const alternate = "lzcapp.slice/lzcapp-cloud.lazycat.app.demo.slice"
+	got := hostFirewallCgroupPathsAt(canonical, func(path string) bool { return path == alternate })
+	want := []string{canonical, alternate}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths=%#v want=%#v", got, want)
+	}
+	got = hostFirewallCgroupPathsAt(canonical, func(string) bool { return false })
+	if !reflect.DeepEqual(got, []string{canonical}) {
+		t.Fatalf("paths without exec tree=%#v", got)
 	}
 }
 

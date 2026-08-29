@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"netwatch/internal/dockerlzc"
+	"netwatch/internal/logger"
 )
 
 const hostAppTargetPrefix = "host-app:"
@@ -44,16 +45,29 @@ func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
 
 	sampledAt := localTimestamp()
 	stats := make([]AppBridgeStats, 0)
+	activeCgroups := make(map[string]uint64)
+	completeCgroupInventory := true
 	for _, app := range apps {
 		appID := strings.TrimSpace(app.AppID)
 		if appID == "" {
 			appID = appIDsByProject[normalizeAppProject(app.Project)]
 		}
-		if appID == "" || isNetwatchTrafficItem(AppBridgeStats{AppID: appID, Project: app.Project}) || isExcludedApp(appID, "") {
+		if appID == "" {
+			completeCgroupInventory = false
+			continue
+		}
+		if isNetwatchTrafficItem(AppBridgeStats{AppID: appID, Project: app.Project}) || isExcludedApp(appID, "") {
 			continue
 		}
 		for _, container := range app.Containers {
 			path, pathDiagnostic := containerHostCgroupPathDiagnostic(container)
+			if path == "" {
+				completeCgroupInventory = false
+			} else if cgroupID, err := cgroupIDFromPath(path); err != nil {
+				completeCgroupInventory = false
+			} else {
+				activeCgroups[path] = cgroupID
+			}
 			read := hostCgroupBPFRead{}
 			if path != "" {
 				read = readHostCgroupBPFStats(path)
@@ -81,6 +95,7 @@ func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
 			}
 			if read.Available {
 				item.Source = "cgroup_skb_ebpf"
+				item.Diagnostic = strings.TrimSpace(read.Diagnostic)
 			} else if item.Source == "" {
 				item.Source = "cgroup_skb_ebpf_unavailable"
 				item.Diagnostic = strings.TrimSpace(read.Note)
@@ -110,6 +125,11 @@ func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
 				item.Icon = "https://" + strings.TrimSuffix(metadata.boxDomain, "/") + "/sys/icons/" + appID + ".png"
 			}
 			stats = append(stats, item)
+		}
+	}
+	if completeCgroupInventory {
+		if err := pruneHostCgroupBPF(activeCgroups); err != nil {
+			logger.Warn("prune stale Host cgroup accounting state: %v", err)
 		}
 	}
 	sort.Slice(stats, func(i, j int) bool { return stats[i].AppID < stats[j].AppID })

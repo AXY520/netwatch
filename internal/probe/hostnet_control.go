@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -96,4 +97,35 @@ func hostIptablesRuleArgs(path string, cidr string, action string) []string {
 		args = append(args, "-d", cidr)
 	}
 	return append(args, "-j", action)
+}
+
+func hostFirewallCgroupPaths(path string) []string {
+	return hostFirewallCgroupPathsAt(path, func(candidate string) bool {
+		root := systemCgroupV2Root()
+		if root == "" {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(candidate)))
+		return err == nil && info.IsDir()
+	})
+}
+
+func hostFirewallCgroupPathsAt(path string, exists func(string) bool) []string {
+	path = strings.Trim(strings.TrimSpace(filepath.ToSlash(path)), "/")
+	if path == "" {
+		return nil
+	}
+	paths := []string{path}
+	const lazycatNestedPrefix = "system.slice/runc-lzc-os.scope/"
+	if strings.HasPrefix(path, lazycatNestedPrefix) {
+		alternate := strings.TrimPrefix(path, lazycatNestedPrefix)
+		// lzc-docker exec processes are placed in the top-level lzcapp.slice
+		// tree, while the container's main process lives below
+		// system.slice/runc-lzc-os.scope. Cover both app slices so an admin
+		// exec shell observes the same internet policy as the application.
+		if strings.HasPrefix(alternate, "lzcapp.slice/") && alternate != path && exists != nil && exists(alternate) {
+			paths = append(paths, alternate)
+		}
+	}
+	return paths
 }

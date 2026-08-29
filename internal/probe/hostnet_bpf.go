@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -28,21 +29,27 @@ type hostCgroupBPFManager struct {
 	txMap       *ebpf.Map
 	ingressProg *ebpf.Program
 	egressProg  *ebpf.Program
-	links       map[string][]link.Link
+	links       map[string]hostCgroupBPFAttachment
 	mapPinPath  string
 	pinNote     string
 }
 
+type hostCgroupBPFAttachment struct {
+	cgroupID uint64
+	links    []link.Link
+}
+
 type hostCgroupBPFRead struct {
-	Available bool
-	Attached  bool
-	RxBytes   uint64
-	TxBytes   uint64
-	RxPackets uint64
-	TxPackets uint64
-	CgroupID  uint64
-	Path      string
-	Note      string
+	Available  bool
+	Attached   bool
+	RxBytes    uint64
+	TxBytes    uint64
+	RxPackets  uint64
+	TxPackets  uint64
+	CgroupID   uint64
+	Path       string
+	Note       string
+	Diagnostic string
 }
 
 type bpfTrafficValue struct {
@@ -57,8 +64,8 @@ var hostBPF = &hostCgroupBPFManager{}
 func resetHostCgroupBPF() {
 	hostBPF.mu.Lock()
 	defer hostBPF.mu.Unlock()
-	for path, links := range hostBPF.links {
-		for _, attached := range links {
+	for path, attachment := range hostBPF.links {
+		for _, attached := range attachment.links {
 			_ = attached.Close()
 		}
 		delete(hostBPF.links, path)
@@ -113,7 +120,7 @@ func (m *hostCgroupBPFManager) read(cgroupPath string) hostCgroupBPFRead {
 	if err != nil {
 		return hostCgroupBPFRead{Path: cgroupPath, Note: err.Error()}
 	}
-	if err := m.ensureAttached(cgroupPath); err != nil {
+	if err := m.ensureAttached(cgroupPath, cgroupID); err != nil {
 		return hostCgroupBPFRead{Path: cgroupPath, CgroupID: cgroupID, Note: err.Error()}
 	}
 
@@ -141,15 +148,16 @@ func (m *hostCgroupBPFManager) read(cgroupPath string) hostCgroupBPFRead {
 		}
 	}
 	return hostCgroupBPFRead{
-		Available: true,
-		Attached:  true,
-		RxBytes:   rx.Bytes,
-		TxBytes:   tx.Bytes,
-		RxPackets: rx.Packets,
-		TxPackets: tx.Packets,
-		CgroupID:  cgroupID,
-		Path:      cgroupPath,
-		Note:      note,
+		Available:  true,
+		Attached:   true,
+		RxBytes:    rx.Bytes,
+		TxBytes:    tx.Bytes,
+		RxPackets:  rx.Packets,
+		TxPackets:  tx.Packets,
+		CgroupID:   cgroupID,
+		Path:       cgroupPath,
+		Note:       note,
+		Diagnostic: strings.TrimSpace(m.pinNote),
 	}
 }
 
@@ -200,21 +208,32 @@ func (m *hostCgroupBPFManager) ensureLoaded() error {
 	m.txMap = txMap
 	m.ingressProg = ingressProg
 	m.egressProg = egressProg
-	m.links = map[string][]link.Link{}
+	m.links = map[string]hostCgroupBPFAttachment{}
 	if pinPath != "" && pinPath == txPinPath {
 		m.mapPinPath = pinPath
 	} else if pinPath != "" && txPinPath != "" {
 		m.mapPinPath = filepath.Dir(pinPath)
 	}
-	if pinNote != "" && txPinNote != "" {
-		m.pinNote = pinNote + "；" + txPinNote
-	} else if pinNote != "" {
-		m.pinNote = pinNote
-	} else {
-		m.pinNote = txPinNote
-	}
+	m.pinNote = joinHostBPFPinNotes(pinNote, txPinNote)
 	m.loaded = true
 	return nil
+}
+
+func joinHostBPFPinNotes(notes ...string) string {
+	unique := make([]string, 0, len(notes))
+	seen := make(map[string]struct{}, len(notes))
+	for _, note := range notes {
+		note = strings.TrimSpace(note)
+		if note == "" {
+			continue
+		}
+		if _, ok := seen[note]; ok {
+			continue
+		}
+		seen[note] = struct{}{}
+		unique = append(unique, note)
+	}
+	return strings.Join(unique, "；")
 }
 
 func newHostCgroupMap(name string) (*ebpf.Map, string, string, error) {
@@ -268,9 +287,18 @@ func hostBPFMapPinRootAt(candidates []string, mkdir func(string, os.FileMode) er
 	return "", false
 }
 
-func (m *hostCgroupBPFManager) ensureAttached(cgroupPath string) error {
-	if len(m.links[cgroupPath]) > 0 {
-		return nil
+func (m *hostCgroupBPFManager) ensureAttached(cgroupPath string, cgroupID uint64) error {
+	if current, ok := m.links[cgroupPath]; ok {
+		if current.cgroupID == cgroupID && len(current.links) > 0 {
+			return nil
+		}
+		remaining, err := closeHostCgroupLinks(current.links)
+		if err != nil {
+			current.links = remaining
+			m.links[cgroupPath] = current
+			return fmt.Errorf("detach replaced host cgroup %s: %w", cgroupPath, err)
+		}
+		delete(m.links, cgroupPath)
 	}
 	in, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroupPath,
@@ -289,8 +317,115 @@ func (m *hostCgroupBPFManager) ensureAttached(cgroupPath string) error {
 		_ = in.Close()
 		return fmt.Errorf("附着 egress cgroup eBPF 失败: %w", err)
 	}
-	m.links[cgroupPath] = []link.Link{in, out}
+	m.links[cgroupPath] = hostCgroupBPFAttachment{cgroupID: cgroupID, links: []link.Link{in, out}}
 	return nil
+}
+
+func pruneHostCgroupBPF(active map[string]uint64) error {
+	return hostBPF.prune(active)
+}
+
+func (m *hostCgroupBPFManager) prune(active map[string]uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.loaded {
+		return nil
+	}
+
+	mapKeys := make([]uint64, 0)
+	seenKeys := make(map[uint64]struct{})
+	for _, counterMap := range []*ebpf.Map{m.rxMap, m.txMap} {
+		keys, err := hostCgroupBPFMapKeys(counterMap)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if _, seen := seenKeys[key]; seen {
+				continue
+			}
+			seenKeys[key] = struct{}{}
+			mapKeys = append(mapKeys, key)
+		}
+	}
+
+	stalePaths, staleIDs := hostCgroupBPFPrunePlan(m.links, mapKeys, active)
+	var cleanupErrors []error
+	for _, path := range stalePaths {
+		attachment := m.links[path]
+		remaining, err := closeHostCgroupLinks(attachment.links)
+		if err != nil {
+			attachment.links = remaining
+			m.links[path] = attachment
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("detach stale host cgroup %s: %w", path, err))
+			continue
+		}
+		delete(m.links, path)
+	}
+	for _, cgroupID := range staleIDs {
+		for _, counterMap := range []*ebpf.Map{m.rxMap, m.txMap} {
+			if counterMap == nil {
+				continue
+			}
+			if err := counterMap.Delete(cgroupID); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("delete stale host cgroup map key %d: %w", cgroupID, err))
+			}
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func closeHostCgroupLinks(links []link.Link) ([]link.Link, error) {
+	remaining := make([]link.Link, 0)
+	var closeErrors []error
+	for _, attached := range links {
+		if err := attached.Close(); err != nil {
+			remaining = append(remaining, attached)
+			closeErrors = append(closeErrors, err)
+		}
+	}
+	return remaining, errors.Join(closeErrors...)
+}
+
+func hostCgroupBPFMapKeys(counterMap *ebpf.Map) ([]uint64, error) {
+	if counterMap == nil {
+		return nil, nil
+	}
+	iterator := counterMap.Iterate()
+	keys := make([]uint64, 0)
+	var key uint64
+	var value bpfTrafficValue
+	for iterator.Next(&key, &value) {
+		keys = append(keys, key)
+	}
+	if err := iterator.Err(); err != nil {
+		return nil, fmt.Errorf("iterate host cgroup counter map: %w", err)
+	}
+	return keys, nil
+}
+
+func hostCgroupBPFPrunePlan(attachments map[string]hostCgroupBPFAttachment, mapKeys []uint64, active map[string]uint64) ([]string, []uint64) {
+	stalePaths := make([]string, 0)
+	for path, attachment := range attachments {
+		activeID, ok := active[path]
+		if !ok || activeID == 0 || activeID != attachment.cgroupID {
+			stalePaths = append(stalePaths, path)
+		}
+	}
+	activeIDs := make(map[uint64]struct{}, len(active))
+	for _, cgroupID := range active {
+		if cgroupID != 0 {
+			activeIDs[cgroupID] = struct{}{}
+		}
+	}
+	staleIDs := make([]uint64, 0)
+	for _, cgroupID := range mapKeys {
+		if _, ok := activeIDs[cgroupID]; !ok {
+			staleIDs = append(staleIDs, cgroupID)
+		}
+	}
+	sort.Strings(stalePaths)
+	sort.Slice(staleIDs, func(i, j int) bool { return staleIDs[i] < staleIDs[j] })
+	return stalePaths, staleIDs
 }
 
 func hostCgroupMapSpec(name string) *ebpf.MapSpec {

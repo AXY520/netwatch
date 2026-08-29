@@ -2,6 +2,8 @@ package probe
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,5 +133,70 @@ func TestLimitOnlyUpdatePreservesPartialInternetState(t *testing.T) {
 	blocked := service.containers.snapshotBlocked()
 	if blocked["lzc-br-one"] != "internet" || blocked["lzc-br-two"] != "" {
 		t.Fatalf("blocked state changed: %#v", blocked)
+	}
+}
+
+func TestCombinedPolicyRollsBackLimitWhenInternetPersistenceFails(t *testing.T) {
+	driver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{
+		Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true,
+	}}
+	trafficDir := t.TempDir()
+	trafficState := newAppTrafficState(trafficDir)
+	previousLimit := AppTrafficLimit{UploadKbps: 256, DownloadKbps: 512}
+	if err := trafficState.setLimit("app.example", previousLimit); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{
+		cfg:               Config{DataDir: t.TempDir()},
+		settings:          newSettingsStore(DefaultMutableSettings()),
+		containers:        newContainerControlState(),
+		appTraffic:        trafficState,
+		appTrafficLimiter: newAppTrafficLimiter(),
+	}
+	var reconciled []map[string]string
+	service.appNetworkController = &appNetworkController{
+		drivers:           map[AppNetworkTargetKind]appNetworkTargetDriver{AppNetworkTargetBridge: driver},
+		internetAvailable: func() bool { return true },
+		reconcileInternet: func(_ context.Context, _ []AppBridgeStats, desired map[string]string) error {
+			copyDesired := make(map[string]string, len(desired))
+			for appID, mode := range desired {
+				copyDesired[appID] = mode
+			}
+			reconciled = append(reconciled, copyDesired)
+			return nil
+		},
+		persistInternetPolicy: func() error { return errors.New("settings disk unavailable") },
+	}
+
+	targets := []AppNetworkTarget{{
+		ID: "lzc-br-one", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-one",
+	}}
+	upload, download, internetAllowed := int64(1024), int64(2048), false
+	err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{
+		UploadKbps: &upload, DownloadKbps: &download, InternetAllowed: &internetAllowed,
+	})
+	if err == nil || !strings.Contains(err.Error(), "persist application internet policy") {
+		t.Fatalf("error=%v", err)
+	}
+	if len(driver.limits) != 2 {
+		t.Fatalf("limit calls=%v, want apply + rollback", driver.limits)
+	}
+	if got := driver.limits[0]; got.UploadKbps != upload || got.DownloadKbps != download {
+		t.Fatalf("applied limit=%#v", got)
+	}
+	if got := driver.limits[1]; got.UploadKbps != previousLimit.UploadKbps || got.DownloadKbps != previousLimit.DownloadKbps {
+		t.Fatalf("rollback limit=%#v want=%#v", got, previousLimit)
+	}
+	if got := trafficState.limitForApp("app.example"); got.UploadKbps != previousLimit.UploadKbps || got.DownloadKbps != previousLimit.DownloadKbps {
+		t.Fatalf("persisted limit=%#v want=%#v", got, previousLimit)
+	}
+	if got := newAppTrafficState(trafficDir).limitForApp("app.example"); got.UploadKbps != previousLimit.UploadKbps || got.DownloadKbps != previousLimit.DownloadKbps {
+		t.Fatalf("reloaded limit=%#v want=%#v", got, previousLimit)
+	}
+	if blocked := service.containers.snapshotBlockedApps(); len(blocked) != 0 {
+		t.Fatalf("blocked apps not restored: %#v", blocked)
+	}
+	if len(reconciled) != 2 || reconciled[0]["app.example"] != "internet" || len(reconciled[1]) != 0 {
+		t.Fatalf("internet reconcile sequence=%#v", reconciled)
 	}
 }

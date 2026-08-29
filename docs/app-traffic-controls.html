@@ -97,9 +97,10 @@
       <li>程序首次读取 Host 容器时附着到该容器 cgroup，之后按 map 读取累计值。</li>
       <li>collector 为每个 Host 容器输出独立计数记录，不在读取阶段提前按应用求和；状态层按 cgroup 路径维护独立 baseline 后再聚合。</li>
       <li>两个计数 map 优先 pin 到宿主机 bpffs 的 <code>netwatch/</code> 目录；Netwatch 重启后会重新加载同一 map，内核累计计数可继续使用。程序和 cgroup attachment 仍由当前进程管理，服务退出后会自动解除。</li>
+      <li>attachment 同时记录 cgroup 路径和 ID；完整运行时清单确认容器停止、路径被新 cgroup 复用或 map key 已无活动归属后，关闭旧 link 并删除 RX/TX key。清单不完整时跳过整轮清理，避免误删。</li>
     </ul>
     <p>cgroup 路径按以下顺序解析并验证：Docker inspect 字段、宿主机 <code>/host/proc/&lt;PID&gt;/cgroup</code>、懒猫 systemd cgroup 结构。若加载、附着或读取失败，快照应携带具体诊断。</p>
-    <div class="note warning"><strong>当前状态：</strong>Host eBPF 依赖宿主机 cgroup v2、容器 PID/挂载、BPF 权限和内核支持。任何一项不满足都会导致 Host 统计不可用，但不影响 Bridge 统计。若 bpffs 可见但不可写，统计仍会使用临时 map，并在 diagnostic 中明确提示重启会重置计数。Host 统计不是 Docker 网桥统计的“另一份数据”，两者来源不同。</div>
+    <div class="note warning"><strong>当前状态：</strong>Host eBPF 依赖宿主机 cgroup v2、容器 PID/挂载、BPF 权限和内核支持。任何一项不满足都会导致 Host 统计不可用，但不影响 Bridge 统计。未挂载 bpffs、bpffs 不可写或 pin 失败时，统计仍会使用临时 map，并在 diagnostic 中明确提示重启会重置计数。目标懒猫盒子的 <code>/sys/fs/bpf</code> 当前是普通 sysfs 目录而非 bpffs，真机已验证会走这条降级路径。Host 统计不是 Docker 网桥统计的“另一份数据”，两者来源不同。</div>
 
     <h3>2.3 采样、速率和历史</h3>
     <ul>
@@ -137,6 +138,7 @@
       <li>后台每约 2 秒 reconcile 一次持久化限速，并与手动限速操作串行化，避免取消操作被旧状态重新覆盖。</li>
       <li>限速器区分三种状态：持久化的 <code>desired</code>、最近一次 tc 接受的 <code>applied</code>、实际核验结果 <code>in_sync</code>。内存中的 applied 只用于回滚，不能证明内核规则仍然存在。</li>
       <li>首次发现网桥和策略变化时立即读取 tc；稳定状态下约每 20 秒核验一次 root TBF、ingress police、局域网 bypass filter 及 <code>conform-exceed drop/ok</code>。规则缺失、速率不一致或网桥同名重建时会自动重建。</li>
+      <li>联合修改限速和外网策略时，即使最后保存 <code>BlockedApps</code> 失败，也会恢复防火墙、内存禁网状态、内核限速和磁盘限速；任何回滚失败会与原始错误一起返回。</li>
     </ul>
   </section>
 
@@ -156,7 +158,7 @@
     <pre>-I OUTPUT -m cgroup --path &lt;app-cgroup-path&gt; -j DROP
 -I OUTPUT -m cgroup --path &lt;app-cgroup-path&gt; -d 10.0.0.0/8 -j ACCEPT
 ...（其余私有网段、IPv6 本地网段）</pre>
-    <p>Host 模式只支持“禁用外网”，不支持“禁用全部网络”；使用 Netwatch 自有 <code>NETWATCH-OUT-A/B</code> chain，在 <code>OUTPUT</code> 链按应用 cgroup 路径匹配。Host 控制使用的是应用级 cgroup 父 slice，因此同一应用的多个 Host 容器会一起受到控制。</p>
+    <p>Host 模式只支持“禁用外网”，不支持“禁用全部网络”；使用 Netwatch 自有 <code>NETWATCH-OUT-A/B</code> chain，在 <code>OUTPUT</code> 链按应用 cgroup 路径匹配。Host 控制使用的是应用级 cgroup 父 slice，因此同一应用的多个 Host 容器会一起受到控制。懒猫中容器主进程位于 <code>system.slice/runc-lzc-os.scope/lzcapp.slice/...</code>，而 <code>lzc-docker exec</code> 进程位于顶层 <code>lzcapp.slice/...</code>；实现会在第二棵 app slice 真实存在时同时生成规则，避免管理员 exec shell 绕过禁网策略。</p>
 
     <h3>4.3 状态保存与实验开关</h3>
     <ul>
@@ -164,6 +166,8 @@
       <li>Host 控制要求“Host 网络控制（实验性）”开启；关闭开关时会尝试清理 Host cgroup iptables 规则并移除 Host 控制状态。</li>
       <li>白名单系统应用不能执行禁用外网或限速。</li>
       <li>Controller 负责策略事务和失败回滚；防火墙 driver 使用 Netwatch 自有双缓冲 chain，在应用生命周期、服务启动和周期 reconcile 时重建规则。网桥重建后会按 <code>app_id</code> 把禁网策略重新展开到新目标。</li>
+      <li>宿主机 iptables 可能是指向 <code>/etc/alternatives/</code> 的绝对符号链接；能力检测不在容器根中跟随该链接，实际命令由 <code>nsenter -r</code> 在宿主根解析。</li>
+      <li><code>xt_cgroup --path</code> 相对调用者的 cgroup namespace 解析；防火墙命令必须通过 <code>nsenter -C</code> 同时进入 PID 1 的 cgroup namespace，否则 nft 后端会以 <code>RULE_APPEND ... Invalid argument</code> 拒绝 Host 规则。</li>
     </ul>
   </section>
 
@@ -179,7 +183,7 @@
         <tr><td><code>POST /api/v1/containers/block</code> / <code>unblock</code></td><td>兼容旧客户端，内部转换为统一目标控制</td><td><code>Service.BlockApp</code> / <code>UnblockApp</code></td></tr>
       </tbody>
     </table>
-    <p><code>app-policy</code> 使用字段级更新语义：只提交限速字段时不会触碰外网规则，只提交 <code>internet_allowed</code> 时也不会重建 tc。应用包含多个目标时，Controller 先完成能力检查，再逐目标执行；任一目标失败会按相反顺序回滚已执行目标，持久化只发生在内核操作成功之后。快照中的 <code>network_policy.limit_in_sync</code>、<code>limit_state</code> 和 <code>diagnostic</code> 表示最近一次内核核验结果，不能用持久化限速值替代。</p>
+    <p><code>app-policy</code> 使用字段级更新语义：只提交限速字段时不会触碰外网规则，只提交 <code>internet_allowed</code> 时也不会重建 tc。应用包含多个目标时，Controller 先完成能力检查，再逐目标执行；任一目标失败会按相反顺序回滚已执行目标。只有内核操作和两类状态保存都成功才提交；最后一步保存失败时同样恢复防火墙、内存状态、内核限速和磁盘限速。快照中的 <code>network_policy.limit_in_sync</code>、<code>limit_state</code> 和 <code>diagnostic</code> 表示最近一次内核核验结果，不能用持久化限速值替代。</p>
     <p>前端的“应用流量实时刷新”只影响页面是否显示并刷新实时速率列，不改变后台采样器；后台生命周期观察器仍会定期采样并维护历史、限速 reconcile。</p>
   </section>
 
@@ -193,21 +197,30 @@
       <li><strong>取消后仍受限：</strong>检查 root TBF <code>194:</code> 和 ingress 优先级 <code>49140-49144/49152</code> 是否残留，并确认后台 reconcile 没有重新读取旧的持久化状态。</li>
       <li><strong>网桥统计不是应用精确进程统计：</strong>Bridge 模式下它统计的是整个应用网桥的内核计数；同一 Compose project 的多个容器可能汇总到一个应用。</li>
       <li><strong>Host 与 Bridge 混合应用：</strong>统计可以聚合；Host 统计按容器 cgroup、Bridge 统计按网桥分别采样后汇总到应用。统一策略会展开所有目标，当前限速因 Host driver 未实现而明确禁止，禁用外网则分别调用 Bridge 和 Host driver。</li>
-      <li><strong>重启影响：</strong>Bridge sysfs 计数由内核维护，网桥重建会归零；Host eBPF map 优先持久化到 bpffs，服务重启后会复用 map。由于 cgroup attachment 由进程管理，Netwatch 完全停止期间不会产生新的 Host 统计，但已累计的 map 数据不会丢失。若宿主机不允许 pin，则 diagnostic 会提示计数将在 Netwatch 重启时重置。</li>
+      <li><strong>重启影响：</strong>Bridge sysfs 计数由内核维护，网桥重建会归零；Host eBPF map 只在真实 bpffs 可用时跨服务重启复用。由于 cgroup attachment 由进程管理，Netwatch 完全停止期间不会产生新的 Host 统计。目标盒子当前没有挂载 bpffs，真机重启验证确认临时 map 会归零，diagnostic 会明确提示。</li>
     </ul>
   </section>
 
   <section>
-    <h2>七、后续 Host 限速需要解决什么</h2>
-    <p>不能把 Bridge 的 root TBF 方案直接套到 Host 容器，因为 Host 容器共享宿主机网络命名空间，没有独立的应用网桥可塑形。Host driver 后续必须以容器 cgroup、进程级 socket 标记或 eBPF/tc cgroup hook 为目标，并同时处理：</p>
+    <h2>七、Host/Mixed 限速技术评估</h2>
+    <p>不能把 Bridge 的 root TBF 方案直接套到 Host 容器，因为 Host 容器共享宿主机网络命名空间，没有独立的应用网桥可塑形。当前评估得到两个不同层级的候选：</p>
+    <table>
+      <thead><tr><th>候选</th><th>能解决什么</th><th>主要缺口</th></tr></thead>
+      <tbody>
+        <tr><td>cgroup_skb token bucket</td><td>可在 socket 所属 cgroup 的 ingress/egress 按应用丢弃超限包；同一应用多个 Host cgroup 可映射到共享 bucket。</td><td>是 policing 而非 shaping；TCP 依靠拥塞控制近似收敛，UDP 直接丢包。还需处理并发 bucket、LAN bypass、IPv4/IPv6 和 cgroup 复用。</td></tr>
+        <tr><td>物理网卡 tc/eBPF + HTB</td><td>在能按 socket cgroup 分类时，可作为 Host 上传排队整形候选。</td><td>物理入口阶段尚不知道本地接收 socket/cgroup，不能可靠解决下载；多网卡、VPN、回环和宿主 qdisc 所有权也会扩大影响面。</td></tr>
+      </tbody>
+    </table>
+    <p>Mixed 比纯 Host 更难：Bridge TBF/police 与 Host cgroup bucket 若分别配置同一个速率，会给应用两份额度，不是应用级总限速。只有两类数据路径共享同一方向的应用级 meter，才能保持当前 API 的聚合语义。</p>
+    <p>纯 Host 原型进入评审前必须同时满足：</p>
     <ul>
-      <li>同一应用多个 Host 容器和 Bridge 容器的混合归属；</li>
-      <li>上传、下载方向的准确划分；</li>
-      <li>不影响宿主机其他进程和懒猫系统服务；</li>
-      <li>应用重启、cgroup 重建、规则清理和失败回滚；</li>
-      <li>限速失败时不能留下会导致应用完全断网的半成品规则。</li>
+      <li>同一应用多个 Host 容器共享一份上传和下载预算，不能按容器重复发放额度；</li>
+      <li>覆盖 TCP/UDP、IPv4/IPv6、上传/下载、局域网 bypass、多网卡和回环流量；</li>
+      <li>证明宿主机进程、其他应用和懒猫系统服务不受影响；</li>
+      <li>应用重启、cgroup 重建/复用、旧 attachment/map 清理均可收敛；</li>
+      <li>策略使用 staging/generation 原子切换，失败时 fail-open、完整回滚，并暴露实际状态和丢包计数。</li>
     </ul>
-    <div class="note"><strong>结论：</strong>当前统一模型的边界是：所有活动应用都按 <code>app_id</code> 聚合展示；Bridge 统计使用网桥计数，Host 统计使用每容器 cgroup 计数并在应用层汇总。Bridge 应用可统计、可限速、可禁用外网；Host 应用始终尝试统计，禁用外网属于实验性能力；Host/Mixed 限速 API 和驱动已预留但暂不开放。</div>
+    <div class="note"><strong>结论：</strong>当前只允许单独做纯 Host cgroup_skb policing 原型，不进入产品开放；Mixed 在 Bridge 与 Host 能共享同一应用级 meter 之前继续明确拒绝。物理网卡 HTB 不能单独解决下载归属，因此也不是当前的完整方案。</div>
   </section>
 
   <footer>Netwatch · 应用流量与网络控制实现说明</footer>

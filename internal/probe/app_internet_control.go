@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -35,11 +36,20 @@ var runAppFirewallCommand = func(ctx context.Context, ipv6 bool, args ...string)
 		}
 		return "", errors.New("host iptables command is unavailable")
 	}
-	command := []string{"-t", "1", "-m", "-n", "-r", "--", binary, "-w", "5"}
-	command = append(command, args...)
+	command := hostFirewallCommandArgs(binary, args...)
 	cmd := exec.CommandContext(ctx, nsenterPath, command...)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+func hostFirewallCommandArgs(binary string, args ...string) []string {
+	// xt_cgroup --path is resolved relative to the caller's cgroup namespace.
+	// Joining only mount/network namespaces leaves Netwatch in its container
+	// cgroup namespace, where Lazycat's host application slices don't exist and
+	// the kernel rejects RULE_APPEND with EINVAL. Join PID 1's cgroup namespace
+	// as well so both validation and packet matching use the host cgroup tree.
+	command := []string{"-t", "1", "-m", "-n", "-C", "-r", "--", binary, "-w", "5"}
+	return append(command, args...)
 }
 
 type appInternetTargetRuntime struct {
@@ -74,8 +84,16 @@ func hostFirewallPath(ipv6 bool) (string, bool) {
 	if ipv6 {
 		candidates = hostFirewallIPv6Paths
 	}
+	return hostFirewallPathAt("/proc/1/root", candidates)
+}
+
+func hostFirewallPathAt(root string, candidates []string) (string, bool) {
 	for _, candidate := range candidates {
-		if info, err := os.Stat("/proc/1/root" + candidate); err == nil && !info.IsDir() {
+		path := filepath.Join(root, strings.TrimPrefix(candidate, "/"))
+		// Host iptables commonly points to an absolute /etc/alternatives link.
+		// os.Stat follows that link in Netwatch's root and reports a false
+		// negative, while nsenter -r resolves it correctly in the host root.
+		if info, err := os.Lstat(path); err == nil && !info.IsDir() {
 			return candidate, true
 		}
 	}
@@ -311,14 +329,16 @@ func buildAppFirewallRules(targets []AppNetworkTarget, desiredBlocked map[string
 				}
 				path = resolved
 			}
-			for _, cidr := range hostNetworkPrivateCIDRs {
-				v4.output = append(v4.output, hostIptablesRuleArgs(path, cidr, "RETURN"))
+			for _, matchPath := range hostFirewallCgroupPaths(path) {
+				for _, cidr := range hostNetworkPrivateCIDRs {
+					v4.output = append(v4.output, hostIptablesRuleArgs(matchPath, cidr, "RETURN"))
+				}
+				v4.output = append(v4.output, hostIptablesRuleArgs(matchPath, "", "DROP"))
+				for _, cidr := range hostNetworkPrivateCIDRs6 {
+					v6.output = append(v6.output, hostIptablesRuleArgs(matchPath, cidr, "RETURN"))
+				}
+				v6.output = append(v6.output, hostIptablesRuleArgs(matchPath, "", "DROP"))
 			}
-			v4.output = append(v4.output, hostIptablesRuleArgs(path, "", "DROP"))
-			for _, cidr := range hostNetworkPrivateCIDRs6 {
-				v6.output = append(v6.output, hostIptablesRuleArgs(path, cidr, "RETURN"))
-			}
-			v6.output = append(v6.output, hostIptablesRuleArgs(path, "", "DROP"))
 		default:
 			return v4, v6, fmt.Errorf("unsupported internet-control target kind %q", target.Kind)
 		}
@@ -520,12 +540,14 @@ func removeLegacyHostInternetRules(ctx context.Context, path string) error {
 		if ipv6 {
 			cidrs = hostNetworkPrivateCIDRs6
 		}
-		if err := deleteFirewallRuleAll(ctx, ipv6, "OUTPUT", hostIptablesRuleArgs(path, "", "DROP")); err != nil {
-			return err
-		}
-		for _, cidr := range cidrs {
-			if err := deleteFirewallRuleAll(ctx, ipv6, "OUTPUT", hostIptablesRuleArgs(path, cidr, "ACCEPT")); err != nil {
+		for _, matchPath := range hostFirewallCgroupPaths(path) {
+			if err := deleteFirewallRuleAll(ctx, ipv6, "OUTPUT", hostIptablesRuleArgs(matchPath, "", "DROP")); err != nil {
 				return err
+			}
+			for _, cidr := range cidrs {
+				if err := deleteFirewallRuleAll(ctx, ipv6, "OUTPUT", hostIptablesRuleArgs(matchPath, cidr, "ACCEPT")); err != nil {
+					return err
+				}
 			}
 		}
 	}
