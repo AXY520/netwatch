@@ -207,11 +207,11 @@
     <table>
       <thead><tr><th>候选</th><th>能解决什么</th><th>主要缺口</th></tr></thead>
       <tbody>
-        <tr><td>cgroup_skb token bucket</td><td>可在 socket 所属 cgroup 的 ingress/egress 按应用丢弃超限包；同一应用多个 Host cgroup 可映射到共享 bucket。</td><td>是 policing 而非 shaping；TCP 依靠拥塞控制近似收敛，UDP 直接丢包。还需处理并发 bucket、LAN bypass、IPv4/IPv6 和 cgroup 复用。</td></tr>
+        <tr><td>cgroup_skb token bucket</td><td>可在应用父 slice 的 ingress/egress 丢弃超限包；独立程序/map 实例让 Host、Bridge、多个子 cgroup 和 exec 分支共享一个应用 bucket。</td><td>是 policing 而非 shaping；Host ingress 在 GRO/GSO 下的 <code>skb.len</code> 不能稳定代表线速字节，且 verifier 禁止该程序类型读取 <code>wire_len/gso_segs</code> 修正。</td></tr>
         <tr><td>物理网卡 tc/eBPF + HTB</td><td>在能按 socket cgroup 分类时，可作为 Host 上传排队整形候选。</td><td>物理入口阶段尚不知道本地接收 socket/cgroup，不能可靠解决下载；多网卡、VPN、回环和宿主 qdisc 所有权也会扩大影响面。</td></tr>
       </tbody>
     </table>
-    <p>Mixed 比纯 Host 更难：Bridge TBF/police 与 Host cgroup bucket 若分别配置同一个速率，会给应用两份额度，不是应用级总限速。只有两类数据路径共享同一方向的应用级 meter，才能保持当前 API 的聚合语义。</p>
+    <p>Mixed 比纯 Host 更难：Bridge TBF/police 与 Host cgroup bucket 若分别配置同一个速率，会给应用两份额度，不是应用级总限速。真机原型已经证明应用父 slice 上的独立 cgroup_skb 程序可以让两类路径共享同一方向的 meter，但也发现 Host ingress 字节观测在 GRO/GSO 下与应用实际接收量不稳定对应，所以“共享”不等于“精确”。</p>
     <p>纯 Host 原型进入评审前必须同时满足：</p>
     <ul>
       <li>同一应用多个 Host 容器共享一份上传和下载预算，不能按容器重复发放额度；</li>
@@ -220,7 +220,7 @@
       <li>应用重启、cgroup 重建/复用、旧 attachment/map 清理均可收敛；</li>
       <li>策略使用 staging/generation 原子切换，失败时 fail-open、完整回滚，并暴露实际状态和丢包计数。</li>
     </ul>
-    <div class="note"><strong>结论：</strong>当前只允许单独做纯 Host cgroup_skb policing 原型，不进入产品开放；Mixed 在 Bridge 与 Host 能共享同一应用级 meter 之前继续明确拒绝。物理网卡 HTB 不能单独解决下载归属，因此也不是当前的完整方案。</div>
+    <div class="note"><strong>结论：</strong>cgroup_skb policing 原型、父 slice 共享 bucket、generation/fail-open、LAN bypass 和真机 attachment 已完成，但 Host ingress 的线速字节精度仍未解决，因此不进入产品开放，Host/Mixed 限速能力继续返回 false。物理网卡 HTB 不能单独解决下载归属，也不是当前的完整方案。</div>
   </section>
 
   <footer>Netwatch · 应用流量与网络控制实现说明</footer>

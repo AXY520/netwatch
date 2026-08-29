@@ -102,8 +102,8 @@ Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写�
 | 网络模式 | 流量统计 | 禁用外网 | 限制网速 |
 | --- | --- | --- | --- |
 | 纯 Bridge | 支持 | 支持 | 支持 |
-| 纯 Host | cgroup eBPF，真机已验证 | 实验性开关开启后支持 | 未实现，明确拒绝 |
-| Mixed | Bridge + Host 分别统计后聚合，真机已验证 | Bridge/Host 分别控制 | 未实现，明确拒绝 |
+| 纯 Host | cgroup eBPF，真机已验证 | 实验性开关开启后支持 | 仅有隔离原型，产品明确拒绝 |
+| Mixed | Bridge + Host 分别统计后聚合，真机已验证 | Bridge/Host 分别控制 | 仅有隔离原型，产品明确拒绝 |
 
 ## 四、已知边界
 
@@ -119,7 +119,7 @@ map 持久化只保留已经累计的计数。cgroup attachment 不 pin，因此
 
 Host 容器共享宿主机网络命名空间，不能直接套用 Bridge 的 root TBF。cgroup_skb 可以实现按 cgroup 的 token bucket，但只能超限丢包（policing），不能排队整形（shaping）；TCP 会通过重传近似收敛，UDP 会直接丢包。宿主物理网卡上的 tc/HTB 较适合上传整形，但下载在 socket/cgroup 归属确定前经过物理入口，无法可靠按应用分类。
 
-Mixed 应用还要求 Bridge 与一个或多个 Host cgroup 共享同一应用级预算。分别给网桥和 cgroup 配置相同速率会得到两份额度，并不满足应用级限速语义。因此在共享 meter、双向分类和事务回滚全部验证前，Host/Mixed 限速继续明确拒绝。
+Mixed 应用还要求 Bridge 与一个或多个 Host cgroup 共享同一应用级预算。原型证明把独立程序实例附着到应用父 slice 后，Host、Bridge、多个子 cgroup 和顶层 exec slice 可以共用一个 bucket；这避免了分别给网桥和 Host cgroup 发放两份额度。不过真机并发测试同时发现，Host ingress 在 GRO/GSO 路径上的 `skb.len` 与应用实际接收字节不稳定对应，而 `cgroup_skb` verifier 又禁止读取 `wire_len/gso_segs`。因此当前原型不能证明精确双向限速，Host/Mixed 继续明确拒绝。
 
 ## 五、验证记录
 
@@ -150,13 +150,25 @@ git diff --check
 - 懒猫上的容器主进程位于 `system.slice/runc-lzc-os.scope/lzcapp.slice/...`，但 `lzc-docker exec` 创建的进程位于顶层 `lzcapp.slice/...`。Host 禁网现在同时覆盖两棵真实存在的应用 slice；复测 `lzc-docker exec ... curl baidu.com` 连接超时，exec-tree DROP 规则命中 `5` 包，同时 172.16/12 与 loopback 流量继续放行。
 - 没有擅自停止或重启其他用户应用；停止应用后的 stale key 真机清理由逻辑/内核单测覆盖，等待安全维护窗口做破坏性生命周期验证。
 
+### 5.2 Host/Mixed policing 原型验证
+
+- 目标机为 Linux `6.5.0-0.deb12.4-amd64`、cgroup v2；`cgroup_skb` ingress/egress 程序、BPF hash map 和 map value spin lock 均通过 verifier 并成功附着。
+- 原型按应用创建独立程序/map 实例；多个真实 cgroup 路径附着完成前 policy map 不存在，所有程序 fail-open，最后以一次 policy map 更新同时激活上传/下载 generation。关闭时先删除 policy，再解除 link 和删除状态。
+- token bucket 使用纳秒定点额度，避免高包速下丢失不足 1 byte 的 refill；Host burst 下限为 128 KiB，确保 GRO skb 不会因大于 bucket 上限而永远无法通过。
+- 1 Mbps Bridge 公网下载测试中，25 秒应用收到 `2923771` 字节（约 `935.6 Kbit/s`），BPF 放行 `3031936` 字节、丢弃 `1720160` 字节，单一路径结果接近目标。
+- loopback bypass 测试连续读取约 `9.39 MB`，瞬时完成且上传/下载 bucket 计数均保持 `0`；顶层 exec 父 slice 测试命中下载 drop `935692` 字节，证明与禁网规则相同的双 cgroup 分支需要同时覆盖。
+- 两个子 cgroup 挂在同一个父 slice 时共享一份状态，不会各自创建完整额度；一个 Host 与一个应用 Bridge 容器也能由同一父 slice 程序执行。
+- 但 Host + Bridge 并发公网测试设置 1 Mbps、完全关闭 LAN bypass 后，20 秒应用层合计仍收到约 `10.22 MB`，BPF 只观察到约 `4.15 MB`。固定应用 bucket、取消 skb cgroup 身份反查后结果不变，排除了 membership 和私网解析问题。
+- 尝试读取 `__sk_buff.wire_len/gso_segs` 补偿 Host GRO/GSO，内核 verifier 明确拒绝：`invalid bpf_context access off=160 size=4`。因此不能在该 hook 上把 `skb.len` 稳定换算为线速字节；物理 ingress 虽能看到线速包，却缺少可靠的本地 socket/cgroup 归属。
+- 全部验证只使用临时 `netwatch-hostlimit-probe-*` 容器和专用父 slice；没有修改 FluxDown 容器、没有重启其他应用。测试容器、父 slice、attachment 和复制到 Netwatch 容器的测试二进制均在结束后清理。
+
 ## 六、Host/Mixed 限速评估结论
 
-当前结论是“不开放，允许单独做纯 Host 原型”，不是直接进入产品实现：
+当前结论是“原型已完成，但不开放”，不是直接进入产品实现：
 
-1. 纯 Host 原型优先使用 cgroup_skb 共享 token bucket，明确标注为 policing；同一应用的多个 Host cgroup 必须映射到同一个应用级 bucket，而不是各自获得完整额度。
-2. 原型必须覆盖 TCP/UDP、IPv4/IPv6、上传/下载、局域网 bypass、多网卡/回环、cgroup 重建和复用，并证明不影响宿主机及其他应用流量。
-3. 策略更新必须使用 generation/staging 方式原子切换，失败时 fail-open 并完整回滚；同时暴露实际速率、丢包数、attachment 和 map 同步状态。
+1. cgroup_skb 共享 token bucket 可以作为 policing 原型；按应用使用独立程序/map 实例并附着父 slice，可让多个 Host/Bridge 子 cgroup 共用上传和下载预算。
+2. staging/generation、fail-open 清理、spin-lock 并发 bucket、LAN/loopback bypass、GRO burst 下限和 drop 计数已经在原型实现并完成真机验证。
+3. `cgroup_skb` 的 Host ingress 字节语义在 GRO/GSO 下不能稳定代表线速字节，且该程序类型无法读取 `wire_len/gso_segs` 修正；在解决这个内核观测缺口前，不能把 policing 结果宣称为用户配置的精确限速。
 4. 物理网卡 tc/HTB 只能作为 Host 上传整形候选，不能单独解决下载归属，也不能直接解决 Mixed 共享预算。
-5. Mixed 只有在 Bridge tc/eBPF 与 Host cgroup hook 能共享同一方向的应用级 meter，并完成多目标回滚和生命周期清理验证后才进入准入评审；否则持续拒绝。
+5. Mixed 的共享 meter 已证明可构造，但精确 Host 下载计量、TCP/UDP、IPv4/IPv6、多网卡/VPN、应用重启和产品级 reconcile 尚未全部完成，因此持续拒绝并保持 UI/API 能力为 false。
 6. bpffs 挂载应作为部署能力单独解决，不由 Netwatch 未经确认修改宿主机全局 mount namespace。
