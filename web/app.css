@@ -417,6 +417,7 @@
 .ui-icon--netcfg { --ui-icon: url('/icons/ui/cable.svg'); }
 .ui-icon--network { --ui-icon: url('/icons/ui/network.svg'); }
 .ui-icon--trace { --ui-icon: url('/icons/ui/route.svg'); }
+.ui-icon--route { --ui-icon: url('/icons/ui/route.svg'); }
 .ui-icon--help { --ui-icon: url('/icons/ui/info.svg'); }
 .ui-icon--bell { --ui-icon: url('/icons/ui/bell.svg'); }
 .ui-icon--more { --ui-icon: url('/icons/ui/ellipsis.svg'); }
@@ -1273,6 +1274,10 @@ button.icon-button,
             backdrop-filter: blur(14px) saturate(135%);
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
         }
+		#app-traffic-table tbody tr:nth-last-child(-n + 3) .app-traffic-more-panel {
+            top: auto;
+            bottom: calc(100% + 0.22rem);
+        }
         .app-traffic-menu-item {
             display: flex;
             align-items: center;
@@ -1319,9 +1324,10 @@ button.icon-button,
         .app-traffic-limit-form input { width: 100%; height: 2.25rem; padding: 0 0.55rem; border: 1px solid var(--border-subtle); background: var(--input-bg); color: var(--text-primary); font: inherit; font-variant-numeric: tabular-nums; }
         .app-traffic-limit-form input[aria-invalid="true"] { border-color: var(--danger); }
         .app-traffic-limit-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; }
+        #app-traffic-proxy-form .app-traffic-limit-form-actions { justify-content: flex-end; }
         .form-error { color: var(--danger); font-size: 0.74rem; line-height: 1.35; }
-        #app-traffic-limit-window { width: min(360px, calc(100vw - 2rem)) !important; z-index: 1300; }
-        #app-traffic-limit-backdrop { z-index: 1290; }
+        #app-traffic-limit-window, #app-traffic-proxy-window { width: min(360px, calc(100vw - 2rem)) !important; z-index: 1300; }
+        #app-traffic-limit-backdrop, #app-traffic-proxy-backdrop { z-index: 1290; }
         .host-ports-title {
             cursor: default;
             user-select: none;
@@ -2219,7 +2225,7 @@ button.icon-button,
             font-size: 0.82rem;
             min-width: 0;
         }
-        .settings-input:focus { outline: 1px solid var(--accent-cyan); }
+		.settings-input:focus { outline: 1px solid var(--accent-cyan); }
         .time-input { width: 8.5em; text-align: center; }
         .settings-range-sep { color: var(--text-muted); font-size: 0.8rem; }
         .btn-sm {
@@ -3337,6 +3343,7 @@ button.icon-button,
         }
         .app-control-status-row {
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             gap: 0.36rem;

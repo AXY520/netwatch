@@ -212,6 +212,7 @@ type appTrafficLimiter struct {
 	applied     map[string]AppTrafficLimit
 	runtime     map[string]appTrafficLimitRuntime
 	seenBridges map[string]bool
+	host        *hostTrafficLimiter
 }
 
 // appTrafficLimitRuntime describes what the last kernel inspection found.
@@ -231,6 +232,7 @@ func newAppTrafficLimiter() *appTrafficLimiter {
 		applied:     map[string]AppTrafficLimit{},
 		runtime:     map[string]appTrafficLimitRuntime{},
 		seenBridges: map[string]bool{},
+		host:        newHostTrafficLimiter(),
 	}
 }
 
@@ -348,11 +350,10 @@ func (l *appTrafficLimiter) clearUnlimitedBridge(ctx context.Context, bridge str
 	return nil
 }
 
-// reconcile restores supported Bridge limits and removes Netwatch-owned tc
-// rules from applications that contain any Host-network container. The return
-// value lists Host/mixed applications whose bridge rules were fully cleared,
-// allowing the persisted, now-invalid limit state to be removed as well.
-func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStats, limits map[string]AppTrafficLimit) map[string]bool {
+// reconcile restores pure Bridge limits and the shared physical-device
+// Host/Mixed limiter. Mixed applications never retain per-bridge qdiscs because
+// those would grant an independent second budget.
+func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStats, limits map[string]AppTrafficLimit, hostEnabled bool) map[string]bool {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 
@@ -369,9 +370,9 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 
 	desired := make(map[string]AppTrafficLimit)
 	activeBridges := make(map[string]bool)
-	clearedHostApps := make(map[string]bool, len(hostApps))
+	bridgeCleared := make(map[string]bool, len(hostApps))
 	for appID := range hostApps {
-		clearedHostApps[appID] = true
+		bridgeCleared[appID] = true
 	}
 	for _, item := range items {
 		if item.AppID == "" || item.Bridge == "" || isNetwatchTrafficItem(item) {
@@ -388,13 +389,13 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 			if !canControlTraffic {
 				limit := limits[item.AppID]
 				if limit.UploadKbps != 0 || limit.DownloadKbps != 0 {
-					clearedHostApps[item.AppID] = false
+					bridgeCleared[item.AppID] = false
 				}
 				continue
 			}
 			if err := l.clearUnlimitedBridge(ctx, item.Bridge); err != nil {
-				logger.Warn("clear unsupported traffic limit on %s: %v", item.Bridge, err)
-				clearedHostApps[item.AppID] = false
+				logger.Warn("clear per-bridge limit before Host/Mixed policy on %s: %v", item.Bridge, err)
+				bridgeCleared[item.AppID] = false
 			}
 			continue
 		}
@@ -438,6 +439,12 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 		}
 	}
 	l.mu.Unlock()
+	clearedHostApps := map[string]bool{}
+	if l.host != nil {
+		for appID, cleared := range l.host.reconcile(ctx, items, limits, hostEnabled) {
+			clearedHostApps[appID] = cleared && bridgeCleared[appID]
+		}
+	}
 	return clearedHostApps
 }
 
@@ -652,7 +659,7 @@ func (s *Service) reconcileAppTrafficLimits(items []AppBridgeStats) {
 	if s.appTraffic == nil || s.appTrafficLimiter == nil {
 		return
 	}
-	clearedHostApps := s.appTrafficLimiter.reconcile(s.LifecycleContext(), items, s.appTraffic.limitsSnapshot())
+	clearedHostApps := s.appTrafficLimiter.reconcile(s.LifecycleContext(), items, s.appTraffic.limitsSnapshot(), s.hostNetworkExperimentalEnabled())
 	for appID, cleared := range clearedHostApps {
 		if !cleared {
 			continue
@@ -665,6 +672,6 @@ func (s *Service) reconcileAppTrafficLimits(items []AppBridgeStats) {
 			logger.Warn("remove unsupported traffic limit for %s: %v", appID, err)
 			continue
 		}
-		logger.Info("removed unsupported traffic limit for Host/mixed application %s", appID)
+		logger.Info("removed disabled Host/Mixed traffic limit for application %s", appID)
 	}
 }

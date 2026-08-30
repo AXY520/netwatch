@@ -37,12 +37,15 @@ type AppNetworkCapabilities struct {
 	UploadLimit     bool `json:"upload_limit"`
 	DownloadLimit   bool `json:"download_limit"`
 	InternetControl bool `json:"internet_control"`
+	ProxyControl    bool `json:"proxy_control"`
 }
 
 type AppNetworkTargetStatus struct {
 	Target       AppNetworkTarget       `json:"target"`
 	Capabilities AppNetworkCapabilities `json:"capabilities"`
 	Blocked      bool                   `json:"blocked"`
+	Proxied      bool                   `json:"proxied"`
+	ProxyInSync  bool                   `json:"proxy_in_sync"`
 	LimitInSync  bool                   `json:"limit_in_sync"`
 	Diagnostic   string                 `json:"diagnostic,omitempty"`
 }
@@ -51,12 +54,15 @@ type AppNetworkPolicy struct {
 	UploadKbps      int64 `json:"upload_kbps"`
 	DownloadKbps    int64 `json:"download_kbps"`
 	InternetAllowed bool  `json:"internet_allowed"`
+	ProxyEnabled    bool  `json:"proxy_enabled"`
 }
 
 type appNetworkPolicyUpdate struct {
 	UploadKbps      *int64
 	DownloadKbps    *int64
 	InternetAllowed *bool
+	ProxyEnabled    *bool
+	ProxySettings   *AppProxySettings
 }
 
 type AppNetworkPolicyStatus struct {
@@ -66,6 +72,9 @@ type AppNetworkPolicyStatus struct {
 	LimitInSync    bool                     `json:"limit_in_sync"`
 	InternetState  string                   `json:"internet_state"`
 	InternetInSync bool                     `json:"internet_in_sync"`
+	ProxyState     string                   `json:"proxy_state"`
+	ProxyInSync    bool                     `json:"proxy_in_sync"`
+	ProxySettings  AppProxySettings         `json:"proxy_settings"`
 	Diagnostic     string                   `json:"diagnostic,omitempty"`
 	Targets        []AppNetworkTargetStatus `json:"targets"`
 }
@@ -90,13 +99,14 @@ type bridgeNetworkDriver struct {
 
 type cgroupNetworkDriver struct {
 	service *Service
+	limiter *appTrafficLimiter
 }
 
 func newAppNetworkController(service *Service, limiter *appTrafficLimiter) *appNetworkController {
 	controller := &appNetworkController{
 		drivers: map[AppNetworkTargetKind]appNetworkTargetDriver{
 			AppNetworkTargetBridge: bridgeNetworkDriver{service: service, limiter: limiter},
-			AppNetworkTargetCgroup: cgroupNetworkDriver{service: service},
+			AppNetworkTargetCgroup: cgroupNetworkDriver{service: service, limiter: limiter},
 		},
 		internetAvailable: appFirewallAvailable,
 	}
@@ -137,7 +147,7 @@ func (c *appNetworkController) driver(target AppNetworkTarget) (appNetworkTarget
 }
 
 func (d bridgeNetworkDriver) Capabilities() AppNetworkCapabilities {
-	return AppNetworkCapabilities{Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true}
+	return AppNetworkCapabilities{Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true, ProxyControl: true}
 }
 
 func (d bridgeNetworkDriver) ApplyLimit(ctx context.Context, target AppNetworkTarget, limit AppTrafficLimit) error {
@@ -148,11 +158,15 @@ func (d bridgeNetworkDriver) ApplyLimit(ctx context.Context, target AppNetworkTa
 }
 
 func (d cgroupNetworkDriver) Capabilities() AppNetworkCapabilities {
-	return AppNetworkCapabilities{Accounting: true, InternetControl: true}
+	return AppNetworkCapabilities{Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true, ProxyControl: true}
 }
 
-func (d cgroupNetworkDriver) ApplyLimit(_ context.Context, target AppNetworkTarget, _ AppTrafficLimit) error {
-	return fmt.Errorf("target %s does not support traffic limiting", target.ID)
+func (d cgroupNetworkDriver) ApplyLimit(ctx context.Context, target AppNetworkTarget, limit AppTrafficLimit) error {
+	if d.limiter == nil || d.limiter.host == nil {
+		return errors.New("Host/Mixed traffic limiter is unavailable")
+	}
+	targets := appNetworkTargetsForApp(CollectAppTraffic().Bridges, target.AppID)
+	return d.limiter.host.apply(ctx, target.AppID, targets, limit)
 }
 
 func appNetworkTargetFromStats(item AppBridgeStats) (AppNetworkTarget, bool) {
@@ -247,6 +261,11 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			UploadKbps: app.Limit.UploadKbps, DownloadKbps: app.Limit.DownloadKbps, InternetAllowed: true,
 		},
 		LimitState: "unlimited", LimitInSync: true, InternetState: "allowed", InternetInSync: true,
+		ProxyState: "direct", ProxyInSync: true,
+	}
+	if s.settings != nil {
+		status.Desired.ProxyEnabled = s.settings.appProxyEnabled(app.AppID)
+		status.ProxySettings = s.settings.appProxyConfig(app.AppID)
 	}
 	if len(app.NetworkTargets) == 0 {
 		// Persisted records from before the target model are upgraded from the
@@ -257,15 +276,23 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			}
 		}
 	}
+	hasHostTarget := false
+	for _, target := range app.NetworkTargets {
+		if target.Kind == AppNetworkTargetCgroup {
+			hasHostTarget = true
+			break
+		}
+	}
 	if app.Limit.UploadKbps > 0 || app.Limit.DownloadKbps > 0 {
 		status.LimitState = "limited"
 	}
 	blockedCount := 0
+	proxiedCount := 0
 	appBlocked := s.containers != nil && s.containers.appBlocked(app.AppID) != ""
 	desiredBlocked := appBlocked
 	inSync := true
 	for _, target := range app.NetworkTargets {
-		targetStatus := AppNetworkTargetStatus{Target: target, LimitInSync: true, Diagnostic: target.Diagnostic}
+		targetStatus := AppNetworkTargetStatus{Target: target, LimitInSync: true, ProxyInSync: true, Diagnostic: target.Diagnostic}
 		if s.appNetworkController == nil {
 			targetStatus.Diagnostic = "application network controller is unavailable"
 			status.Targets = append(status.Targets, targetStatus)
@@ -278,15 +305,26 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			targetStatus.Capabilities = driver.Capabilities()
 			if !s.appNetworkController.canControlInternet() {
 				targetStatus.Capabilities.InternetControl = false
+				targetStatus.Capabilities.ProxyControl = false
 				if targetStatus.Diagnostic == "" {
 					targetStatus.Diagnostic = "宿主机防火墙控制不可用"
 				}
+			}
+			if s.appProxyController == nil {
+				targetStatus.Capabilities.ProxyControl = false
 			}
 			if target.Kind == AppNetworkTargetBridge && !trafficControlAvailable() {
 				targetStatus.Capabilities.UploadLimit = false
 				targetStatus.Capabilities.DownloadLimit = false
 				if targetStatus.Diagnostic == "" {
 					targetStatus.Diagnostic = "宿主机 tc 不可用"
+				}
+			}
+			if target.Kind == AppNetworkTargetCgroup && !hostTrafficLimitAvailable() {
+				targetStatus.Capabilities.UploadLimit = false
+				targetStatus.Capabilities.DownloadLimit = false
+				if targetStatus.Diagnostic == "" {
+					targetStatus.Diagnostic = "Host/Mixed TC eBPF 限速环境不可用"
 				}
 			}
 			// A cgroup target is enforceable only when its accounting hook was
@@ -303,14 +341,20 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			targetStatus.Capabilities.UploadLimit = false
 			targetStatus.Capabilities.DownloadLimit = false
 			targetStatus.Capabilities.InternetControl = false
+			targetStatus.Capabilities.ProxyControl = false
 		}
 		if isWhitelistedApp(app.AppID, app.AppTitle) {
 			targetStatus.Capabilities.UploadLimit = false
 			targetStatus.Capabilities.DownloadLimit = false
 			targetStatus.Capabilities.InternetControl = false
+			targetStatus.Capabilities.ProxyControl = false
 		}
-		if target.Kind == AppNetworkTargetBridge && s.appTrafficLimiter != nil {
-			runtime := s.appTrafficLimiter.runtimeStatus(target.Interface, AppTrafficLimit{UploadKbps: app.Limit.UploadKbps, DownloadKbps: app.Limit.DownloadKbps})
+		if s.appTrafficLimiter != nil && (target.Kind == AppNetworkTargetBridge || hasHostTarget) {
+			desired := AppTrafficLimit{UploadKbps: app.Limit.UploadKbps, DownloadKbps: app.Limit.DownloadKbps}
+			runtime := s.appTrafficLimiter.runtimeStatus(target.Interface, desired)
+			if hasHostTarget && s.appTrafficLimiter.host != nil {
+				runtime = s.appTrafficLimiter.host.runtimeStatus(app.AppID, desired)
+			}
 			targetStatus.LimitInSync = runtime.InSync
 			if !runtime.InSync {
 				status.LimitInSync = false
@@ -342,6 +386,26 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 		if targetStatus.Blocked {
 			blockedCount++
 		}
+		proxyRuntime := appProxyTargetRuntime{InSync: true}
+		if status.Desired.ProxyEnabled && s.appProxyController != nil {
+			proxyRuntime = s.appProxyController.status(target.ID)
+		} else if status.Desired.ProxyEnabled {
+			proxyRuntime.Diagnostic = "应用代理控制器不可用"
+		}
+		targetStatus.Proxied = proxyRuntime.Active
+		targetStatus.ProxyInSync = proxyRuntime.InSync
+		if proxyRuntime.Active {
+			proxiedCount++
+		}
+		if status.Desired.ProxyEnabled && !proxyRuntime.InSync {
+			status.ProxyInSync = false
+			if targetStatus.Diagnostic == "" {
+				targetStatus.Diagnostic = proxyRuntime.Diagnostic
+			}
+			if status.Diagnostic == "" {
+				status.Diagnostic = proxyRuntime.Diagnostic
+			}
+		}
 		status.Targets = append(status.Targets, targetStatus)
 	}
 	status.Capabilities = aggregateAppNetworkCapabilities(status.Targets)
@@ -357,6 +421,16 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 	} else if blockedCount > 0 || !inSync {
 		status.InternetState = "partial"
 	}
+	if status.Desired.ProxyEnabled {
+		switch {
+		case desiredBlocked:
+			status.ProxyState = "paused"
+		case status.ProxyInSync && proxiedCount == len(status.Targets) && len(status.Targets) > 0:
+			status.ProxyState = "proxied"
+		default:
+			status.ProxyState = "partial"
+		}
+	}
 	if !status.Capabilities.UploadLimit && !status.Capabilities.DownloadLimit {
 		status.LimitState = "unsupported"
 	}
@@ -370,12 +444,13 @@ func aggregateAppNetworkCapabilities(targets []AppNetworkTargetStatus) AppNetwor
 	if len(targets) == 0 {
 		return AppNetworkCapabilities{}
 	}
-	result := AppNetworkCapabilities{Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true}
+	result := AppNetworkCapabilities{Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true, ProxyControl: true}
 	for _, target := range targets {
 		result.Accounting = result.Accounting && target.Capabilities.Accounting
 		result.UploadLimit = result.UploadLimit && target.Capabilities.UploadLimit
 		result.DownloadLimit = result.DownloadLimit && target.Capabilities.DownloadLimit
 		result.InternetControl = result.InternetControl && target.Capabilities.InternetControl
+		result.ProxyControl = result.ProxyControl && target.Capabilities.ProxyControl
 	}
 	return result
 }
@@ -386,6 +461,7 @@ func (s *Service) currentAppNetworkPolicy(appID string, targets []AppNetworkTarg
 	policy := AppNetworkPolicy{
 		UploadKbps: limit.UploadKbps, DownloadKbps: limit.DownloadKbps, InternetAllowed: true,
 	}
+	policy.ProxyEnabled = s.settings != nil && s.settings.appProxyEnabled(appID)
 	if s.containers.appBlocked(appID) != "" {
 		policy.InternetAllowed = false
 	}
@@ -400,7 +476,7 @@ func (s *Service) currentAppNetworkPolicy(appID string, targets []AppNetworkTarg
 
 func (s *Service) SetAppNetworkPolicy(ctx context.Context, appID string, desired AppNetworkPolicy) error {
 	return s.updateAppNetworkPolicy(ctx, appID, appNetworkPolicyUpdate{
-		UploadKbps: &desired.UploadKbps, DownloadKbps: &desired.DownloadKbps, InternetAllowed: &desired.InternetAllowed,
+		UploadKbps: &desired.UploadKbps, DownloadKbps: &desired.DownloadKbps, InternetAllowed: &desired.InternetAllowed, ProxyEnabled: &desired.ProxyEnabled,
 	})
 }
 
@@ -409,10 +485,10 @@ func (s *Service) updateAppNetworkPolicy(ctx context.Context, appID string, upda
 	if appID == "" || isNetwatchTrafficItem(AppBridgeStats{AppID: appID}) {
 		return errors.New("invalid application id")
 	}
-	if update.UploadKbps == nil && update.DownloadKbps == nil && update.InternetAllowed == nil {
+	if update.UploadKbps == nil && update.DownloadKbps == nil && update.InternetAllowed == nil && update.ProxyEnabled == nil && update.ProxySettings == nil {
 		return errors.New("application network policy update is empty")
 	}
-	if s.appNetworkController == nil || s.appTrafficLimiter == nil || s.appTraffic == nil || s.containers == nil {
+	if s.appNetworkController == nil || s.appTrafficLimiter == nil || s.appTraffic == nil || s.containers == nil || s.settings == nil {
 		return errors.New("application network controller is unavailable")
 	}
 	targets := appNetworkTargetsForApp(CollectAppTraffic().Bridges, appID)
@@ -433,8 +509,24 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 	if update.InternetAllowed != nil {
 		desired.InternetAllowed = *update.InternetAllowed
 	}
+	if update.ProxyEnabled != nil {
+		desired.ProxyEnabled = *update.ProxyEnabled
+	}
 	limitChanged := update.UploadKbps != nil || update.DownloadKbps != nil
 	internetChangedRequested := update.InternetAllowed != nil
+	proxyChangedRequested := update.ProxyEnabled != nil || update.ProxySettings != nil
+	var requestedProxySettings AppProxySettings
+	if update.ProxySettings != nil {
+		requestedProxySettings = *update.ProxySettings
+		requestedProxySettings.Protocol = strings.ToLower(strings.TrimSpace(requestedProxySettings.Protocol))
+		requestedProxySettings.Host = strings.TrimSpace(requestedProxySettings.Host)
+		if err := validateAppProxySettings(requestedProxySettings); err != nil {
+			return err
+		}
+		if !desired.ProxyEnabled {
+			return errors.New("代理配置只能在启用应用代理时更新")
+		}
+	}
 	if desired.UploadKbps < 0 || desired.DownloadKbps < 0 || desired.UploadKbps > maxAppTrafficLimitKbps || desired.DownloadKbps > maxAppTrafficLimitKbps {
 		return fmt.Errorf("traffic limit must be between 0 and %d Kbit/s", maxAppTrafficLimitKbps)
 	}
@@ -448,6 +540,46 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 
 	previousLimit := s.appTraffic.limitForApp(appID)
 	previousBlockedApps := s.containers.snapshotBlockedApps()
+	proxyDefault, previousProxyApps, previousProxyConfigs := s.settings.appProxyState()
+	candidateBlockedApps := make(map[string]string, len(previousBlockedApps)+1)
+	for applicationID, mode := range previousBlockedApps {
+		candidateBlockedApps[applicationID] = mode
+	}
+	if internetChangedRequested {
+		if desired.InternetAllowed {
+			delete(candidateBlockedApps, appID)
+		} else {
+			candidateBlockedApps[appID] = "internet"
+		}
+	}
+	candidateProxyApps := cloneProxyApps(previousProxyApps)
+	candidateProxyConfigs := cloneAppProxyConfigs(previousProxyConfigs)
+	if proxyChangedRequested {
+		if desired.ProxyEnabled {
+			candidateProxyApps[appID] = true
+			if update.ProxySettings != nil {
+				candidateProxyConfigs[appID] = requestedProxySettings
+			} else if _, ok := candidateProxyConfigs[appID]; !ok {
+				candidateProxyConfigs[appID] = proxyDefault
+			}
+		} else {
+			delete(candidateProxyApps, appID)
+		}
+	}
+	proxyReconcileNeeded := proxyChangedRequested || len(previousProxyApps) > 0 || len(candidateProxyApps) > 0
+	if proxyReconcileNeeded && s.appProxyController == nil {
+		return errors.New("application proxy controller is unavailable")
+	}
+	hasHostTarget := false
+	for _, target := range targets {
+		if target.Kind == AppNetworkTargetCgroup {
+			hasHostTarget = true
+			break
+		}
+	}
+	if hasHostTarget && desired.ProxyEnabled && (desired.UploadKbps > 0 || desired.DownloadKbps > 0) && (limitChanged || proxyChangedRequested) {
+		return errors.New("Host/Mixed 应用不能同时启用代理和限速，请先恢复直连或取消限速")
+	}
 	plan := make([]appNetworkPolicyTarget, 0, len(targets))
 	for _, target := range targets {
 		driver, err := s.appNetworkController.driver(target)
@@ -457,9 +589,13 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 		capabilities := driver.Capabilities()
 		if !s.appNetworkController.canControlInternet() {
 			capabilities.InternetControl = false
+			capabilities.ProxyControl = false
 		}
 		if target.Kind == AppNetworkTargetCgroup && !s.hostNetworkExperimentalEnabled() {
+			capabilities.UploadLimit = false
+			capabilities.DownloadLimit = false
 			capabilities.InternetControl = false
+			capabilities.ProxyControl = false
 		}
 		if limitChanged && desired.UploadKbps > 0 && !capabilities.UploadLimit {
 			return fmt.Errorf("application %s target %s does not support upload limiting", appID, target.ID)
@@ -470,13 +606,20 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 		if internetChangedRequested && !desired.InternetAllowed && !capabilities.InternetControl {
 			return fmt.Errorf("application %s target %s does not support internet control", appID, target.ID)
 		}
+		if proxyChangedRequested && desired.ProxyEnabled && !capabilities.ProxyControl {
+			return fmt.Errorf("application %s target %s does not support proxy control", appID, target.ID)
+		}
 		plan = append(plan, appNetworkPolicyTarget{target: target, driver: driver, caps: capabilities})
 	}
 
 	limited := make([]appNetworkPolicyTarget, 0, len(plan))
 	if limitChanged {
 		for _, item := range plan {
-			if !item.caps.UploadLimit && !item.caps.DownloadLimit {
+			if hasHostTarget && item.target.Kind == AppNetworkTargetBridge {
+				continue
+			}
+			clearingHostLimit := hasHostTarget && item.target.Kind == AppNetworkTargetCgroup && desired.UploadKbps == 0 && desired.DownloadKbps == 0
+			if !item.caps.UploadLimit && !item.caps.DownloadLimit && !clearingHostLimit {
 				continue
 			}
 			if err := item.driver.ApplyLimit(ctx, item.target, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
@@ -486,29 +629,43 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 		}
 	}
 
+	items := CollectAppTraffic().Bridges
+	controlChanged := internetChangedRequested || proxyChangedRequested
+	rollbackControls := func() error {
+		s.settings.setAppProxy(proxyDefault, previousProxyApps, previousProxyConfigs)
+		s.containers.replaceBlockedApps(previousBlockedApps)
+		var rollbackErrors []error
+		if proxyReconcileNeeded {
+			if err := s.reconcileAppProxyControls(ctx, items, previousProxyApps, previousProxyConfigs, previousBlockedApps); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application proxy policy: %w", err))
+			}
+		}
+		if err := s.appNetworkController.reconcileInternetPolicy(ctx, items, previousBlockedApps); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application internet policy: %w", err))
+		}
+		return errors.Join(rollbackErrors...)
+	}
+	if proxyReconcileNeeded {
+		if err := s.reconcileAppProxyControls(ctx, items, candidateProxyApps, candidateProxyConfigs, candidateBlockedApps); err != nil {
+			return errors.Join(err, rollbackControls(), rollbackAppNetworkLimits(ctx, limited, previousLimit))
+		}
+	}
 	if internetChangedRequested {
-		candidateApps := make(map[string]string, len(previousBlockedApps)+1)
-		for applicationID, mode := range previousBlockedApps {
-			candidateApps[applicationID] = mode
+		if err := s.appNetworkController.reconcileInternetPolicy(ctx, items, candidateBlockedApps); err != nil {
+			return errors.Join(err, rollbackControls(), rollbackAppNetworkLimits(ctx, limited, previousLimit))
 		}
-		if desired.InternetAllowed {
-			delete(candidateApps, appID)
-		} else {
-			candidateApps[appID] = "internet"
-		}
-		if err := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, candidateApps); err != nil {
-			return errors.Join(err, rollbackAppNetworkLimits(ctx, limited, previousLimit))
-		}
-		s.containers.replaceBlockedApps(candidateApps)
+	}
+	if controlChanged {
+		s.settings.setAppProxy(proxyDefault, candidateProxyApps, candidateProxyConfigs)
+		s.containers.replaceBlockedApps(candidateBlockedApps)
 	}
 
 	if limitChanged {
 		if err := s.appTraffic.setLimit(appID, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
 			var rollbackErrors []error
-			if internetChangedRequested {
-				s.containers.replaceBlockedApps(previousBlockedApps)
-				if rollbackErr := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, previousBlockedApps); rollbackErr != nil {
-					rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application internet policy: %w", rollbackErr))
+			if controlChanged {
+				if rollbackErr := rollbackControls(); rollbackErr != nil {
+					rollbackErrors = append(rollbackErrors, rollbackErr)
 				}
 			}
 			if rollbackErr := rollbackAppNetworkLimits(ctx, limited, previousLimit); rollbackErr != nil {
@@ -520,12 +677,11 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 			return errors.Join(fmt.Errorf("persist application network policy: %w", err), errors.Join(rollbackErrors...))
 		}
 	}
-	if internetChangedRequested {
+	if controlChanged {
 		if err := s.appNetworkController.persistInternet(); err != nil {
 			var rollbackErrors []error
-			s.containers.replaceBlockedApps(previousBlockedApps)
-			if rollbackErr := s.appNetworkController.reconcileInternetPolicy(ctx, CollectAppTraffic().Bridges, previousBlockedApps); rollbackErr != nil {
-				rollbackErrors = append(rollbackErrors, fmt.Errorf("rollback application internet policy: %w", rollbackErr))
+			if rollbackErr := rollbackControls(); rollbackErr != nil {
+				rollbackErrors = append(rollbackErrors, rollbackErr)
 			}
 			if rollbackErr := rollbackAppNetworkLimits(ctx, limited, previousLimit); rollbackErr != nil {
 				rollbackErrors = append(rollbackErrors, rollbackErr)
@@ -535,7 +691,11 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 					rollbackErrors = append(rollbackErrors, fmt.Errorf("restore persisted application traffic limit: %w", rollbackErr))
 				}
 			}
-			return errors.Join(fmt.Errorf("persist application internet policy: %w", err), errors.Join(rollbackErrors...))
+			label := "application internet policy"
+			if proxyChangedRequested {
+				label = "application network policy"
+			}
+			return errors.Join(fmt.Errorf("persist %s: %w", label, err), errors.Join(rollbackErrors...))
 		}
 	}
 	return nil
@@ -600,8 +760,8 @@ func (s *Service) SetAppInternetAccess(ctx context.Context, appID string, allowe
 	return s.updateAppNetworkPolicy(ctx, appID, appNetworkPolicyUpdate{InternetAllowed: &allowed})
 }
 
-func (s *Service) UpdateAppNetworkPolicy(ctx context.Context, appID string, uploadKbps, downloadKbps *int64, internetAllowed *bool) error {
+func (s *Service) UpdateAppNetworkPolicy(ctx context.Context, appID string, uploadKbps, downloadKbps *int64, internetAllowed, proxyEnabled *bool, proxySettings *AppProxySettings) error {
 	return s.updateAppNetworkPolicy(ctx, appID, appNetworkPolicyUpdate{
-		UploadKbps: uploadKbps, DownloadKbps: downloadKbps, InternetAllowed: internetAllowed,
+		UploadKbps: uploadKbps, DownloadKbps: downloadKbps, InternetAllowed: internetAllowed, ProxyEnabled: proxyEnabled, ProxySettings: proxySettings,
 	})
 }

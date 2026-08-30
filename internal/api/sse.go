@@ -174,6 +174,7 @@ var mutatePathPrefixes = []string{
 	"/api/v1/containers/block",
 	"/api/v1/containers/unblock",
 	"/api/v1/network/app-policy",
+	"/api/v1/network/app-proxy/settings",
 	"/api/v1/network/app-traffic/limit",
 	"/api/v1/network/ipv6/renew",
 	"/api/v1/settings",

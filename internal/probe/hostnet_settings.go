@@ -28,15 +28,20 @@ func (s *Service) clearHostNetworkExperimentalState(persist bool) {
 		}
 	}
 	blockedApps := s.containers.snapshotBlockedApps()
+	proxyConfig, proxyApps, proxyConfigs := s.settings.appProxyState()
 	for appID := range hostApps {
 		if blockedApps[appID] != "" {
 			delete(blockedApps, appID)
 		}
+		delete(proxyApps, appID)
 	}
 	legacy := pruneHostNetworkExperimentalState(s.containers.snapshotBlocked())
 	s.containers.replaceBlockedApps(blockedApps)
 	s.containers.replaceBlocked(legacy)
+	s.settings.setAppProxy(proxyConfig, proxyApps, proxyConfigs)
+	_ = s.reconcileAppProxyControls(s.LifecycleContext(), items, proxyApps, proxyConfigs, blockedApps)
 	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, blockedApps)
+	s.reconcileAppTrafficLimits(items)
 	if persist {
 		s.saveBlockedBridges()
 	}

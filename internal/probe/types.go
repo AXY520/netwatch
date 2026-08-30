@@ -124,9 +124,9 @@ type MutableSettings struct {
 	// Traffic chart settings
 	ChartTimeLabelInterval    int  `json:"chart_time_label_interval"`
 	AppTrafficRealtimeEnabled bool `json:"app_traffic_realtime_enabled"`
-	// HostNetworkExperimentalEnabled gates mutating controls for applications
-	// containing Host-network containers. Read-only traffic accounting remains
-	// enabled because it does not alter the host networking configuration.
+	// HostNetworkExperimentalEnabled gates internet control and policing for
+	// applications containing Host-network containers. Read-only accounting
+	// remains enabled because it does not alter host networking.
 	HostNetworkExperimentalEnabled bool `json:"host_network_experimental_enabled"`
 
 	// Collapsed dashboard panels, persisted server-side for all clients.
@@ -137,8 +137,17 @@ type MutableSettings struct {
 
 	// Application network policy. BlockedApps is authoritative; BlockedBridges
 	// remains a read-time migration source for releases that persisted target IDs.
-	BlockedApps    map[string]string `json:"blocked_apps,omitempty"`    // app_id → "internet"
-	BlockedBridges map[string]string `json:"blocked_bridges,omitempty"` // legacy target → "internet" | "all"
+	BlockedApps     map[string]string           `json:"blocked_apps,omitempty"`      // app_id → "internet"
+	BlockedBridges  map[string]string           `json:"blocked_bridges,omitempty"`   // legacy target → "internet" | "all"
+	AppProxy        AppProxySettings            `json:"app_proxy"`                   // default for new app proxy settings
+	ProxyApps       map[string]bool             `json:"proxy_apps,omitempty"`        // app_id → proxy enabled
+	AppProxyConfigs map[string]AppProxySettings `json:"app_proxy_configs,omitempty"` // app_id → saved upstream
+}
+
+type AppProxySettings struct {
+	Protocol string `json:"protocol"` // "socks5" | "http"
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
 }
 
 // ContainerRuntimeInfo is the frontend-facing container info.

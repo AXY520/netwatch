@@ -198,7 +198,10 @@ func (s *Service) observeAppTraffic() {
 		s.appTraffic.sample(items, time.Now())
 		s.reconcileAppTrafficLimits(items)
 	}
-	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, s.containers.snapshotBlockedApps())
+	blockedApps := s.containers.snapshotBlockedApps()
+	_, proxyApps, proxyConfigs := s.settings.appProxyState()
+	_ = s.reconcileAppProxyControls(s.LifecycleContext(), items, proxyApps, proxyConfigs, blockedApps)
+	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, blockedApps)
 }
 
 func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {

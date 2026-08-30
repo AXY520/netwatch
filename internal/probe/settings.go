@@ -47,6 +47,7 @@ func DefaultMutableSettings() MutableSettings {
 		ChartTimeLabelInterval:         0,
 		AppTrafficRealtimeEnabled:      true,
 		HostNetworkExperimentalEnabled: false,
+		AppProxy:                       defaultAppProxySettings(),
 	}
 }
 
@@ -142,6 +143,11 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	if _, ok := raw["host_network_experimental_enabled"]; !ok {
 		s.HostNetworkExperimentalEnabled = def.HostNetworkExperimentalEnabled
 	}
+	if _, ok := raw["app_proxy"]; !ok {
+		s.AppProxy = def.AppProxy
+	}
+	s.AppProxy = normalizeAppProxySettings(s.AppProxy, def.AppProxy)
+	s.AppProxyConfigs = normalizeAppProxyConfigs(s.AppProxyConfigs, s.ProxyApps, s.AppProxy)
 	return s, true
 }
 

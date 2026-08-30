@@ -259,6 +259,26 @@
         </form>
     </section>
 
+    <div id="app-traffic-proxy-backdrop" class="window-backdrop"></div>
+    <section class="floating-window app-traffic-limit-window" id="app-traffic-proxy-window" role="dialog" aria-modal="true" aria-labelledby="app-traffic-proxy-title">
+        <div class="window-head">
+            <div>
+                <div class="window-title" id="app-traffic-proxy-title" data-i18n="app_proxy_set">设置代理</div>
+                <div class="note" id="app-traffic-proxy-note"></div>
+            </div>
+            <div class="window-actions">
+                <button type="button" class="icon-button window-close-btn" id="close-app-traffic-proxy-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
+        </div>
+        <form id="app-traffic-proxy-form" class="app-traffic-limit-form" novalidate>
+            <label><span data-i18n="app_proxy_protocol">代理类型</span><select id="app-traffic-proxy-protocol" aria-label="代理类型" data-i18n-aria-label="app_proxy_protocol"><option value="socks5">SOCKS5</option><option value="http">HTTP</option></select></label>
+            <label><span data-i18n="app_proxy_host">代理 IP</span><input id="app-traffic-proxy-host" name="host" autocomplete="off" required placeholder="192.168.1.2" aria-label="代理 IP" data-i18n-aria-label="app_proxy_host"></label>
+            <label><span data-i18n="app_proxy_port">代理端口</span><input id="app-traffic-proxy-port" name="port" type="number" min="1" max="65535" required value="7890" aria-label="代理端口" data-i18n-aria-label="app_proxy_port"></label>
+            <div class="app-traffic-limit-form-actions"><button type="submit" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="app_proxy_save_enable">启用</span></button></div>
+            <div id="app-traffic-proxy-error" class="form-error" role="alert" hidden></div>
+        </form>
+    </section>
+
     <section class="floating-window" id="host-port-detail-window">
         <div class="window-head">
             <div>
@@ -661,11 +681,11 @@
                 <span data-i18n="app_traffic_realtime_monitor">应用流量实时刷新</span>
                 <label class="settings-toggle inline"><input type="checkbox" id="setting-app-traffic-realtime-enabled"></label>
             </div>
-            <div class="settings-row settings-row-experimental">
-                <span data-i18n="host_network_experimental">Host 网络控制（实验性）</span>
-                <label class="settings-toggle inline"><input type="checkbox" id="setting-host-network-experimental-enabled"></label>
-            </div>
-            <div class="settings-row">
+			<div class="settings-row settings-row-experimental">
+				<span data-i18n="host_network_experimental">Host 网络控制（实验性）</span>
+				<label class="settings-toggle inline"><input type="checkbox" id="setting-host-network-experimental-enabled"></label>
+			</div>
+			<div class="settings-row">
                 <span data-i18n="background_monitor">后台检测</span>
                 <div class="settings-inline-controls">
                     <label class="settings-toggle inline">

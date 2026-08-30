@@ -13,18 +13,16 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type hostlimitLimitPolicy struct {
+type hostlimitAppConfig struct {
 	_                      structs.HostLayout
 	Generation             uint64
-	UploadBytesPerSecond   uint64
-	UploadBurstBytes       uint64
 	DownloadBytesPerSecond uint64
 	DownloadBurstBytes     uint64
-	Flags                  uint32
-	Reserved               uint32
+	UploadMark             uint32
+	MarkMask               uint32
 }
 
-type hostlimitLimitState struct {
+type hostlimitDownloadState struct {
 	_    structs.HostLayout
 	Lock struct {
 		_   structs.HostLayout
@@ -34,10 +32,17 @@ type hostlimitLimitState struct {
 	Generation     uint64
 	TokenNanobytes uint64
 	LastRefillNs   uint64
-	PassedBytes    uint64
-	PassedPackets  uint64
-	DroppedBytes   uint64
-	DroppedPackets uint64
+}
+
+type hostlimitFlowKey struct {
+	_             structs.HostLayout
+	LocalAddress  [16]uint8
+	RemoteAddress [16]uint8
+	LocalPort     uint16
+	RemotePort    uint16
+	Family        uint8
+	Protocol      uint8
+	Padding       [2]uint8
 }
 
 // loadHostlimit returns the embedded CollectionSpec for hostlimit.
@@ -82,17 +87,20 @@ type hostlimitSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type hostlimitProgramSpecs struct {
-	HostlimitEgress  *ebpf.ProgramSpec `ebpf:"hostlimit_egress"`
-	HostlimitIngress *ebpf.ProgramSpec `ebpf:"hostlimit_ingress"`
+	HostlimitTagSocket *ebpf.ProgramSpec `ebpf:"hostlimit_tag_socket"`
+	HostlimitTcEgress  *ebpf.ProgramSpec `ebpf:"hostlimit_tc_egress"`
+	HostlimitTcIngress *ebpf.ProgramSpec `ebpf:"hostlimit_tc_ingress"`
 }
 
 // hostlimitMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type hostlimitMapSpecs struct {
-	DownloadStates *ebpf.MapSpec `ebpf:"download_states"`
-	Policies       *ebpf.MapSpec `ebpf:"policies"`
-	UploadStates   *ebpf.MapSpec `ebpf:"upload_states"`
+	BridgeIfindexes *ebpf.MapSpec `ebpf:"bridge_ifindexes"`
+	Config          *ebpf.MapSpec `ebpf:"config"`
+	DownloadStates  *ebpf.MapSpec `ebpf:"download_states"`
+	Flows           *ebpf.MapSpec `ebpf:"flows"`
+	SocketTags      *ebpf.MapSpec `ebpf:"socket_tags"`
 }
 
 // hostlimitVariableSpecs contains global variables before they are loaded into the kernel.
@@ -121,16 +129,20 @@ func (o *hostlimitObjects) Close() error {
 //
 // It can be passed to loadHostlimitObjects or ebpf.CollectionSpec.LoadAndAssign.
 type hostlimitMaps struct {
-	DownloadStates *ebpf.Map `ebpf:"download_states"`
-	Policies       *ebpf.Map `ebpf:"policies"`
-	UploadStates   *ebpf.Map `ebpf:"upload_states"`
+	BridgeIfindexes *ebpf.Map `ebpf:"bridge_ifindexes"`
+	Config          *ebpf.Map `ebpf:"config"`
+	DownloadStates  *ebpf.Map `ebpf:"download_states"`
+	Flows           *ebpf.Map `ebpf:"flows"`
+	SocketTags      *ebpf.Map `ebpf:"socket_tags"`
 }
 
 func (m *hostlimitMaps) Close() error {
 	return _HostlimitClose(
+		m.BridgeIfindexes,
+		m.Config,
 		m.DownloadStates,
-		m.Policies,
-		m.UploadStates,
+		m.Flows,
+		m.SocketTags,
 	)
 }
 
@@ -144,14 +156,16 @@ type hostlimitVariables struct {
 //
 // It can be passed to loadHostlimitObjects or ebpf.CollectionSpec.LoadAndAssign.
 type hostlimitPrograms struct {
-	HostlimitEgress  *ebpf.Program `ebpf:"hostlimit_egress"`
-	HostlimitIngress *ebpf.Program `ebpf:"hostlimit_ingress"`
+	HostlimitTagSocket *ebpf.Program `ebpf:"hostlimit_tag_socket"`
+	HostlimitTcEgress  *ebpf.Program `ebpf:"hostlimit_tc_egress"`
+	HostlimitTcIngress *ebpf.Program `ebpf:"hostlimit_tc_ingress"`
 }
 
 func (p *hostlimitPrograms) Close() error {
 	return _HostlimitClose(
-		p.HostlimitEgress,
-		p.HostlimitIngress,
+		p.HostlimitTagSocket,
+		p.HostlimitTcEgress,
+		p.HostlimitTcIngress,
 	)
 }
 

@@ -60,14 +60,15 @@ type appInternetTargetRuntime struct {
 }
 
 type appInternetController struct {
-	mu          sync.RWMutex
-	runtime     map[string]appInternetTargetRuntime
-	signature   string
-	lastApplied time.Time
-	nextRetry   time.Time
-	lastErr     error
-	lastV4      appFirewallRuleSet
-	lastV6      appFirewallRuleSet
+	mu            sync.RWMutex
+	runtime       map[string]appInternetTargetRuntime
+	signature     string
+	lastApplied   time.Time
+	nextRetry     time.Time
+	lastErr       error
+	lastV4        appFirewallRuleSet
+	lastV6        appFirewallRuleSet
+	legacyTargets string
 }
 
 type appFirewallRuleSet struct {
@@ -203,20 +204,24 @@ func (c *appInternetController) reconcile(ctx context.Context, activeTargets []A
 			return err
 		}
 	}
-	if err := cleanupLegacyAppInternetRules(ctx, activeTargets, desiredBlocked); err != nil {
-		if !c.lastApplied.IsZero() {
-			if rollbackErr := applyAppFirewallRules(ctx, false, c.lastV4); rollbackErr != nil {
-				err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
-			}
-			if hostIPv6Enabled() {
-				if rollbackErr := applyAppFirewallRules(ctx, true, c.lastV6); rollbackErr != nil {
-					err = fmt.Errorf("%w; rollback IPv6 firewall policy: %v", err, rollbackErr)
+	legacyTargets := appInternetTargetSetSignature(activeTargets)
+	if legacyTargets != c.legacyTargets {
+		if err := cleanupLegacyAppInternetRules(ctx, activeTargets, desiredBlocked); err != nil {
+			if !c.lastApplied.IsZero() {
+				if rollbackErr := applyAppFirewallRules(ctx, false, c.lastV4); rollbackErr != nil {
+					err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
+				}
+				if hostIPv6Enabled() {
+					if rollbackErr := applyAppFirewallRules(ctx, true, c.lastV6); rollbackErr != nil {
+						err = fmt.Errorf("%w; rollback IPv6 firewall policy: %v", err, rollbackErr)
+					}
 				}
 			}
+			c.markFailedLocked(activeTargets, err)
+			c.signature, c.lastErr, c.nextRetry = signature, err, nowTime.Add(10*time.Second)
+			return err
 		}
-		c.markFailedLocked(activeTargets, err)
-		c.signature, c.lastErr, c.nextRetry = signature, err, nowTime.Add(10*time.Second)
-		return err
+		c.legacyTargets = legacyTargets
 	}
 
 	now := time.Now().Format(time.DateTime)
@@ -234,6 +239,15 @@ func (c *appInternetController) reconcile(ctx context.Context, activeTargets []A
 	c.lastV4 = cloneAppFirewallRuleSet(v4)
 	c.lastV6 = cloneAppFirewallRuleSet(v6)
 	return nil
+}
+
+func appInternetTargetSetSignature(targets []AppNetworkTarget) string {
+	parts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		parts = append(parts, string(target.Kind)+"\x00"+target.ID)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\x00")
 }
 
 func cloneAppFirewallRuleSet(in appFirewallRuleSet) appFirewallRuleSet {

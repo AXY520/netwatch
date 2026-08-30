@@ -72,6 +72,7 @@ type Service struct {
 	appTrafficLimiter     *appTrafficLimiter
 	appNetworkController  *appNetworkController
 	appInternetController *appInternetController
+	appProxyController    *appProxyController
 	network               *networkMutationState
 	tasks                 *taskRuntime
 
@@ -108,6 +109,7 @@ func NewService(cfg Config) *Service {
 	s.egressCond = sync.NewCond(&s.egressMu)
 	s.appNetworkController = newAppNetworkController(s, s.appTrafficLimiter)
 	s.appInternetController = newAppInternetController()
+	s.appProxyController = newAppProxyController()
 	s.nicStats.onSampled = s.broadcastNICRealtime
 	s.closeCtx, s.closeCancel = context.WithCancel(context.Background())
 	s.loadHistory()
@@ -178,6 +180,14 @@ func (s *Service) Close() {
 		<-s.lanInterfaceDone
 		if s.appTraffic != nil {
 			s.appTraffic.flush()
+		}
+		if s.appTrafficLimiter != nil && s.appTrafficLimiter.host != nil {
+			if err := s.appTrafficLimiter.host.close(); err != nil {
+				logger.Warn("close Host/Mixed traffic limiter: %v", err)
+			}
+		}
+		if s.appProxyController != nil {
+			s.appProxyController.close()
 		}
 		resetHostCgroupBPF()
 	})
@@ -253,6 +263,11 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	s.mu.Unlock()
 
 	previousHostExperimental := s.settings.hostNetworkExperimental()
+	if persist {
+		// Proxy changes need firewall reconciliation and rollback, so the generic
+		// settings endpoint cannot mutate them behind the dedicated controller.
+		in.AppProxy, in.ProxyApps, in.AppProxyConfigs = s.settings.appProxyState()
+	}
 	s.settings.apply(in)
 	if previousHostExperimental != in.HostNetworkExperimentalEnabled {
 		InvalidateAppTrafficMetadataCache()

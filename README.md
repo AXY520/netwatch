@@ -11,7 +11,7 @@ Netwatch 是面向懒猫微服的主机网络观测应用，用于查看网站�
 - 出口信息：公网 IPv4/IPv6、国内出口、地区识别
 - NAT 类型检测：基于 STUN 的手动探测
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
-- 应用流量：在懒猫环境中按 `lzc-br-*` 网桥展示应用流量
+- 应用网络控制：按应用聚合 Bridge/Host 流量，并支持限速、禁用外网和独立 HTTP/SOCKS5 代理
 - 宽带测速：分别测量用户设备直连公网、服务器出口直连公网的下载/上传/延迟
 - 传输测速：基于 LibreSpeed 测量浏览器到本项目服务端的下载/上传/延迟
 - 路由追踪：基于 `mtr` 的异步 trace 任务
@@ -137,12 +137,15 @@ application:
 - `GET /api/v1/network/app-traffic`：读取原始网桥计数和按应用 ID 聚合的实时、今日、本月、累计流量
 - `GET /api/v1/network/app-traffic/history?app_id=cloud.lazycat.app.example`：读取指定应用的分钟采样历史
 - `POST /api/v1/network/app-traffic/limit`：设置应用上传/下载上限，Body 为 `{"app_id":"...","upload_kbps":1024,"download_kbps":4096}`，使用 `0` 取消对应方向限速
+- `POST /api/v1/network/app-policy`：按应用原子更新限速、外网和代理策略
+- `GET/POST /api/v1/network/app-proxy/settings`：读取或更新新应用弹窗使用的默认代理
 
 ### 应用流量语义
 
-应用流量来自宿主网络命名空间中的 Linux 网桥 sysfs 计数器，数据源标记为
-`linux_bridge_sysfs`，计数视角标记为 `host_bridge`。为兼容旧客户端，API 继续返回
-原始 `rx_bytes`、`tx_bytes`，同时提供语义化字段：
+Bridge 流量来自宿主网络命名空间中的 Linux 网桥 sysfs 计数器，数据源标记为
+`linux_bridge_sysfs`，计数视角标记为 `host_bridge`。Host 流量通过按容器 cgroup 附着的
+`cgroup_skb` eBPF 统计；Mixed 应用分别采样两类来源后按 `app_id` 聚合。为兼容旧客户端，
+API 继续返回原始 `rx_bytes`、`tx_bytes`，同时提供语义化字段：
 
 ```json
 {
@@ -157,14 +160,13 @@ application:
 
 在宿主 bridge 视角下，RX 是应用容器发往宿主网桥的流量，对应应用上传；TX 是宿主
 网桥发往应用容器的流量，对应应用下载。该统计可能包含应用内部或局域网流量，不等同于
-运营商公网账单。使用 `network_mode: host` 的应用服务绕过独立应用网桥，无法通过此方式
-完整统计。应用级累计值按稳定 `app_id` 持久化；新建网桥或内核计数器归零时，NetWatch
-仅重建该网桥基线，不会把重置前的旧字节数重复计入累计值。
+运营商公网账单。应用级累计值按稳定 `app_id` 持久化；单个网桥或 cgroup 计数器归零时，
+NetWatch 只重建该来源的基线，不会重复计入旧字节数。
 
-限速仅适用于拥有 `lzc-br-*` 独立网桥的应用。下载通过该网桥的 `tc tbf` 出口队列限速，
-上传通过 ingress policer 限速；`network_mode: host` 的服务没有可归属网桥，无法统计或限速。
-NetWatch 使用 `nsenter` 调用宿主机的 `tc`，不在 scratch 镜像中复制该二进制；宿主必须提供
-`tc`。NetWatch 只管理自身固定句柄/优先级的规则，发现其他 root qdisc 时会拒绝覆盖。
+纯 Bridge 限速使用网桥 TBF/police；实验开关开启后，Host/Mixed 使用默认物理出口上的
+TC/eBPF 分类和 policing，Mixed 共享一份应用预算。禁用外网和代理规则按 Bridge 网桥或 Host
+应用父 cgroup 展开。详细实现、环境要求和拓扑边界见
+[应用流量与网络控制实现说明](docs/app-traffic-controls.html)。
 
 `/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
 `netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、

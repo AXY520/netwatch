@@ -136,6 +136,34 @@ func TestLimitOnlyUpdatePreservesPartialInternetState(t *testing.T) {
 	}
 }
 
+func TestMixedLimitUsesOneSharedHostDriver(t *testing.T) {
+	bridgeDriver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{UploadLimit: true, DownloadLimit: true}}
+	hostDriver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{UploadLimit: true, DownloadLimit: true}}
+	settings := newSettingsStore(DefaultMutableSettings())
+	settings.apply(MutableSettings{HostNetworkExperimentalEnabled: true})
+	service := &Service{
+		settings:          settings,
+		containers:        newContainerControlState(),
+		appTraffic:        newAppTrafficState(t.TempDir()),
+		appTrafficLimiter: newAppTrafficLimiter(),
+	}
+	service.appNetworkController = &appNetworkController{drivers: map[AppNetworkTargetKind]appNetworkTargetDriver{
+		AppNetworkTargetBridge: bridgeDriver,
+		AppNetworkTargetCgroup: hostDriver,
+	}}
+	targets := []AppNetworkTarget{
+		{ID: "lzc-br-mixed", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-mixed"},
+		{ID: "host-app:app.example", Kind: AppNetworkTargetCgroup, AppID: "app.example"},
+	}
+	upload := int64(1000)
+	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{UploadKbps: &upload}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bridgeDriver.limits) != 0 || len(hostDriver.limits) != 1 {
+		t.Fatalf("bridge calls=%v host calls=%v", bridgeDriver.limits, hostDriver.limits)
+	}
+}
+
 func TestCombinedPolicyRollsBackLimitWhenInternetPersistenceFails(t *testing.T) {
 	driver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{
 		Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true,

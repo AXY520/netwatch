@@ -79,3 +79,14 @@ func TestAppNetworkTargetsReplaceRecreatedBridge(t *testing.T) {
 		t.Fatalf("targets=%#v", targets)
 	}
 }
+
+func TestAppInternetTargetSetSignatureIgnoresOrderAndDetectsNewTargets(t *testing.T) {
+	one := AppNetworkTarget{ID: "lzc-br-one", Kind: AppNetworkTargetBridge}
+	two := AppNetworkTarget{ID: "host-app:two", Kind: AppNetworkTargetCgroup}
+	if appInternetTargetSetSignature([]AppNetworkTarget{one, two}) != appInternetTargetSetSignature([]AppNetworkTarget{two, one}) {
+		t.Fatal("target signature depends on discovery order")
+	}
+	if appInternetTargetSetSignature([]AppNetworkTarget{one}) == appInternetTargetSetSignature([]AppNetworkTarget{one, two}) {
+		t.Fatal("target signature did not change for a new target")
+	}
+}

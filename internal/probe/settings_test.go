@@ -22,6 +22,9 @@ func TestDefaultMutableSettingsStableCore(t *testing.T) {
 	if def.HostNetworkExperimentalEnabled {
 		t.Fatal("host network experimental controls must default to disabled")
 	}
+	if err := validateAppProxySettings(def.AppProxy); err != nil || def.AppProxy.Protocol != "socks5" || def.AppProxy.Port != 7890 {
+		t.Fatalf("invalid application proxy defaults: %#v err=%v", def.AppProxy, err)
+	}
 }
 
 func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
@@ -61,6 +64,9 @@ func TestLoadMutableSettingsFillsMissingKeys(t *testing.T) {
 	if got.HostNetworkExperimentalEnabled != def.HostNetworkExperimentalEnabled {
 		t.Fatalf("HostNetworkExperimentalEnabled=%t want %t", got.HostNetworkExperimentalEnabled, def.HostNetworkExperimentalEnabled)
 	}
+	if got.AppProxy != def.AppProxy {
+		t.Fatalf("AppProxy=%#v want %#v", got.AppProxy, def.AppProxy)
+	}
 }
 
 func TestLoadMutableSettingsMissingFile(t *testing.T) {
@@ -71,6 +77,31 @@ func TestLoadMutableSettingsMissingFile(t *testing.T) {
 	def := DefaultMutableSettings()
 	if got.BarkGroup != def.BarkGroup {
 		t.Fatalf("got BarkGroup %q", got.BarkGroup)
+	}
+}
+
+func TestLoadMutableSettingsMigratesEnabledProxyApps(t *testing.T) {
+	dir := t.TempDir()
+	proxy := AppProxySettings{Protocol: "http", Host: "192.168.3.174", Port: 7890}
+	body, err := json.Marshal(map[string]any{
+		"app_proxy":  proxy,
+		"proxy_apps": map[string]bool{"app.a": true, "app.disabled": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := loadMutableSettings(dir)
+	if !ok {
+		t.Fatal("expected load ok")
+	}
+	if got.AppProxyConfigs["app.a"] != proxy {
+		t.Fatalf("migrated config=%#v want=%#v", got.AppProxyConfigs["app.a"], proxy)
+	}
+	if _, exists := got.AppProxyConfigs["app.disabled"]; exists {
+		t.Fatalf("disabled legacy app unexpectedly migrated: %#v", got.AppProxyConfigs)
 	}
 }
 

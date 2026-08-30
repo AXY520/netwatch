@@ -775,10 +775,9 @@ func appTrafficControlCapabilitiesWithControls(entry AppTrafficUsage, limitSuppo
 	if hasHost && !hostControlsEnabled {
 		return topology, false, false
 	}
-	// Bridge tc can only represent the whole application when every active
-	// container uses that bridge. Mixed and Host applications would otherwise
-	// expose a partial, misleading limit that can break their ingress path.
-	limitAllowed = limitSupported && hasBridge && !hasHost
+	// Pure Bridge uses per-bridge TBF/police. Host and Mixed applications use
+	// the shared physical-device TC classifier when experimental controls are on.
+	limitAllowed = limitSupported && (hasBridge || hasHost)
 	internetAllowed = hasBridge || hasHost
 	return topology, limitAllowed, internetAllowed
 }

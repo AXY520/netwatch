@@ -1,9 +1,9 @@
 # Host 网络控制与应用流量统计进度
 
-更新时间：2026-08-29<br>
+更新时间：2026-08-30<br>
 当前分支：`feat/host-network-controls`
 
-本文总结当前分支对应用流量统计、限制网速和禁用外网的实现状态。详细技术说明见 [app-traffic-controls.html](./app-traffic-controls.html)。
+本文总结当前分支对应用流量统计、限制网速、禁用外网和应用代理的实现状态。详细技术说明见 [app-traffic-controls.html](./app-traffic-controls.html)。
 
 ## 一、总体目标
 
@@ -23,7 +23,7 @@
 - Bridge 目标为 `lzc-br-*` 网桥。
 - Host 目标为 `host-app:<app_id>`，运行时关联应用 cgroup。
 - Mixed 应用可以同时发现 Bridge 和 Host 两类目标。
-- API 支持只修改限速或只修改外网策略。
+- API 支持字段级修改限速、外网或代理策略。
 - 多目标更新先检查能力，再逐目标执行；失败时回滚，成功后持久化。
 - 联合修改限速和外网策略时，最后一步持久化失败也会完整恢复防火墙、内存中的 `BlockedApps`、内核限速和持久化限速；回滚失败会和原始错误一起返回，不再只记录日志。
 
@@ -46,9 +46,20 @@
 - 上传使用 ingress `clsact`、局域网 bypass filter 和 `police` filter。
 - 上传规则使用 `conform-exceed drop/ok`，正常包放行，超限包丢弃。
 - 修改和取消会清理 Netwatch 自有优先级下的重复或旧规则。
-- Host/Mixed 限速当前明确拒绝，避免只限制部分流量导致应用断网。
 
-### 2.4 限速实际状态核验与漂移修复
+### 2.4 Host/Mixed 限制网速
+
+实验开关开启时，Host 和 Mixed 应用使用物理默认出口上的共享 TC 分类器：
+
+- `cgroup/sock_create` 给应用父 slice 中新建的 Host socket 写入 socket-local-storage；懒猫的 system slice 和顶层 exec slice 会同时附着。
+- 物理网卡 ingress 通过 socket lookup 识别 Host 下载，通过 egress 建立的反向流记录识别 NAT 后的 Bridge 下载；每应用一份 eBPF token bucket。
+- 物理网卡 egress 只负责给 Host/Bridge 上传包写入应用 mark；同一应用的一条原生 `fw + act_police` 规则提供共享上传预算，避免 eBPF 在 GSO 下重复发放额度。
+- Mixed 应用只调用一次 Host/Mixed limiter，不再保留独立的 Bridge TBF/police，因此不会产生第二份预算。
+- IPv4/IPv6、TCP/UDP 共用该分类路径；RFC1918、loopback、IPv4/IPv6 link-local 和 IPv6 ULA 不进入公网限速。
+- 只添加 `clsact` 和 Netwatch 保留优先级 `49160/49161`，不替换物理网卡 root qdisc；mark 只使用并清理掩码 `0x0fff0000` 内的位。
+- 每应用独立程序/map 实例，Mixed 的 Host/Bridge 共享该实例；最多同时支持 4095 个 Host/Mixed 限速应用。
+
+### 2.5 限速实际状态核验与漂移修复
 
 限速器区分三类状态：
 
@@ -58,7 +69,7 @@
 
 后台首次发现网桥或策略变化时立即核验，稳定状态下约每 20 秒读取一次 `tc`。规则缺失、速率不一致、动作错误或网桥同名重建时会自动修复。API/前端可读取 `limit_in_sync`、`limit_state` 和 `diagnostic`。
 
-### 2.5 应用流量统计
+### 2.6 应用流量统计
 
 Bridge 统计读取 `/sys/class/net/<bridge>/statistics/`，使用网桥名维护 baseline；网桥重建或计数回退时只重建对应 baseline。
 
@@ -71,7 +82,7 @@ Host 统计使用 `cgroup_skb` eBPF：
 - 一个 Host 容器重启或计数归零，不会丢失同应用其他容器的增量。
 - Bridge 与 Host 混合应用分别计算增量后再聚合。
 
-### 2.6 Host eBPF map 持久化
+### 2.7 Host eBPF map 持久化
 
 Host 统计 map 优先 pin 到宿主机 bpffs：
 
@@ -82,14 +93,14 @@ Host 统计 map 优先 pin 到宿主机 bpffs：
 
 Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写或 pin 失败，则降级为临时 map，并在 Host 目标 diagnostic 中提示重启会重置计数。eBPF 程序和 cgroup attachment 仍由当前进程管理，服务退出时主动解除，避免挂住已删除应用的 cgroup。
 
-### 2.7 Host eBPF 生命周期清理
+### 2.8 Host eBPF 生命周期清理
 
 - attachment 同时记录 cgroup 路径和 cgroup ID，可识别“路径相同但 cgroup inode 已变化”的复用场景。
 - 获取到完整运行时 cgroup 清单后，关闭已停止或被替换 cgroup 的 link，并删除 RX/TX map 中不再属于任何活动 Host 容器的 key。
 - 任一活动 Host 容器的应用归属或 cgroup 解析失败时跳过整轮清理，避免在不完整清单下误删有效计数。
 - link 关闭失败时保留未关闭的引用，供后续 reconcile 重试；清理错误不会被静默吞掉。
 
-### 2.8 应用列表和历史
+### 2.9 应用列表和历史
 
 - 活动列表只展示当前仍有运行容器的应用。
 - 历史数据按 `app_id` 持久化，旧版 Bridge 历史支持迁移。
@@ -99,11 +110,11 @@ Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写�
 
 ## 三、当前能力矩阵
 
-| 网络模式 | 流量统计 | 禁用外网 | 限制网速 |
-| --- | --- | --- | --- |
-| 纯 Bridge | 支持 | 支持 | 支持 |
-| 纯 Host | cgroup eBPF，真机已验证 | 实验性开关开启后支持 | 仅有隔离原型，产品明确拒绝 |
-| Mixed | Bridge + Host 分别统计后聚合，真机已验证 | Bridge/Host 分别控制 | 仅有隔离原型，产品明确拒绝 |
+| 网络模式 | 流量统计 | 禁用外网 | 限制网速 | 设置代理 |
+| --- | --- | --- | --- | --- |
+| 纯 Bridge | 支持 | 支持 | 支持 | 支持 |
+| 纯 Host | cgroup eBPF，真机已验证 | 实验性开关开启后支持 | 实验性开关开启后支持，真机已验证 | 实验性开关开启后支持 |
+| Mixed | Bridge + Host 分别统计后聚合，真机已验证 | Bridge/Host 分别控制 | 实验性开关开启后共享应用预算，真机已验证 | Bridge/Host 分别代理 |
 
 ## 四、已知边界
 
@@ -117,9 +128,9 @@ map 持久化只保留已经累计的计数。cgroup attachment 不 pin，因此
 
 ### 4.3 Host/Mixed 限速
 
-Host 容器共享宿主机网络命名空间，不能直接套用 Bridge 的 root TBF。cgroup_skb 可以实现按 cgroup 的 token bucket，但只能超限丢包（policing），不能排队整形（shaping）；TCP 会通过重传近似收敛，UDP 会直接丢包。宿主物理网卡上的 tc/HTB 较适合上传整形，但下载在 socket/cgroup 归属确定前经过物理入口，无法可靠按应用分类。
+Host/Mixed 限速是 policing，不是 shaping：TCP 会通过重传和拥塞控制接近目标速率，UDP 超限包会直接丢弃，短流还会受到 128 KiB burst 影响。下载按物理 ingress `skb.len` 计费，上传由原生 `act_police` 计费；数值是应用级公网总预算，不是每容器预算。
 
-Mixed 应用还要求 Bridge 与一个或多个 Host cgroup 共享同一应用级预算。原型证明把独立程序实例附着到应用父 slice 后，Host、Bridge、多个子 cgroup 和顶层 exec slice 可以共用一个 bucket；这避免了分别给网桥和 Host cgroup 发放两份额度。不过真机并发测试同时发现，Host ingress 在 GRO/GSO 路径上的 `skb.len` 与应用实际接收字节不稳定对应，而 `cgroup_skb` verifier 又禁止读取 `wire_len/gso_segs`。因此当前原型不能证明精确双向限速，Host/Mixed 继续明确拒绝。
+当前只选择一个默认出口设备；IPv4 与 IPv6 默认路由若位于不同设备会拒绝启用。多 WAN、策略路由、VPN/tunnel、IPv6 扩展头和出口切换仍是明确边界。取消策略会删除所有应用 filter、attachment 和 map；空的 `clsact` 可以保留，因为它不替换也不改变原有 root qdisc。
 
 ## 五、验证记录
 
@@ -148,27 +159,80 @@ git diff --check
 - 宿主 iptables/ip6tables 是指向 `/etc/alternatives/` 的绝对符号链接。能力检测已改为不跟随容器根中的链接；防火墙命令同时使用 `nsenter -C` 进入 PID 1 的 cgroup namespace，避免 `xt_cgroup --path` 在容器 cgroup namespace 中解析失败并返回 `RULE_APPEND ... Invalid argument`。
 - FluxDown 真机执行“禁用外网”成功，Bridge/Host 目标均为 `blocked=true`、整体 `internet_in_sync=true`。Host cgroup 规则实测丢弃 IPv4 `438` 包 / `34943` 字节和 IPv6 `16` 包 / `1264` 字节，同时放行 172.16/12 私网 `115` 包；恢复外网后策略、持久化状态及 IPv4/IPv6 cgroup 规则均已清空。
 - 懒猫上的容器主进程位于 `system.slice/runc-lzc-os.scope/lzcapp.slice/...`，但 `lzc-docker exec` 创建的进程位于顶层 `lzcapp.slice/...`。Host 禁网现在同时覆盖两棵真实存在的应用 slice；复测 `lzc-docker exec ... curl baidu.com` 连接超时，exec-tree DROP 规则命中 `5` 包，同时 172.16/12 与 loopback 流量继续放行。
-- 没有擅自停止或重启其他用户应用；停止应用后的 stale key 真机清理由逻辑/内核单测覆盖，等待安全维护窗口做破坏性生命周期验证。
+- 没有停止或重启用户应用。使用独立临时 Host 容器完成生命周期真机验证：停止前 cgroup ID `153510` 的 ingress/egress link 和 RX/TX map key 均存在；停止后活动应用条目消失、两条 link FD 关闭、两个 map key 均为 `absent`。临时容器、检查器和空父 slice 已清理。
 
-### 5.2 Host/Mixed policing 原型验证
+### 5.2 被淘汰的 cgroup_skb 限速原型
 
-- 目标机为 Linux `6.5.0-0.deb12.4-amd64`、cgroup v2；`cgroup_skb` ingress/egress 程序、BPF hash map 和 map value spin lock 均通过 verifier 并成功附着。
-- 原型按应用创建独立程序/map 实例；多个真实 cgroup 路径附着完成前 policy map 不存在，所有程序 fail-open，最后以一次 policy map 更新同时激活上传/下载 generation。关闭时先删除 policy，再解除 link 和删除状态。
-- token bucket 使用纳秒定点额度，避免高包速下丢失不足 1 byte 的 refill；Host burst 下限为 128 KiB，确保 GRO skb 不会因大于 bucket 上限而永远无法通过。
-- 1 Mbps Bridge 公网下载测试中，25 秒应用收到 `2923771` 字节（约 `935.6 Kbit/s`），BPF 放行 `3031936` 字节、丢弃 `1720160` 字节，单一路径结果接近目标。
-- loopback bypass 测试连续读取约 `9.39 MB`，瞬时完成且上传/下载 bucket 计数均保持 `0`；顶层 exec 父 slice 测试命中下载 drop `935692` 字节，证明与禁网规则相同的双 cgroup 分支需要同时覆盖。
-- 两个子 cgroup 挂在同一个父 slice 时共享一份状态，不会各自创建完整额度；一个 Host 与一个应用 Bridge 容器也能由同一父 slice 程序执行。
-- 但 Host + Bridge 并发公网测试设置 1 Mbps、完全关闭 LAN bypass 后，20 秒应用层合计仍收到约 `10.22 MB`，BPF 只观察到约 `4.15 MB`。固定应用 bucket、取消 skb cgroup 身份反查后结果不变，排除了 membership 和私网解析问题。
-- 尝试读取 `__sk_buff.wire_len/gso_segs` 补偿 Host GRO/GSO，内核 verifier 明确拒绝：`invalid bpf_context access off=160 size=4`。因此不能在该 hook 上把 `skb.len` 稳定换算为线速字节；物理 ingress 虽能看到线速包，却缺少可靠的本地 socket/cgroup 归属。
-- 全部验证只使用临时 `netwatch-hostlimit-probe-*` 容器和专用父 slice；没有修改 FluxDown 容器、没有重启其他应用。测试容器、父 slice、attachment 和复制到 Netwatch 容器的测试二进制均在结束后清理。
+- 第一版把 token bucket 直接放在应用父 slice 的 `cgroup_skb` ingress/egress，证明了多个 Host 子 cgroup 和顶层 exec slice 可以共享状态。
+- 该 hook 在 GRO/GSO 下的 `skb.len` 与应用实际字节不稳定对应，verifier 又禁止访问 `wire_len/gso_segs`；Host + Bridge 并发 1 Mbps 时应用层约收到 `10.22 MB/20s`，而 BPF 只观察到约 `4.15 MB`。
+- 因此这版代码已被删除，没有作为产品 fallback 保留。保留它只会形成第二套无法精确计费的限速实现。
 
-## 六、Host/Mixed 限速评估结论
+### 5.3 正式 Host/Mixed 限速真机验证
 
-当前结论是“原型已完成，但不开放”，不是直接进入产品实现：
+目标机为 Linux `6.5.0-0.deb12.4-amd64`，正式测试镜像为 `sha256:7d697be8c180983b931da8ed6cd588d2de3d4b18248a87fb0df1433820b5f735`。测试使用临时 Mixed 应用 `netwatch.hostlimit.probe`，未修改或重启 FluxDown：
 
-1. cgroup_skb 共享 token bucket 可以作为 policing 原型；按应用使用独立程序/map 实例并附着父 slice，可让多个 Host/Bridge 子 cgroup 共用上传和下载预算。
-2. staging/generation、fail-open 清理、spin-lock 并发 bucket、LAN/loopback bypass、GRO burst 下限和 drop 计数已经在原型实现并完成真机验证。
-3. `cgroup_skb` 的 Host ingress 字节语义在 GRO/GSO 下不能稳定代表线速字节，且该程序类型无法读取 `wire_len/gso_segs` 修正；在解决这个内核观测缺口前，不能把 policing 结果宣称为用户配置的精确限速。
-4. 物理网卡 tc/HTB 只能作为 Host 上传整形候选，不能单独解决下载归属，也不能直接解决 Mixed 共享预算。
-5. Mixed 的共享 meter 已证明可构造，但精确 Host 下载计量、TCP/UDP、IPv4/IPv6、多网卡/VPN、应用重启和产品级 reconcile 尚未全部完成，因此持续拒绝并保持 UI/API 能力为 false。
-6. bpffs 挂载应作为部署能力单独解决，不由 Netwatch 未经确认修改宿主机全局 mount namespace。
+- 正式 `sock_create + TC ingress/egress` 程序通过 verifier；`enp2s0` 只新增 `clsact`，原生 `mq + fq_codel` root qdisc 完整保留。
+- ingress/egress BPF filter 使用 pref `49160`；上传 `fw + act_police` 使用 pref `49161`，内核读回 `1Mbit / 128Kb / mtu 64Kb / drop/pipe`，API 为 `limit_in_sync=true`。
+- 1 Mbps 单流下载：Host `2097152` 字节 / `16.926s`，约 `991 Kbit/s`；Bridge `2097152` 字节 / `17.068s`，约 `983 Kbit/s`。
+- 1 Mbps Mixed 并发下载：Host 与 Bridge 各 `1 MiB`，总完成时间 `19.548s`；两条流量竞争同一 bucket，而不是各自获得 1 Mbps。
+- 1 Mbps 单流上传：Host 约 `971 Kbit/s`，Bridge 约 `995 Kbit/s`。Mixed 并发各上传 `1 MiB`，总完成时间 `16.804s`，聚合约 `998 Kbit/s`；同一 police 规则累计处理两类流量。
+- loopback 读取 `8 MiB` 用时 `0.071s`，未进入公网预算。限速热更新为 2 Mbps 后，Host 下载约 `2.001 Mbit/s`。
+- 手动删除 ingress BPF filter 后，周期 reconcile 自动恢复；重启 Netwatch 后 program ID 更新，持久化的 2 Mbps filter/police 和 `limit_in_sync=true` 自动恢复。
+- 将双向速率清零后，pref `49160/49161`、应用 attachment/map 和持久化 limit 均被清理。
+- 测试结束后删除了临时容器、网络、两棵父 slice、应用历史和测试 `clsact`；最终 `enp2s0` 仅剩原始 `mq + fq_codel`，生产环境无探针残留。
+
+## 六、Host/Mixed 限速结论
+
+1. Host/Mixed 限速已进入产品路径，但仍受“Host 网络控制（实验性）”开关控制；开关关闭时能力为 false，并清理已有 Host/Mixed 限速状态。
+2. Mixed 的 Host 与 Bridge 共用一个下载 eBPF bucket 和一条上传原生 police，避免重复预算；纯 Bridge 仍沿用网桥 TBF/police。
+3. 方案是 policing，TCP 会近似收敛，UDP 会丢弃超限包；不承诺无丢包 shaping，也不承诺短流瞬时速率等于配置值。
+4. 当前只支持 IPv4/IPv6 默认路由位于同一出口设备的拓扑；多 WAN、策略路由、VPN/tunnel、IPv6 扩展头和出口切换需要后续单独设计。
+5. bpffs 挂载仍只影响 Host 流量统计 map 的跨重启累计，不是 Host/Mixed 限速的依赖；Netwatch 不会自行修改宿主机全局 mount namespace。
+
+## 七、每应用独立代理上游（已完成）
+
+### 7.1 结论与原问题
+
+每个应用使用不同的 HTTP/SOCKS5 上游可以实现，不需要新增 eBPF、内核模块或第三方依赖。Bridge、Host 和 Mixed 目标在进入代理规则生成前已经能关联到 `app_id`，因此可以继续复用现有目标发现、禁用外网优先级、双缓冲防火墙和失败回滚机制。
+
+改造前的单上游原型存在三个根问题：
+
+- `app_proxy` 只保存一份全局上游，`proxy_apps` 只记录应用是否启用。
+- 所有应用都被重定向到固定本地端口 `23089`，该端口只有一个 `appProxyAdapter` 和一份当前配置。
+- 弹窗先修改全局上游、再启用应用，是两个请求；修改一个应用会影响其他已代理应用，中间失败也不能形成完整事务。
+
+这些问题已修正。代理认证、域名上游、规则分流仍属于后续扩展，不在当前版本范围内。
+
+### 7.2 已落地模型
+
+- `app_proxy` 保留为全局默认值，只用于新应用第一次设置代理时预填，不再改变已经配置的应用。
+- 新增 `app_proxy_configs`，保存 `app_id -> AppProxySettings`；现有 `proxy_apps` 继续只表示启用状态。这样“恢复直连”后仍能保留该应用上次填写的地址。
+- 旧数据中已启用但没有独立配置的应用，在加载时复制当时的全局 `app_proxy`，保证升级后行为不变。
+- “启用”通过一次应用策略请求同时提交 `proxy_enabled` 和代理配置；配置校验、规则切换、内存状态和持久化沿用现有事务回滚路径。
+- 应用流量响应返回该应用保存的代理配置；弹窗优先显示应用配置，没有时才显示全局默认值。
+- 设置页不展示全局代理项；后端默认值只用于未配置应用的弹窗预填，不会热切换已配置应用。
+
+### 7.3 实现方式
+
+1. 将 `appProxyAdapter` 的监听端口参数化，由控制器为每个启用代理的应用维护一个适配器和唯一内部端口。
+2. 规则生成时按目标所属 `app_id` 使用对应端口；HTTP 只重定向 TCP，SOCKS5 重定向 TCP/UDP，其余公网协议继续失败关闭。
+3. 应用修改代理时先启动新适配器，再用现有双缓冲 chain 切换规则；成功后关闭旧适配器，失败则保留旧规则和旧适配器。
+4. 应用恢复直连时删除其重定向规则并关闭适配器，但保留上次填写的应用配置。
+5. 当前保持“一应用一适配器”。只有实际出现大量代理应用导致监听 socket 成为问题时，才合并使用相同上游的适配器。
+
+### 7.4 验证结果
+
+- 本地通过 `go test ./...`、`go test -race ./internal/probe ./internal/api`、`go vet ./...`、`go build ./...`、前端语法/模块 smoke 和 `git diff --check`。
+- 单测覆盖旧 `app_proxy + proxy_apps` 数据迁移、两个应用生成不同内部端口、HTTP 不重定向 UDP、SOCKS5 重定向 TCP/UDP，以及两个适配器不能复用监听端口。
+- 真机镜像为 `sha256:5cf07ae2937c8a92f3d67c5eaa5973a0085aaa2a6fe46605099fae37f911aea3`。
+- `cloud.lazycat.app.testflight` 使用 HTTP 上游时只生成 TCP 重定向，初始内部端口为 `35895`；`cloud.lazycat.networkdiagnostic` 使用 SOCKS5 上游时生成 TCP/UDP 重定向，内部端口为 `45091`。
+- 修改 TestFlight 的上游后，其端口从 `35895` 切换到 `34883`，Network Diagnostic 始终保持 `45091`；恢复 TestFlight 直连后，Network Diagnostic 的规则仍保持不变。
+- 重装 Netwatch 后，Network Diagnostic 的启用状态、SOCKS5 类型、IP 和端口完整恢复，`proxy_state=proxied`、`proxy_in_sync=true`。
+- 验证结束后两个应用均恢复原默认配置并恢复直连；所有代理 NAT REDIRECT 和 filter 内容规则已清空，Firefox 原有 `internet_state=blocked` 未被改变。
+- 最终收尾镜像为 `sha256:8c16270bc432045c798e90c2c071c62def8b5457524ce2e86fc16e1d922b21fe`；生产静态资源回读确认设置页不再显示全局代理项，应用弹窗不再显示 HTTP/UDP 说明，提交按钮为“启用”。
+
+### 7.5 后续顺序
+
+1. 先观察实际使用反馈，确认 IP + 端口、无认证 HTTP/SOCKS5 是否覆盖主要场景。
+2. 有明确需求后再评估代理鉴权和主机名上游。
+3. 连通性检测和规则分流保持 YAGNI，不因本次改造提前实现。

@@ -154,6 +154,7 @@ func TestAppTrafficControlCapabilities(t *testing.T) {
 			name:         "host",
 			entry:        AppTrafficUsage{AppID: "cloud.lazycat.app.host", Bridges: []string{"host-app:cloud.lazycat.app.host"}, NetworkModes: []string{"host"}},
 			wantTopology: "host",
+			wantLimit:    true,
 			wantInternet: true,
 		},
 		{
@@ -164,6 +165,7 @@ func TestAppTrafficControlCapabilities(t *testing.T) {
 				NetworkModes: []string{"bridge", "host"},
 			},
 			wantTopology: "mixed",
+			wantLimit:    true,
 			wantInternet: true,
 		},
 		{
