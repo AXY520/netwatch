@@ -286,6 +286,16 @@ function bindControls() {
     });
     var networkConfigApplyBtn = document.getElementById('network-config-apply-btn');
     if (networkConfigApplyBtn) networkConfigApplyBtn.addEventListener('click', function () { if (A.applyNetworkConfig) A.applyNetworkConfig(); });
+    var networkMACInput = document.getElementById('network-config-mac');
+    if (networkMACInput) networkMACInput.addEventListener('input', function () { if (A.updateNetworkMACApplyState) A.updateNetworkMACApplyState(); });
+    var networkMACApplyBtn = document.getElementById('network-mac-apply-btn');
+    if (networkMACApplyBtn) networkMACApplyBtn.addEventListener('click', function () { if (A.applyNetworkMAC) A.applyNetworkMAC(); });
+    var networkMACRestoreBtn = document.getElementById('network-mac-restore-btn');
+    if (networkMACRestoreBtn) networkMACRestoreBtn.addEventListener('click', function () { if (A.restoreOriginalNetworkMAC) A.restoreOriginalNetworkMAC(); });
+    var networkMACConfirmBtn = document.getElementById('network-mac-confirm-btn');
+    if (networkMACConfirmBtn) networkMACConfirmBtn.addEventListener('click', function () { if (A.confirmNetworkConfig) A.confirmNetworkConfig(); });
+    var networkMACRollbackBtn = document.getElementById('network-mac-rollback-btn');
+    if (networkMACRollbackBtn) networkMACRollbackBtn.addEventListener('click', function () { if (A.rollbackNetworkConfig) A.rollbackNetworkConfig(); });
     var networkConfigRestartBtn = document.getElementById('network-config-restart-btn');
     if (networkConfigRestartBtn) networkConfigRestartBtn.addEventListener('click', function () { if (A.restartNetworkConfigDevice) A.restartNetworkConfigDevice(); });
     var networkConfigConfirmBtn = document.getElementById('network-config-confirm-btn');

@@ -45,6 +45,7 @@
   <header>
     <h1>Netwatch 应用流量与网络控制实现说明</h1>
     <p class="lead">本文描述当前代码中“应用流量统计、限制网速、禁用外网、设置代理”四个功能的统一控制模型、数据流、适用范围和限制。文档以当前分支代码为准。</p>
+    <p class="meta">更新时间：2026-08-31</p>
     <p class="meta">适用代码：<code>internal/probe/apptraffic.go</code>、<code>app_traffic_state.go</code>、<code>app_traffic_limit.go</code>、<code>app_network_control.go</code>、<code>app_proxy_control.go</code>、<code>app_proxy_adapter.go</code></p>
   </header>
 
@@ -197,6 +198,8 @@
     <p>每个启用代理的应用拥有独立 <code>appProxyAdapter</code> 和动态本地端口。Bridge 目标在 <code>PREROUTING/FORWARD</code> 按网桥匹配，Host 目标在 <code>OUTPUT</code> 按两棵应用父 slice 匹配；公网流量经 Netwatch 自有双缓冲 NAT/filter chain 重定向到对应适配器，局域网流量保持直连。</p>
     <ul>
       <li>HTTP 上游转发 TCP；公网 UDP 和其他未支持协议失败关闭。SOCKS5 上游转发 TCP 和 UDP。</li>
+      <li>代理地址是宿主机自身地址时优先拨号 loopback，失败再回退用户填写的地址；远程代理仍只连接原地址。宿主 DHCP 地址变化后，新应用默认值会刷新，但已配置应用保持各自地址。</li>
+      <li>nftables 兼容层未返回 UDP 原始目的地址时，从当前 network namespace 的 <code>nf_conntrack</code> 恢复 original/reply tuple；回包通过 <code>IP_PKTINFO</code> / <code>IPV6_PKTINFO</code> 使用反向 NAT 期望的源地址。仅本地重定向且首查未命中时执行最多 4 次、间隔 3ms 的有限重试。</li>
       <li>“启用”通过一次 <code>app-policy</code> 请求原子提交应用配置和启用状态。修改应用 A 时先启动新适配器并切换规则，成功后才关闭旧适配器，不影响应用 B。</li>
       <li>禁用外网优先于代理；已配置代理的应用被禁网时状态为 <code>paused</code>，公网流量直接丢弃，恢复外网后代理规则自动恢复。</li>
     </ul>

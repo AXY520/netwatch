@@ -108,6 +108,7 @@ func readRuntimeConfigForVerification(ctx context.Context, device string, iface 
 	var kernel networkDeviceRuntimeConfig
 	var readErrors []string
 	if iface != nil {
+		kernel.MACAddress = normalizeMAC(iface.HardwareAddr.String())
 		addrs, err := iface.Addrs()
 		if err != nil {
 			readErrors = append(readErrors, "kernel addresses: "+err.Error())
@@ -139,7 +140,7 @@ func readRuntimeConfigForVerification(ctx context.Context, device string, iface 
 		}
 	}
 	runtime := mergeRuntimeNetworkConfig(kernel, nmRuntime)
-	if runtime.IPv4 == "" && runtime.Gateway == "" && runtime.DNS == "" && len(readErrors) > 0 {
+	if runtime.IPv4 == "" && runtime.Gateway == "" && runtime.DNS == "" && runtime.MACAddress == "" && len(readErrors) > 0 {
 		return runtime, fmt.Errorf("无法读取网卡运行态: %s", strings.Join(readErrors, "; "))
 	}
 	return runtime, nil
@@ -156,6 +157,9 @@ func mergeRuntimeNetworkConfig(kernel, nmcli networkDeviceRuntimeConfig) network
 	}
 	if strings.TrimSpace(runtime.Gateway) == "" {
 		runtime.Gateway = strings.TrimSpace(nmcli.Gateway)
+	}
+	if strings.TrimSpace(runtime.MACAddress) == "" {
+		runtime.MACAddress = strings.TrimSpace(nmcli.MACAddress)
 	}
 	// resolv.conf in the app container can be a local stub and does not always
 	// expose the host profile's nameservers. Prefer NetworkManager's explicit
@@ -183,7 +187,8 @@ func verifyRuntimeMutationConfig(m *networkMutation, runtime networkDeviceRuntim
 		method, dns = m.DNS.Request.Method, m.DNS.Request.DNS
 	}
 	var steps []NetworkMutationVerificationStep
-	if m.Kind != networkMutationDNS {
+	macOnly := m.Kind == networkMutationIP && m.IP.Request.MACOnly
+	if m.Kind != networkMutationDNS && !macOnly {
 		addressOK := runtime.IPv4 != ""
 		if method == "manual" && address != "" {
 			addressOK = sameCIDRAddress(runtime.IPv4, address)
@@ -200,6 +205,13 @@ func verifyRuntimeMutationConfig(m *networkMutation, runtime networkDeviceRuntim
 			}
 			steps = append(steps, verificationStep("default_gateway", true, started, runtime.Gateway, gwErr))
 		}
+	}
+	if m.Kind == networkMutationIP && m.IP.Request.MACAddress != "" {
+		var macErr error
+		if normalizeMAC(runtime.MACAddress) != normalizeMAC(m.IP.Request.MACAddress) {
+			macErr = fmt.Errorf("runtime MAC %q does not match requested %q", runtime.MACAddress, m.IP.Request.MACAddress)
+		}
+		steps = append(steps, verificationStep("mac_address", true, started, runtime.MACAddress, macErr))
 	}
 	if method == "manual" && dns != "" {
 		var dnsErr error

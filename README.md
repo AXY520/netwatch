@@ -90,7 +90,7 @@ application:
 - `GET /api/v1/network/egress-lookups`：出口查询缓存或触发查询
 - `POST /api/v1/network/egress-lookups`：清除公网 IP 缓存并刷新出口查询
 - `GET /api/v1/network/config/devices`：读取可配置网卡
-- `POST /api/v1/network/config/apply`：应用网卡 IPv4 配置
+- `POST /api/v1/network/config/apply`：应用网卡 IPv4 / MAC 配置
 - `POST /api/v1/network/config/confirm`：确认网卡配置
 - `POST /api/v1/network/config/rollback`：回滚网卡配置
 - `GET /api/v1/network/dns`：读取指定网卡的 DNS 配置

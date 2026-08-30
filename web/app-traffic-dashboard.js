@@ -320,7 +320,9 @@ function initAppTraffic() {
     };
     var openLimit = function (item) {
         var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
-        if (!item || !item.app_id || capabilities.upload_limit !== true || capabilities.download_limit !== true || !limitWindow) return;
+        var blocked = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.internet_allowed === false;
+        var proxyEnabled = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.proxy_enabled === true;
+        if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && proxyEnabled) || capabilities.upload_limit !== true || capabilities.download_limit !== true || !limitWindow) return;
         activeMenuAppID = '';
         activeLimitAppID = item.app_id;
         updateTrafficMenus();
@@ -345,7 +347,8 @@ function initAppTraffic() {
     };
     var openProxy = function (item) {
         var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
-        if (!item || !item.app_id || capabilities.proxy_control !== true || !proxyWindow) return;
+        var blocked = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.internet_allowed === false;
+        if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && appTrafficHasLimit(item)) || capabilities.proxy_control !== true || !proxyWindow) return;
         activeMenuAppID = '';
         activeProxyAppID = item.app_id;
         updateTrafficMenus();
@@ -613,6 +616,20 @@ function appTrafficControlStatusMarkup(item) {
     return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
 }
 
+function appTrafficHasHostTarget(item) {
+    var modes = item && Array.isArray(item.network_modes) ? item.network_modes : [];
+    if (modes.some(function (mode) { return String(mode).toLowerCase() === 'host'; })) return true;
+    var targets = item && Array.isArray(item.network_targets) ? item.network_targets : [];
+    return targets.some(function (target) {
+        return target && (target.kind === 'cgroup' || target.network_mode === 'host');
+    });
+}
+
+function appTrafficHasLimit(item) {
+    var limit = item && item.limit || {};
+    return appTrafficNumber(limit.upload_kbps) > 0 || appTrafficNumber(limit.download_kbps) > 0;
+}
+
 function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var appID = item && item.app_id;
     if (!appID) return '';
@@ -623,6 +640,10 @@ function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var proxyAllowed = capabilities.proxy_control === true;
     var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
     var proxyEnabled = policy.desired && policy.desired.proxy_enabled === true;
+    var hostTarget = appTrafficHasHostTarget(item);
+    var limited = appTrafficHasLimit(item);
+    var showLimit = limitSupported && limitAllowed && !blocked && !(hostTarget && proxyEnabled);
+    var showProxy = proxyAllowed && (!blocked || proxyEnabled) && (proxyEnabled || !hostTarget || !limited);
     var open = activeAppID === appID;
     var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
     if (!limitAllowed && !internetAllowed && !proxyAllowed) return '';
@@ -630,15 +651,15 @@ function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var panel = '<div class="app-traffic-more-panel" role="menu">';
     // The experimental switch gates Host/Mixed policing; read-only accounting
     // stays active regardless of that setting.
-	if (limitSupported && limitAllowed) {
+	if (showLimit) {
         panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
 	}
-    if (proxyAllowed) {
-        if (limitSupported && limitAllowed) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
+    if (showProxy) {
+        if (showLimit) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
         panel += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
     }
     if (internetAllowed) {
-        if ((limitSupported && limitAllowed) || proxyAllowed) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
+        if (showLimit || showProxy) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
         panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
     return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
@@ -985,4 +1006,7 @@ window.__app.initNICRealtime = initNICRealtime;
 window.__app.initTrace = initTrace;
 window.__app.updateNICRealtimeRefreshButton = updateNICRealtimeRefreshButton;
 window.__app.refreshAppTrafficSoon = refreshAppTrafficSoon;
+window.__app.appTrafficHasHostTarget = appTrafficHasHostTarget;
+window.__app.appTrafficHasLimit = appTrafficHasLimit;
+window.__app.appTrafficMoreMenu = appTrafficMoreMenu;
 })();

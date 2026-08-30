@@ -4681,7 +4681,8 @@ button.icon-button,
 }
 
 
-/* Host DNS tab */
+/* MAC / Host DNS tabs */
+.network-mac-section,
 .host-dns-section { display: grid; gap: 0.85rem; }
 .host-dns-meta {
     display: flex;
@@ -4690,12 +4691,15 @@ button.icon-button,
     line-height: 1.4;
     margin-bottom: 0;
 }
+.network-mac-grid,
 .host-dns-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.85rem;
 }
+.network-mac-grid label,
 .host-dns-grid label { display: grid; gap: 0.35rem; }
+.network-mac-new-field { grid-column: 1 / -1; }
 .host-dns-presets {
     display: flex;
     flex-wrap: wrap;
@@ -4705,6 +4709,7 @@ button.icon-button,
     font-size: 0.82rem;
     padding: 0.35rem 0.7rem;
 }
+.network-mac-actions,
 .host-dns-actions {
     display: flex;
     flex-wrap: wrap;
@@ -4712,8 +4717,11 @@ button.icon-button,
 }
 .host-dns-manual-field[hidden] { display: none !important; }
 @media (max-width: 900px) {
+    .network-mac-grid,
     .host-dns-grid { grid-template-columns: 1fr; }
+    .network-mac-actions,
     .host-dns-actions { display: grid; grid-template-columns: 1fr 1fr; }
+    .network-mac-actions button,
     .host-dns-actions button { width: 100%; }
 }
 

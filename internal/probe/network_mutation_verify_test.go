@@ -65,6 +65,19 @@ func TestVerifyRuntimeMutationConfigPassesKernelRuntimeState(t *testing.T) {
 	}
 }
 
+func TestVerifyMACOnlyMutationChecksOnlyMAC(t *testing.T) {
+	m := &networkMutation{
+		Kind: networkMutationIP,
+		IP: &networkConfigRollback{Request: NetworkConfigApplyRequest{
+			MACOnly: true, MACAddress: "02:11:22:33:44:55",
+		}},
+	}
+	steps := verifyRuntimeMutationConfig(m, networkDeviceRuntimeConfig{MACAddress: "02:11:22:33:44:55"}, nil)
+	if len(steps) != 1 || !requiredStepsPassed(steps) || steps[0].Name != "mac_address" {
+		t.Fatalf("MAC-only verification = %+v", steps)
+	}
+}
+
 func TestVerifyAutoDNSRequiresRuntimeNameserver(t *testing.T) {
 	m := &networkMutation{
 		Kind: networkMutationDNS,

@@ -1,6 +1,6 @@
 # Host 网络控制与应用流量统计进度
 
-更新时间：2026-08-30<br>
+更新时间：2026-08-31<br>
 当前分支：`feat/host-network-controls`
 
 本文总结当前分支对应用流量统计、限制网速、禁用外网和应用代理的实现状态。详细技术说明见 [app-traffic-controls.html](./app-traffic-controls.html)。
@@ -231,8 +231,34 @@ git diff --check
 - 验证结束后两个应用均恢复原默认配置并恢复直连；所有代理 NAT REDIRECT 和 filter 内容规则已清空，Firefox 原有 `internet_state=blocked` 未被改变。
 - 最终收尾镜像为 `sha256:8c16270bc432045c798e90c2c071c62def8b5457524ce2e86fc16e1d922b21fe`；生产静态资源回读确认设置页不再显示全局代理项，应用弹窗不再显示 HTTP/UDP 说明，提交按钮为“启用”。
 
-### 7.5 后续顺序
+### 7.5 代理兼容性补充与最终真机复测
+
+- 宿主机 DHCP 地址变化时，加载配置会先用旧默认值迁移已启用但尚无独立配置的应用，再把新应用预填地址刷新为当前宿主地址；本机地址从 `192.168.3.174` 变化到 `192.168.3.192` 后已验证。
+- 用户填写宿主机自身 IP 时，适配器优先连接 `127.0.0.1` / `::1`，失败才回退用户填写的地址，避免容器访问宿主地址时遇到 hairpin 限制；远程代理地址不受影响。
+- nftables 兼容层可能让 UDP `REDIRECT` 返回重定向后的本地地址。SOCKS5 UDP 会从当前 network namespace 的 `/proc/net/nf_conntrack` 恢复原始目的地址和 reply tuple，并用 `IP_PKTINFO` / `IPV6_PKTINFO` 指定回包源地址；仅在确认为本地重定向且 flow 暂不可见时最多查询 4 次、间隔 3ms。
+- HTTP 与 SOCKS5 TCP 在 Host、Bridge 上均成功读取百度 `robots.txt`（`2814` 字节）；SOCKS5 UDP 在 Bridge、Host 上均完成 DNS 查询。最终 Host 首次 DNS 查询一次成功，日志未再出现 `nf_conntrack has no redirected UDP flow`。
+- UDP 真机验证镜像为 `sha256:ca02d5c7e4dea979b61c0ccf3d15c2f4308931e1920011186428dce4d483a149`；把 conntrack 查询进一步收窄到本地重定向分支后的最终部署镜像为 `sha256:431c8a98cf28901eb640e399363d15f0d47a236278d4fe8a83c0c31939a3a69e`。临时 `netwatch.proxy.bridgeprobe` 在复测后立即恢复直连，容器、应用策略和两棵父 slice 均已清理。
+
+### 7.6 后续顺序
 
 1. 先观察实际使用反馈，确认 IP + 端口、无认证 HTTP/SOCKS5 是否覆盖主要场景。
 2. 有明确需求后再评估代理鉴权和主机名上游。
 3. 连通性检测和规则分流保持 YAGNI，不因本次改造提前实现。
+
+## 八、网卡 MAC 地址配置（已完成）
+
+### 8.1 交互与恢复设计
+
+- “修改配置”窗口中 MAC 使用独立标签，与 IP 和 DNS 操作分开；表单同时展示当前 MAC、永久硬件 MAC 和新 MAC。
+- 修改只提交 `mac_only=true`，不会改动 IPv4、网关或 DNS。以太网/网桥使用 NetworkManager 的 `802-3-ethernet.cloned-mac-address`，Wi-Fi 使用 `802-11-wireless.cloned-mac-address`。
+- 应用前保存连接配置中的原始 cloned MAC；修改后必须在 3 分钟内确认，否则沿用统一网络事务自动回滚。手动回滚、校验失败回滚和服务重启恢复都使用同一快照。
+- “恢复原始 MAC”使用内核报告的永久硬件地址，而不是猜测厂商地址或把当前地址当原始值。设备无法提供永久地址时按钮禁用，避免写入错误地址。
+- MAC、IP、DNS 和网桥共享单一网络变更事务域；任一变更待确认时，其他高风险网络操作保持锁定。
+
+### 8.2 真机验证
+
+- 未修改生产主链路 `enp2s0`。验证期间其当前 MAC 始终为 `aa:aa:aa:aa:aa:08`，永久硬件 MAC 始终为 `04:2b:58:14:fd:1e`。
+- 在隔离的临时 NetworkManager 连接 `netwatch-mac-probe` / veth `nwmac0` 上完成验证：自定义 MAC 立即生效，必选 `interface_exists`、`link_up`、`mac_address` 检查均通过。
+- 手动回滚成功恢复测试网卡初始地址；第二轮未确认变更在 3 分钟到期时自动触发 `rollback_start` / `rollback`，运行态地址恢复且 pending 清空。
+- 第三轮确认后自定义 MAC 保持生效；随后通过同一 MAC-only 路径恢复测试网卡初始地址并确认。
+- 测试结束后已删除临时 NetworkManager 连接、`nwmac0/nwpeer0`、辅助容器和辅助程序；生产环境没有测试 pending 任务或探针残留。

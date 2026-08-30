@@ -536,7 +536,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="network_config_title">网络配置</div>
-                <div class="note" data-i18n="network_config_note">IP与网桥3分钟未确认回滚||DNS60秒未确认回滚</div>
+                <div class="note" data-i18n="network_config_note">IP、MAC与网桥3分钟未确认回滚||DNS60秒未确认回滚</div>
             </div>
             <div class="window-actions">
                 <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>
@@ -549,6 +549,7 @@
             </div>
             <div class="network-config-tabs" role="tablist" aria-label="network config tabs">
                 <button type="button" class="network-config-tab active" data-tab="ip" role="tab" aria-selected="true" id="network-config-tab-ip" data-i18n="network_config_tab_ip">网卡配置</button>
+                <button type="button" class="network-config-tab" data-tab="mac" role="tab" aria-selected="false" id="network-config-tab-mac" data-i18n="network_config_tab_mac">MAC</button>
                 <button type="button" class="network-config-tab" data-tab="bridge" role="tab" aria-selected="false" id="network-config-tab-bridge" data-i18n="network_config_tab_bridge">网桥</button>
                 <button type="button" class="network-config-tab" data-tab="dns" role="tab" aria-selected="false" id="network-config-tab-dns" data-i18n="network_config_tab_dns">DNS</button>
             </div>
@@ -571,6 +572,24 @@
                 </div>
                 <div class="ipv6-renew-status" id="network-config-status"></div>
                 <pre class="ipv6-renew-output" id="network-config-output" hidden></pre>
+            </div>
+
+            <div class="network-config-panel" id="network-config-panel-mac" data-panel="mac" role="tabpanel" aria-hidden="true">
+                <div class="network-mac-section" id="network-mac-section">
+                    <div class="network-mac-grid">
+                        <label><span data-i18n="network_mac_current">当前 MAC</span><input id="network-mac-current" readonly></label>
+                        <label><span data-i18n="network_mac_original">原始硬件 MAC</span><input id="network-mac-original" readonly></label>
+                        <label class="network-mac-new-field"><span data-i18n="network_mac_new">新 MAC</span><input id="network-config-mac" placeholder="02:11:22:33:44:55" maxlength="17" autocomplete="off" spellcheck="false"></label>
+                    </div>
+                    <div class="network-mac-actions">
+                        <button id="network-mac-apply-btn" data-i18n="network_mac_apply">应用 MAC</button>
+                        <button id="network-mac-restore-btn" data-i18n="network_mac_restore">恢复原始 MAC</button>
+                        <button id="network-mac-confirm-btn" hidden data-i18n="network_config_confirm">确认网络可用</button>
+                        <button id="network-mac-rollback-btn" hidden data-i18n="network_config_rollback">立即回滚</button>
+                    </div>
+                    <div class="ipv6-renew-status" id="network-mac-status"></div>
+                    <pre class="ipv6-renew-output" id="network-mac-output" hidden></pre>
+                </div>
             </div>
 
             <div class="network-config-panel" id="network-config-panel-bridge" data-panel="bridge" role="tabpanel" aria-hidden="true">

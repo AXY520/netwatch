@@ -143,11 +143,13 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	if _, ok := raw["host_network_experimental_enabled"]; !ok {
 		s.HostNetworkExperimentalEnabled = def.HostNetworkExperimentalEnabled
 	}
-	if _, ok := raw["app_proxy"]; !ok {
-		s.AppProxy = def.AppProxy
-	}
-	s.AppProxy = normalizeAppProxySettings(s.AppProxy, def.AppProxy)
-	s.AppProxyConfigs = normalizeAppProxyConfigs(s.AppProxyConfigs, s.ProxyApps, s.AppProxy)
+	// Preserve the stored default long enough to migrate legacy enabled apps,
+	// then refresh the fallback for newly configured apps from the current host
+	// address. The global proxy setting is no longer user-facing, so carrying a
+	// DHCP-era address forward only creates a stale default.
+	storedProxy := normalizeAppProxySettings(s.AppProxy, def.AppProxy)
+	s.AppProxyConfigs = normalizeAppProxyConfigs(s.AppProxyConfigs, s.ProxyApps, storedProxy)
+	s.AppProxy = def.AppProxy
 	return s, true
 }
 

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,9 +24,13 @@ import (
 )
 
 const (
-	appProxyDialTimeout = 10 * time.Second
-	appProxyUDPIdle     = 2 * time.Minute
+	appProxyDialTimeout          = 10 * time.Second
+	appProxyUDPIdle              = 2 * time.Minute
+	appProxyUDPConntrackAttempts = 4
+	appProxyUDPConntrackDelay    = 3 * time.Millisecond
 )
+
+var errUDPConntrackFlowNotFound = errors.New("nf_conntrack has no redirected UDP flow")
 
 type appProxyAdapter struct {
 	mu         sync.RWMutex
@@ -167,7 +173,11 @@ func (a *appProxyAdapter) acceptTCP(listener net.Listener, ipv6 bool) {
 				return
 			}
 			destination, err := originalTCPDestination(tcp, ipv6)
-			if err != nil || (destination.Port == a.port() && isLocalAddress(destination.IP)) {
+			if err != nil {
+				logger.Warn("application proxy TCP original destination: %v", err)
+				return
+			}
+			if destination.Port == a.port() && isLocalAddress(destination.IP) {
 				return
 			}
 			upstream, err := dialAppProxyTCP(a.currentConfig(), destination)
@@ -182,8 +192,7 @@ func (a *appProxyAdapter) acceptTCP(listener net.Listener, ipv6 bool) {
 }
 
 func dialAppProxyTCP(config AppProxySettings, destination *net.TCPAddr) (net.Conn, error) {
-	endpoint := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
-	conn, err := net.DialTimeout("tcp", endpoint, appProxyDialTimeout)
+	conn, _, err := dialAppProxyUpstream(config)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +210,36 @@ func dialAppProxyTCP(config AppProxySettings, destination *net.TCPAddr) (net.Con
 		return nil, err
 	}
 	return proxied, nil
+}
+
+func dialAppProxyUpstream(config AppProxySettings) (net.Conn, string, error) {
+	var lastErr error
+	for _, host := range appProxyDialHosts(config.Host) {
+		endpoint := net.JoinHostPort(host, strconv.Itoa(config.Port))
+		conn, err := net.DialTimeout("tcp", endpoint, appProxyDialTimeout)
+		if err == nil {
+			return conn, host, nil
+		}
+		lastErr = err
+	}
+	return nil, "", lastErr
+}
+
+func appProxyDialHosts(host string) []string {
+	return appProxyDialHostsAt(host, isLocalAddress)
+}
+
+func appProxyDialHostsAt(host string, local func(net.IP) bool) []string {
+	host = strings.TrimSpace(host)
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsLoopback() || local == nil || !local(ip) {
+		return []string{host}
+	}
+	loopback := "127.0.0.1"
+	if ip.To4() == nil {
+		loopback = "::1"
+	}
+	return []string{loopback, host}
 }
 
 func httpConnect(conn net.Conn, destination string) (net.Conn, error) {
@@ -448,13 +487,22 @@ func (a *appProxyAdapter) readUDP(listener *net.UDPConn) {
 			return
 		}
 		destination, err := originalUDPDestination(oob[:oobn])
-		if err != nil || destination.Port == a.port() && isLocalAddress(destination.IP) {
+		if err != nil {
+			logger.Warn("application proxy UDP original destination: %v", err)
 			continue
 		}
 		association, err := a.udpAssociation(listener, client)
 		if err != nil {
 			logger.Warn("application proxy UDP association: %v", err)
 			continue
+		}
+		if destination.Port == a.port() && isLocalAddress(destination.IP) {
+			conntrackDestination, err := association.redirectedDestination(a.port())
+			if err != nil {
+				logger.Warn("application proxy UDP conntrack destination: %v", err)
+				continue
+			}
+			destination = conntrackDestination
 		}
 		if err := association.send(destination, packet[:n]); err != nil {
 			association.close()
@@ -483,15 +531,106 @@ func originalUDPDestination(oob []byte) (*net.UDPAddr, error) {
 	return nil, errors.New("original UDP destination is unavailable")
 }
 
+func originalUDPConntrackDestination(client *net.UDPAddr, listenerPort int) (*net.UDPAddr, net.IP, error) {
+	path := firstReadableFile(
+		"/proc/net/nf_conntrack",
+		filepath.Join(hostProcRoot(), "net", "nf_conntrack"),
+	)
+	if path == "" {
+		return nil, nil, errors.New("nf_conntrack is unavailable")
+	}
+	return lookupUDPConntrackDestination(client, listenerPort, func() (io.ReadCloser, error) {
+		return os.Open(path)
+	}, time.Sleep)
+}
+
+func lookupUDPConntrackDestination(client *net.UDPAddr, listenerPort int, open func() (io.ReadCloser, error), sleep func(time.Duration)) (*net.UDPAddr, net.IP, error) {
+	var lastErr error
+	for attempt := 0; attempt < appProxyUDPConntrackAttempts; attempt++ {
+		file, err := open()
+		if err != nil {
+			return nil, nil, err
+		}
+		destination, replySource, err := parseUDPConntrackDestination(file, client, listenerPort)
+		_ = file.Close()
+		if err == nil {
+			return destination, replySource, nil
+		}
+		if !errors.Is(err, errUDPConntrackFlowNotFound) {
+			return nil, nil, err
+		}
+		lastErr = err
+		if attempt+1 < appProxyUDPConntrackAttempts {
+			sleep(appProxyUDPConntrackDelay)
+		}
+	}
+	return nil, nil, lastErr
+}
+
+func parseUDPConntrackDestination(reader io.Reader, client *net.UDPAddr, listenerPort int) (*net.UDPAddr, net.IP, error) {
+	if client == nil || client.IP == nil || client.Port <= 0 || listenerPort <= 0 {
+		return nil, nil, errors.New("invalid UDP conntrack lookup")
+	}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 8 || fields[2] != "udp" {
+			continue
+		}
+		var sources, destinations []net.IP
+		var sourcePorts, destinationPorts []int
+		for _, field := range fields {
+			key, value, ok := strings.Cut(field, "=")
+			if !ok {
+				continue
+			}
+			switch key {
+			case "src":
+				sources = append(sources, net.ParseIP(value))
+			case "dst":
+				destinations = append(destinations, net.ParseIP(value))
+			case "sport":
+				if port, err := strconv.Atoi(value); err == nil {
+					sourcePorts = append(sourcePorts, port)
+				}
+			case "dport":
+				if port, err := strconv.Atoi(value); err == nil {
+					destinationPorts = append(destinationPorts, port)
+				}
+			}
+		}
+		if len(sources) < 2 || len(destinations) < 2 || len(sourcePorts) < 2 || len(destinationPorts) < 2 {
+			continue
+		}
+		if !client.IP.Equal(sources[0]) || client.Port != sourcePorts[0] ||
+			!client.IP.Equal(destinations[1]) || client.Port != destinationPorts[1] || sourcePorts[1] != listenerPort {
+			continue
+		}
+		if destinations[0] == nil || destinationPorts[0] <= 0 {
+			continue
+		}
+		return &net.UDPAddr{IP: destinations[0], Port: destinationPorts[0]}, append(net.IP(nil), sources[1]...), nil
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, nil, err
+	}
+	return nil, nil, fmt.Errorf("%w for %s", errUDPConntrackFlowNotFound, client)
+}
+
 type socksUDPAssociation struct {
-	owner    *appProxyAdapter
-	key      string
-	client   *net.UDPAddr
-	listener *net.UDPConn
-	control  net.Conn
-	relay    *net.UDPConn
-	once     sync.Once
-	mu       sync.Mutex
+	owner              *appProxyAdapter
+	key                string
+	client             *net.UDPAddr
+	listener           *net.UDPConn
+	control            net.Conn
+	relay              *net.UDPConn
+	once               sync.Once
+	mu                 sync.Mutex
+	destinationMu      sync.Mutex
+	destination        *net.UDPAddr
+	replySource        net.IP
+	destinationExpires time.Time
 }
 
 func (a *appProxyAdapter) udpAssociation(listener *net.UDPConn, client *net.UDPAddr) (*socksUDPAssociation, error) {
@@ -522,7 +661,7 @@ func newSocksUDPAssociation(owner *appProxyAdapter, key string, listener *net.UD
 	if config.Protocol != "socks5" {
 		return nil, errors.New("SOCKS5 UDP is not configured")
 	}
-	control, err := net.DialTimeout("tcp", net.JoinHostPort(config.Host, strconv.Itoa(config.Port)), appProxyDialTimeout)
+	control, upstreamHost, err := dialAppProxyUpstream(config)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +681,9 @@ func newSocksUDPAssociation(owner *appProxyAdapter, key string, listener *net.UD
 		return nil, err
 	}
 	if relayAddress.IP == nil || relayAddress.IP.IsUnspecified() {
-		relayAddress.IP = net.ParseIP(config.Host)
+		relayAddress.IP = net.ParseIP(upstreamHost)
+	} else if hosts := appProxyDialHosts(relayAddress.IP.String()); len(hosts) > 1 {
+		relayAddress.IP = net.ParseIP(hosts[0])
 	}
 	relay, err := net.DialUDP("udp", nil, relayAddress)
 	if err != nil {
@@ -557,6 +698,50 @@ func newSocksUDPAssociation(owner *appProxyAdapter, key string, listener *net.UD
 		association.close()
 	}()
 	return association, nil
+}
+
+func (s *socksUDPAssociation) redirectedDestination(listenerPort int) (*net.UDPAddr, error) {
+	s.destinationMu.Lock()
+	if s.destination != nil && time.Now().Before(s.destinationExpires) {
+		destination := cloneUDPAddr(s.destination)
+		s.destinationMu.Unlock()
+		return destination, nil
+	}
+	s.destinationMu.Unlock()
+
+	destination, replySource, err := originalUDPConntrackDestination(s.client, listenerPort)
+	if err != nil {
+		return nil, err
+	}
+	s.destinationMu.Lock()
+	s.destination = cloneUDPAddr(destination)
+	s.replySource = append(net.IP(nil), replySource...)
+	s.destinationExpires = time.Now().Add(time.Second)
+	s.destinationMu.Unlock()
+	return destination, nil
+}
+
+func (s *socksUDPAssociation) writeReply(payload []byte) error {
+	s.destinationMu.Lock()
+	replySource := append(net.IP(nil), s.replySource...)
+	s.destinationMu.Unlock()
+	if len(replySource) == 0 {
+		_, err := s.listener.WriteToUDP(payload, s.client)
+		return err
+	}
+	if source := replySource.To4(); source != nil {
+		var info unix.Inet4Pktinfo
+		copy(info.Spec_dst[:], source)
+		_, _, err := s.listener.WriteMsgUDP(payload, unix.PktInfo4(&info), s.client)
+		return err
+	}
+	if source := replySource.To16(); source != nil {
+		var info unix.Inet6Pktinfo
+		copy(info.Addr[:], source)
+		_, _, err := s.listener.WriteMsgUDP(payload, unix.PktInfo6(&info), s.client)
+		return err
+	}
+	return errors.New("invalid UDP reply source")
 }
 
 func (s *socksUDPAssociation) send(destination *net.UDPAddr, payload []byte) error {
@@ -583,7 +768,7 @@ func (s *socksUDPAssociation) readReplies() {
 		if err != nil {
 			continue
 		}
-		if _, err := s.listener.WriteToUDP(payload, s.client); err != nil {
+		if err := s.writeReply(payload); err != nil {
 			s.close()
 			return
 		}

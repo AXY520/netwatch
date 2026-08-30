@@ -565,7 +565,7 @@ function isBridgeEligibleDevice(d) {
 function currentNetworkConfigTab() {
     var active = document.querySelector('.network-config-tab.active');
     var tab = active && active.dataset.tab;
-    if (tab === 'bridge' || tab === 'dns') return tab;
+    if (tab === 'mac' || tab === 'bridge' || tab === 'dns') return tab;
     return 'ip';
 }
 
@@ -598,7 +598,7 @@ function renderNetworkConfigDeviceOptions(opts) {
     }
     var pin = getPinnedNetworkConfigDevice();
     var prev = opts.preferredDevice || e.device.value || pin;
-    // Pending devices may remain visible for IP/DNS inspection, but must never
+    // Pending devices may remain visible for IP/MAC/DNS inspection, but must never
     // bypass the bridge tab's wired-interface eligibility filter.
     if (tab !== 'bridge' && pin && !devices.some(function (d) { return d && d.device === pin; })) {
         devices = devices.concat([{ device: pin, type: 'pending', connection: '' }]);
@@ -638,10 +638,14 @@ function renderNetworkConfigDeviceOptions(opts) {
         }
     }
     var selected = devices.find(function (d) { return d.device === e.device.value; }) || devices[0];
-    if (tab === 'ip' && pin && e.device.value === pin && state.networkConfigPendingData && state.networkConfigPendingData.pending) {
+    if (tab === 'ip' && pin && e.device.value === pin && state.networkConfigPendingData && state.networkConfigPendingData.pending && !state.networkConfigPendingData.mac_only) {
         applySharedPendingNetworkConfig(state.networkConfigPendingData);
     } else if (tab === 'ip') {
         fillNetworkConfigForm(selected);
+    } else if (tab === 'mac' && pin && e.device.value === pin && state.networkConfigPendingData && state.networkConfigPendingData.mac_only) {
+        applySharedPendingNetworkConfig(state.networkConfigPendingData);
+    } else if (tab === 'mac' && typeof window.__app.fillNetworkMACForm === 'function') {
+        window.__app.fillNetworkMACForm(selected);
     } else if (tab === 'bridge' && typeof fillHostBridgeFormForDevice === 'function') {
         fillHostBridgeFormForDevice(e.device.value);
     }
@@ -684,11 +688,15 @@ function onNetworkConfigDeviceChange() {
         }
         return;
     }
+    if (tab === 'mac') {
+        if (selected && typeof window.__app.fillNetworkMACForm === 'function') window.__app.fillNetworkMACForm(selected);
+        return;
+    }
     if (selected) fillNetworkConfigForm(selected);
 }
 
 function switchNetworkConfigTab(tab) {
-    if (tab !== 'bridge' && tab !== 'dns') tab = 'ip';
+    if (tab !== 'mac' && tab !== 'bridge' && tab !== 'dns') tab = 'ip';
     // Blur any focused control BEFORE hiding a panel — otherwise Chrome warns
     // "Blocked aria-hidden on an element because its descendant retained focus"
     // (common with network-config-method custom select).

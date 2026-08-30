@@ -2,9 +2,12 @@ package probe
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildAppProxyRulesHTTPBlocksPublicUDP(t *testing.T) {
@@ -86,6 +89,21 @@ func TestAppProxyAdaptersUseDistinctPorts(t *testing.T) {
 	}
 }
 
+func TestAppProxyDialHostsPreferLoopbackForLocalAddress(t *testing.T) {
+	local := func(ip net.IP) bool {
+		return ip.Equal(net.ParseIP("192.168.3.174")) || ip.Equal(net.ParseIP("fd00::174"))
+	}
+	if got := appProxyDialHostsAt("192.168.3.174", local); !reflect.DeepEqual(got, []string{"127.0.0.1", "192.168.3.174"}) {
+		t.Fatalf("local IPv4 dial hosts=%v", got)
+	}
+	if got := appProxyDialHostsAt("fd00::174", local); !reflect.DeepEqual(got, []string{"::1", "fd00::174"}) {
+		t.Fatalf("local IPv6 dial hosts=%v", got)
+	}
+	if got := appProxyDialHostsAt("192.0.2.10", local); !reflect.DeepEqual(got, []string{"192.0.2.10"}) {
+		t.Fatalf("remote dial hosts=%v", got)
+	}
+}
+
 func TestSOCKSUDPDatagramRoundTrip(t *testing.T) {
 	payload := []byte("dns-payload")
 	for _, address := range []*net.UDPAddr{
@@ -103,6 +121,80 @@ func TestSOCKSUDPDatagramRoundTrip(t *testing.T) {
 		if !bytes.Equal(got, payload) {
 			t.Fatalf("decoded payload=%q", got)
 		}
+	}
+}
+
+func TestParseUDPConntrackDestination(t *testing.T) {
+	input := strings.NewReader("ipv4 2 udp 17 26 src=172.28.5.66 dst=223.5.5.5 sport=51229 dport=53 [UNREPLIED] src=172.28.5.65 dst=172.28.5.66 sport=36357 dport=51229 mark=0 zone=0 use=2\n")
+	got, replySource, err := parseUDPConntrackDestination(input, &net.UDPAddr{IP: net.ParseIP("172.28.5.66"), Port: 51229}, 36357)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (&net.UDPAddr{IP: net.ParseIP("223.5.5.5"), Port: 53}); !got.IP.Equal(want.IP) || got.Port != want.Port {
+		t.Fatalf("destination=%v want %v", got, want)
+	}
+	if want := net.ParseIP("172.28.5.65"); !replySource.Equal(want) {
+		t.Fatalf("reply source=%v want %v", replySource, want)
+	}
+}
+
+func TestLookupUDPConntrackDestinationRetriesUntilFlowIsVisible(t *testing.T) {
+	client := &net.UDPAddr{IP: net.ParseIP("172.28.5.66"), Port: 51229}
+	flow := "ipv4 2 udp 17 26 src=172.28.5.66 dst=223.5.5.5 sport=51229 dport=53 [UNREPLIED] src=172.28.5.65 dst=172.28.5.66 sport=36357 dport=51229 mark=0 zone=0 use=2\n"
+	opens := 0
+	var sleeps []time.Duration
+	destination, replySource, err := lookupUDPConntrackDestination(client, 36357, func() (io.ReadCloser, error) {
+		opens++
+		if opens < 3 {
+			return io.NopCloser(strings.NewReader("")), nil
+		}
+		return io.NopCloser(strings.NewReader(flow)), nil
+	}, func(delay time.Duration) {
+		sleeps = append(sleeps, delay)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opens != 3 || !reflect.DeepEqual(sleeps, []time.Duration{appProxyUDPConntrackDelay, appProxyUDPConntrackDelay}) {
+		t.Fatalf("opens=%d sleeps=%v", opens, sleeps)
+	}
+	if !destination.IP.Equal(net.ParseIP("223.5.5.5")) || destination.Port != 53 {
+		t.Fatalf("destination=%v", destination)
+	}
+	if !replySource.Equal(net.ParseIP("172.28.5.65")) {
+		t.Fatalf("reply source=%v", replySource)
+	}
+}
+
+func TestSOCKSUDPReplyUsesConntrackSource(t *testing.T) {
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	association := &socksUDPAssociation{
+		listener:    listener,
+		client:      client.LocalAddr().(*net.UDPAddr),
+		replySource: net.ParseIP("127.0.0.2"),
+	}
+	if err := association.writeReply([]byte("reply")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	packet := make([]byte, 16)
+	n, source, err := client.ReadFromUDP(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(packet[:n]) != "reply" || !source.IP.Equal(net.ParseIP("127.0.0.2")) {
+		t.Fatalf("reply=%q source=%v", packet[:n], source)
 	}
 }
 

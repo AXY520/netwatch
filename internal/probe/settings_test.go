@@ -100,6 +100,9 @@ func TestLoadMutableSettingsMigratesEnabledProxyApps(t *testing.T) {
 	if got.AppProxyConfigs["app.a"] != proxy {
 		t.Fatalf("migrated config=%#v want=%#v", got.AppProxyConfigs["app.a"], proxy)
 	}
+	if def := DefaultMutableSettings(); got.AppProxy != def.AppProxy {
+		t.Fatalf("dynamic default=%#v want current host default %#v", got.AppProxy, def.AppProxy)
+	}
 	if _, exists := got.AppProxyConfigs["app.disabled"]; exists {
 		t.Fatalf("disabled legacy app unexpectedly migrated: %#v", got.AppProxyConfigs)
 	}

@@ -229,14 +229,16 @@ type AppNetworkDetail struct {
 }
 
 type NetworkConfigDevice struct {
-	Device     string `json:"device"`
-	Type       string `json:"type"`
-	State      string `json:"state"`
-	Connection string `json:"connection,omitempty"`
-	IPv4Method string `json:"ipv4_method,omitempty"`
-	IPv4       string `json:"ipv4,omitempty"`
-	Gateway    string `json:"gateway,omitempty"`
-	DNS        string `json:"dns,omitempty"`
+	Device              string `json:"device"`
+	Type                string `json:"type"`
+	State               string `json:"state"`
+	Connection          string `json:"connection,omitempty"`
+	IPv4Method          string `json:"ipv4_method,omitempty"`
+	IPv4                string `json:"ipv4,omitempty"`
+	Gateway             string `json:"gateway,omitempty"`
+	DNS                 string `json:"dns,omitempty"`
+	MACAddress          string `json:"mac_address,omitempty"`
+	PermanentMACAddress string `json:"permanent_mac_address,omitempty"`
 }
 
 type NetworkConfigDevicesResponse struct {
@@ -246,11 +248,13 @@ type NetworkConfigDevicesResponse struct {
 }
 
 type NetworkConfigApplyRequest struct {
-	Device  string `json:"device"`
-	Method  string `json:"method"`
-	Address string `json:"address"`
-	Gateway string `json:"gateway"`
-	DNS     string `json:"dns"`
+	Device     string `json:"device"`
+	Method     string `json:"method"`
+	Address    string `json:"address"`
+	Gateway    string `json:"gateway"`
+	DNS        string `json:"dns"`
+	MACAddress string `json:"mac_address,omitempty"`
+	MACOnly    bool   `json:"mac_only,omitempty"`
 }
 
 type NetworkConfigRestartRequest struct {
@@ -296,20 +300,23 @@ type NetworkConfigConfirmResult struct {
 }
 
 type NetworkConfigPendingResult struct {
-	Pending       bool   `json:"pending"`
-	ID            string `json:"id,omitempty"`
-	Device        string `json:"device,omitempty"`
-	Connection    string `json:"connection,omitempty"`
-	Method        string `json:"method,omitempty"`
-	Address       string `json:"address,omitempty"`
-	Gateway       string `json:"gateway,omitempty"`
-	DNS           string `json:"dns,omitempty"`
-	PrevMethod    string `json:"prev_method,omitempty"`
-	PrevAddress   string `json:"prev_address,omitempty"`
-	PrevGateway   string `json:"prev_gateway,omitempty"`
-	PrevDNS       string `json:"prev_dns,omitempty"`
-	RollbackUntil string `json:"rollback_until,omitempty"`
-	RemainingSec  int    `json:"remaining_sec,omitempty"`
+	Pending        bool   `json:"pending"`
+	ID             string `json:"id,omitempty"`
+	Device         string `json:"device,omitempty"`
+	Connection     string `json:"connection,omitempty"`
+	Method         string `json:"method,omitempty"`
+	Address        string `json:"address,omitempty"`
+	Gateway        string `json:"gateway,omitempty"`
+	DNS            string `json:"dns,omitempty"`
+	MACAddress     string `json:"mac_address,omitempty"`
+	MACOnly        bool   `json:"mac_only,omitempty"`
+	PrevMethod     string `json:"prev_method,omitempty"`
+	PrevAddress    string `json:"prev_address,omitempty"`
+	PrevGateway    string `json:"prev_gateway,omitempty"`
+	PrevDNS        string `json:"prev_dns,omitempty"`
+	PrevMACAddress string `json:"prev_mac_address,omitempty"`
+	RollbackUntil  string `json:"rollback_until,omitempty"`
+	RemainingSec   int    `json:"remaining_sec,omitempty"`
 }
 
 // Host bridge (VM internet / L2 bridge) types.

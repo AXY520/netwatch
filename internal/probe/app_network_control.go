@@ -499,7 +499,8 @@ func (s *Service) updateAppNetworkPolicy(ctx context.Context, appID string, upda
 }
 
 func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string, targets []AppNetworkTarget, update appNetworkPolicyUpdate) error {
-	desired := s.currentAppNetworkPolicy(appID, targets)
+	current := s.currentAppNetworkPolicy(appID, targets)
+	desired := current
 	if update.UploadKbps != nil {
 		desired.UploadKbps = *update.UploadKbps
 	}
@@ -532,6 +533,14 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 	}
 	if isWhitelistedApp(appID, "") {
 		return fmt.Errorf("application %s does not allow network policy changes", appID)
+	}
+	if !current.InternetAllowed && !desired.InternetAllowed {
+		if proxyChangedRequested && desired.ProxyEnabled {
+			return errors.New("已禁用外网，请先恢复外网后再设置代理")
+		}
+		if limitChanged && (desired.UploadKbps > 0 || desired.DownloadKbps > 0) {
+			return errors.New("已禁用外网，请先恢复外网后再限制网速")
+		}
 	}
 	s.appNetworkController.mu.Lock()
 	defer s.appNetworkController.mu.Unlock()

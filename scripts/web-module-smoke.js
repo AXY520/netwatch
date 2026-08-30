@@ -43,6 +43,7 @@ function load(relativePath) {
 
 async function main() {
     load('web/shared.js');
+    load('web/app-traffic-dashboard.js');
     let syncCount = 0;
     global.syncCustomSelect = () => { syncCount += 1; };
     const select = {
@@ -59,6 +60,26 @@ async function main() {
     assert.equal(select.options.length, 2);
     assert.equal(syncCount, 1);
 
+    const trafficItem = (modes, limit, proxyEnabled) => ({
+        app_id: 'test.app',
+        network_modes: modes,
+        limit,
+        network_policy: {
+            capabilities: { upload_limit: true, download_limit: true, internet_control: true, proxy_control: true },
+            desired: { internet_allowed: true, proxy_enabled: proxyEnabled },
+            internet_state: 'allowed'
+        }
+    });
+    const hostLimitedMenu = global.__app.appTrafficMoreMenu(trafficItem(['host'], { upload_kbps: 1000 }, false), true, 'test.app');
+    assert.doesNotMatch(hostLimitedMenu, /data-action="traffic-proxy"/, 'limited Host apps must hide proxy enable');
+    assert.match(hostLimitedMenu, /data-action="traffic-limit"/, 'limited Host apps must keep limit editing');
+    const mixedProxiedMenu = global.__app.appTrafficMoreMenu(trafficItem(['bridge', 'host'], {}, true), true, 'test.app');
+    assert.doesNotMatch(mixedProxiedMenu, /data-action="traffic-limit"/, 'proxied Mixed apps must hide limit editing');
+    assert.match(mixedProxiedMenu, /data-proxy-state="disable"/, 'proxied Mixed apps must keep restore direct');
+    const bridgeCombinedMenu = global.__app.appTrafficMoreMenu(trafficItem(['bridge'], { download_kbps: 1000 }, false), true, 'test.app');
+    assert.match(bridgeCombinedMenu, /data-action="traffic-limit"/);
+    assert.match(bridgeCombinedMenu, /data-action="traffic-proxy"/, 'Bridge apps may combine proxy and limit');
+
     [
         'web/app-network-config.js',
         'web/app-host-bridge.js',
@@ -73,6 +94,8 @@ async function main() {
         'setNetworkConfigLocked',
         'appendNetworkMutationVerification',
         'applyPendingNetworkConfigToForm',
+        'fillNetworkMACForm',
+        'updateNetworkMACApplyState',
         'setHostBridgeCreateEnabled',
         'fillHostDNSFormFromInfo',
         'setHostDNSOutput'
@@ -113,6 +136,15 @@ async function main() {
         };
     }
     elementsByID.set('network-config-method', field('auto'));
+    elementsByID.set('network-config-mac', field());
+    elementsByID.set('network-mac-current', field());
+    elementsByID.set('network-mac-original', field());
+    elementsByID.set('network-mac-apply-btn', field());
+    elementsByID.set('network-mac-restore-btn', field());
+    elementsByID.set('network-mac-confirm-btn', field());
+    elementsByID.set('network-mac-rollback-btn', field());
+    elementsByID.set('network-mac-status', field());
+    elementsByID.set('network-mac-output', field());
     elementsByID.set('network-config-address', field());
     elementsByID.set('network-config-gateway', field());
     elementsByID.set('network-config-dns', field());
@@ -123,8 +155,8 @@ async function main() {
     elementsByID.set('network-config-rollback-btn', field());
     elementsByID.set('network-config-status', field());
     deviceSelect.__allDevices = [
-        { device: 'eth0', type: 'ethernet', connection: 'Wired', ipv4_method: 'auto' },
-        { device: 'wlan0', type: 'wifi', connection: 'Wi-Fi', ipv4_method: 'auto' }
+        { device: 'eth0', type: 'ethernet', connection: 'Wired', ipv4_method: 'auto', mac_address: '02:11:22:33:44:55', permanent_mac_address: '00:11:22:33:44:55' },
+        { device: 'wlan0', type: 'wifi', connection: 'Wi-Fi', ipv4_method: 'auto', mac_address: '02:11:22:33:44:56', permanent_mac_address: '00:11:22:33:44:56' }
     ];
     global.__app.state.networkConfigPendingData = { pending: true, device: 'eth0' };
     global.__app.networkMutationCoordinator.setPending('ip', global.__app.state.networkConfigPendingData);
@@ -134,6 +166,12 @@ async function main() {
     assert.equal(deviceSelect.value, 'wlan0', 'pending transaction must not pin device browsing');
     assert.equal(deviceSelect.disabled, false, 'pending transaction must keep shared device selector enabled');
     assert.equal(elementsByID.get('network-config-method').disabled, true, 'pending transaction must lock mutation fields');
+
+    activeTab = 'mac';
+    global.__app.renderNetworkConfigDeviceOptions();
+    assert.equal(elementsByID.get('network-mac-current').value, '02:11:22:33:44:56');
+    assert.equal(elementsByID.get('network-mac-original').value, '00:11:22:33:44:56');
+    assert.equal(elementsByID.get('network-config-mac').value, '02:11:22:33:44:56');
 
     global.__app.state.networkConfigPendingData = { pending: true, device: 'wlp4s0' };
     global.__app.networkMutationCoordinator.setPending('ip', global.__app.state.networkConfigPendingData);

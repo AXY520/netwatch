@@ -104,7 +104,7 @@ func TestAppNetworkPolicyStatusReportsTrafficLimitDrift(t *testing.T) {
 	}
 }
 
-func TestLimitOnlyUpdatePreservesPartialInternetState(t *testing.T) {
+func TestOfflineAppRejectsNewLimitAndProxy(t *testing.T) {
 	driver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{
 		Accounting: true, UploadLimit: true, DownloadLimit: true, InternetControl: true,
 	}}
@@ -124,11 +124,15 @@ func TestLimitOnlyUpdatePreservesPartialInternetState(t *testing.T) {
 		{ID: "lzc-br-two", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-two"},
 	}
 	upload := int64(1000)
-	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{UploadKbps: &upload}); err != nil {
-		t.Fatal(err)
+	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{UploadKbps: &upload}); err == nil || !strings.Contains(err.Error(), "恢复外网") {
+		t.Fatalf("limit error=%v", err)
 	}
-	if len(driver.limits) != 2 {
-		t.Fatalf("limit calls=%d, want 2", len(driver.limits))
+	proxyEnabled := true
+	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{ProxyEnabled: &proxyEnabled}); err == nil || !strings.Contains(err.Error(), "恢复外网") {
+		t.Fatalf("proxy error=%v", err)
+	}
+	if len(driver.limits) != 0 {
+		t.Fatalf("unexpected limit calls=%d", len(driver.limits))
 	}
 	blocked := service.containers.snapshotBlocked()
 	if blocked["lzc-br-one"] != "internet" || blocked["lzc-br-two"] != "" {
