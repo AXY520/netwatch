@@ -89,6 +89,7 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		EgressIPv6:       egressIPv6,
 		EgressIPv4Region: egressIPv4Region,
 		EgressIPv6Region: egressIPv6Region,
+		ProxyEnvironment: detectProxyEnvironment(),
 		DetectionNotes: []string{
 			"结果以当前容器网络命名空间为准，建议使用 host 网络模式。",
 			"界面自动展示物理有线/Wi-Fi、netwatch 网桥，以及 mihomo 等代理 TUN（如 Meta）。",
@@ -204,6 +205,11 @@ func collectInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 			MTU:          iface.MTU,
 			HardwareAddr: mac,
 			Flags:        interfaceFlags(iface.Flags),
+		}
+		if info.LinkType == "wifi" {
+			info.LinkSpeedRxMbps, info.LinkSpeedTxMbps = readWiFiLinkSpeedMbps(name)
+		} else {
+			info.LinkSpeedMbps = readLinkSpeedMbps(name)
 		}
 		for _, addr := range addrs {
 			ipNet, ok := addr.(*net.IPNet)
@@ -533,6 +539,32 @@ func readMACFromSys(iface string) string {
 		return ""
 	}
 	return mac
+}
+
+// readLinkSpeedMbps reads the kernel-reported current negotiated link speed.
+// Physical Ethernet drivers normally expose this through sysfs. Virtual links
+// and some wireless drivers omit it or return -1/uint32 max; those are unknown.
+func readLinkSpeedMbps(iface string) float64 {
+	data, err := os.ReadFile(filepath.Join("/sys/class/net", iface, "speed"))
+	if err != nil {
+		return 0
+	}
+	return parseLinkSpeedMbps(string(data))
+}
+
+func parseLinkSpeedMbps(raw string) float64 {
+	speed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || speed <= 0 || speed == float64(^uint32(0)) || speed > 10_000_000 {
+		return 0
+	}
+	return speed
+}
+
+func linkSpeedMbpsFromBps(speed int64) float64 {
+	if speed <= 0 {
+		return 0
+	}
+	return float64(speed) / 1_000_000
 }
 
 // readIPsFromSys reads IP addresses as a fallback when iface.Addrs() returns empty.

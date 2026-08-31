@@ -52,6 +52,19 @@ function netwatchPost(path, body) {
 
 
 function detectProxyState() {
+	var environment = state.summary && state.summary.network_info && state.summary.network_info.proxy_environment;
+	if (environment && environment.mode) {
+		var interfaces = (environment.interfaces || []).filter(Boolean);
+		var suffix = '';
+		if (environment.mode === 'tun') suffix = 'TUN' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
+		if (environment.mode === 'environment') suffix = 'ENV';
+		if (environment.mode === 'mixed') suffix = 'TUN + ENV' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
+		return {
+			mode: environment.mode,
+			label: environment.detected ? (i18n('proxy_detected') + (suffix ? ' · ' + suffix : '')) : i18n('no_proxy'),
+			note: environment.note || ''
+		};
+	}
     var ci = (state.summary && state.summary.website_connectivity) || {};
     var globalSites = (ci.global || []).filter(function (s) { return s && s.status; });
     if (globalSites.length === 0) {
@@ -108,7 +121,11 @@ function detectProxyState() {
 function renderProxyBanner() {
     var inlineEl = document.getElementById('proxy-inline-status');
     var s = detectProxyState();
-    if (inlineEl) inlineEl.textContent = s.label;
+	if (inlineEl) {
+		inlineEl.textContent = s.label;
+		inlineEl.title = s.note || '';
+		inlineEl.dataset.proxyMode = s.mode || 'unknown';
+	}
 }
 
 function refreshProxyDisplay() {

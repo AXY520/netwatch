@@ -1189,16 +1189,52 @@ button.icon-button,
             word-break: break-all;
             padding-right: 0.5rem;
         }
-        .interfaces-table-fixed .col-iface  { width: 18%; }
+        .interfaces-table-fixed .col-iface  { width: 22%; }
         .interfaces-table-fixed .col-status { width: 10%; }
-        .interfaces-table-fixed .col-ipv4   { width: 22%; }
-        .interfaces-table-fixed .col-ipv6   { width: 35%; }
+        .interfaces-table-fixed .col-ipv4   { width: 21%; }
+        .interfaces-table-fixed .col-ipv6   { width: 32%; }
         .interfaces-table-fixed .col-mac    { width: 15%; }
         #interfaces-table td:nth-child(3),
         #interfaces-table td:nth-child(4),
         #interfaces-table td:nth-child(5) {
             font-family: var(--font-mono);
             font-weight: 500;
+        }
+        .iface-cell-value {
+            min-width: 0;
+        }
+        .iface-title-line {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            min-width: 0;
+        }
+        .iface-primary {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+        .iface-speed-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 1.25rem;
+            padding: 0.08rem 0.38rem;
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            color: var(--text-muted);
+            background: var(--glass-bg);
+            font-family: var(--font-number);
+            font-size: 0.67rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .iface-device-name {
+            margin-top: 0.15rem;
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            font-weight: 500;
+            overflow-wrap: anywhere;
         }
 
         .app-traffic-table-fixed { table-layout: fixed; }
@@ -3212,6 +3248,9 @@ button.icon-button,
                 line-height: 1.5;
                 word-break: break-word;
                 overflow-wrap: anywhere;
+            }
+            .interfaces-table-fixed .col-iface .iface-cell-value {
+                min-width: 0;
             }
             .trace-details-btn { margin-top: .8rem; }
             .trace-results { max-height: min(68vh, 620px); }
@@ -5640,4 +5679,356 @@ input[type="radio"] {
     .dns-result-metrics > span { padding: 0.65rem 0.7rem; }
     .dns-answer-row { grid-template-columns: 42px minmax(0, 1fr); }
     .dns-answer-ttl { grid-column: 2; }
+}
+
+/* Mobile data views use cards instead of compressed desktop tables. */
+@media (max-width: 640px) {
+    .controls button,
+    .controls .button-link,
+    #theme-toggle,
+    .card-title .title-tools button,
+    .card-title .title-tools .button-link,
+    .traffic-range-controls button {
+        min-height: 44px;
+    }
+
+    #nat-refresh-btn,
+    .ipv6-detail-btn,
+    .custom-select-option {
+        min-height: 44px;
+    }
+
+    #nat-refresh-btn {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+    }
+
+    .card-title .title-tools .icon-button,
+    .controls .icon-button {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+        min-height: 44px;
+    }
+
+    #app-traffic-table,
+    #app-traffic-table tbody,
+    #app-traffic-table tr,
+    #app-traffic-table td {
+        display: block;
+        width: 100%;
+    }
+
+    #app-traffic-table {
+        table-layout: auto;
+    }
+
+    #app-traffic-table thead {
+        display: none;
+    }
+
+    #app-traffic-table tbody {
+        display: grid;
+        gap: 0.7rem;
+    }
+
+    #app-traffic-table tbody tr {
+        position: relative;
+        display: grid;
+        height: auto;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem 0.55rem;
+        margin: 0;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background: var(--card-bg);
+    }
+
+    #app-traffic-table.app-traffic-realtime-hidden tbody tr {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    #app-traffic-table tbody td {
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        overflow: visible;
+        text-align: left;
+    }
+
+    #app-traffic-table tbody .col-app {
+        grid-column: 1 / -1;
+        min-height: 44px;
+        padding-right: 3.25rem;
+    }
+
+    #app-traffic-table .app-cell {
+        min-height: 44px;
+    }
+
+    #app-traffic-table .app-cell-info {
+        overflow: visible;
+    }
+
+    #app-traffic-table .app-cell-info strong {
+        font-size: 0.9rem;
+        overflow-wrap: anywhere;
+    }
+
+    #app-traffic-table tbody .col-status {
+        grid-column: 1 / -1;
+    }
+
+    #app-traffic-table tbody .col-status:empty {
+        display: none;
+    }
+
+    #app-traffic-table .app-control-status-row {
+        align-items: flex-start;
+    }
+
+    #app-traffic-table .app-control-status {
+        justify-content: flex-start;
+    }
+
+    #app-traffic-table tbody .col-rate,
+    #app-traffic-table tbody .col-period,
+    #app-traffic-table tbody .col-total {
+        display: block;
+        padding: 0.5rem 0.55rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--glass-bg);
+        font-weight: 500;
+    }
+
+    #app-traffic-table tbody .col-rate::before,
+    #app-traffic-table tbody .col-period::before,
+    #app-traffic-table tbody .col-total::before {
+        content: attr(data-label) !important;
+        display: block !important;
+        margin: 0 0 0.3rem;
+        color: var(--text-muted);
+        font-family: var(--font-ui);
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+    }
+
+    #app-traffic-table .app-traffic-direction {
+        justify-content: flex-start;
+        min-height: 1.05rem;
+        font-size: 0.72rem;
+    }
+
+    #app-traffic-table tbody .col-actions {
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+    }
+
+    #app-traffic-table .app-traffic-more-btn {
+        width: 44px !important;
+        min-width: 44px;
+        height: 44px !important;
+        min-height: 44px;
+    }
+
+    #app-traffic-table .app-traffic-menu-item {
+        min-height: 44px;
+        padding: 0.55rem 0.65rem;
+    }
+
+    .lan-page > .system-layout > .card {
+        overflow: visible;
+    }
+
+    .lan-device-table,
+    .lan-device-table tbody,
+    .lan-device-table tr,
+    .lan-device-table td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .lan-device-table {
+        min-width: 0;
+        table-layout: auto;
+    }
+
+    .lan-device-table thead {
+        display: none;
+    }
+
+    .lan-device-table tbody {
+        display: grid;
+        gap: 0.7rem;
+    }
+
+    .lan-device-table tbody tr {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.7rem;
+        margin: 0;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        background: var(--card-bg);
+    }
+
+    .lan-device-table tbody td {
+        width: auto;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        text-align: left;
+    }
+
+    .lan-device-table .lan-device-cell,
+    .lan-device-table .lan-device-network-cell {
+        grid-column: 1 / -1;
+    }
+
+    .lan-device-table .lan-device-cell {
+        padding-right: 4.5rem;
+    }
+
+    .lan-device-table .lan-name-line {
+        min-height: 44px;
+    }
+
+    .lan-device-table .lan-device-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .lan-device-table .lan-name-edit {
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+    }
+
+    .lan-device-table .lan-device-status-cell {
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: auto;
+    }
+
+    .lan-device-table .lan-network-lines {
+        gap: 0.3rem;
+        padding: 0.6rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--glass-bg);
+    }
+
+    .lan-device-table .lan-network-lines .lan-net-row {
+        display: grid;
+        grid-template-columns: 2.6rem minmax(0, 1fr);
+        gap: 0.45rem;
+    }
+
+    .lan-device-table .lan-network-lines .lan-net-value {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .lan-device-table .lan-device-seen-cell {
+        align-self: end;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+    }
+
+    .lan-device-table .lan-device-actions-cell {
+        align-self: end;
+        justify-self: end;
+    }
+
+    .lan-device-table .lan-action {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0.55rem 0.7rem;
+    }
+
+    .lan-device-table td.placeholder {
+        grid-column: 1 / -1;
+        padding: 0.75rem;
+    }
+}
+
+/* Every floating-window close control shares one anchored, non-stretching target. */
+.floating-window > .window-head {
+    position: relative;
+    padding-right: 3rem;
+}
+
+.floating-window > .window-head:has(> .window-actions > .icon-button:first-child + .icon-button) {
+    padding-right: 5.25rem;
+}
+
+.floating-window .window-close-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 3;
+    width: 38px !important;
+    min-width: 38px !important;
+    max-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 !important;
+    flex: 0 0 38px !important;
+}
+
+.floating-window > .window-head .window-close-btn {
+    top: 0;
+    right: 0;
+}
+
+.floating-window > .window-head .window-actions > .icon-button {
+    width: 38px !important;
+    min-width: 38px !important;
+    max-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    padding: 0 !important;
+    flex: 0 0 38px !important;
+}
+
+/* Icon-only title actions (for example refresh + close) stay on one baseline. */
+.floating-window > .window-head .window-actions:has(> .window-close-btn):not(:has(> :not(.icon-button))) {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex !important;
+    width: auto !important;
+    gap: 0.5rem;
+}
+
+.floating-window > .window-head .window-actions:has(> .window-close-btn):not(:has(> :not(.icon-button))) > .window-close-btn {
+    position: static;
+}
+
+/* This dialog has no title bar, so reserve its first row for the anchored close button. */
+#lan-note-window > :first-child {
+    min-height: 38px;
+    padding-right: 3rem;
+}
+
+@media (max-width: 900px) {
+    /* An absolutely positioned close button must not leave a vacant grid column. */
+    .floating-window .window-actions:has(> .window-close-btn):has(> :not(.icon-button)) {
+        grid-template-columns: repeat(auto-fit, minmax(min(7rem, 100%), 1fr)) !important;
+    }
 }

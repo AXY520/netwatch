@@ -17,9 +17,14 @@ const (
 	appTrafficPersistInterval = 30 * time.Second
 	appTrafficHistoryInterval = time.Minute
 	maxAppTrafficDailyRecords = 93
-	// Keep one point per minute for a full day, matching the useful history
-	// horizon available before traffic was grouped by application.
-	maxAppTrafficSamples = 24 * 60
+	// Keep full minute resolution for the recent window and one point per five
+	// minutes for the remainder of the day. The dashboard still gets a complete
+	// 24-hour graph without retaining 1,440 heap objects for every stopped app.
+	appTrafficHistoryHorizon    = 24 * time.Hour
+	appTrafficRecentWindow      = 2 * time.Hour
+	appTrafficArchiveResolution = 5 * time.Minute
+	maxAppTrafficSamples        = 24 * 60 // corruption / future-timestamp guard
+	appTrafficCompactedCapacity = 400
 )
 
 // AppTrafficLimit is a per-application bandwidth ceiling. A zero value means
@@ -167,6 +172,7 @@ func newAppTrafficState(dataDir string) *appTrafficState {
 		if persisted.Apps != nil {
 			s.apps = persisted.Apps
 			normalizePersistedAppTrafficTotals(s.apps)
+			s.compactSamplesLocked(time.Now())
 		}
 		if persisted.Baselines != nil {
 			s.baselines = persisted.Baselines
@@ -312,7 +318,7 @@ func (s *appTrafficState) migrateLegacyBridgesLocked(items []AppBridgeStats, now
 		if download := trafficDailySum(entry.Daily, "download"); entry.TotalDownload < download {
 			entry.TotalDownload = download
 		}
-		entry.Samples = trimAppTrafficSamples(entry.Samples)
+		entry.Samples = compactAppTrafficSamples(entry.Samples, now)
 		s.apps[policyID] = entry
 	}
 	for _, bridge := range migrated {
@@ -564,7 +570,7 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 		entry.Daily = trimTrafficDaily(entry.Daily)
 		if last := len(entry.Samples) - 1; last < 0 || sampleDue(entry.Samples[last].Timestamp, now) {
 			entry.Samples = append(entry.Samples, AppTrafficSample{Timestamp: now.Format(time.DateTime), UploadTotal: entry.TotalUpload, DownloadTotal: entry.TotalDownload})
-			entry.Samples = trimAppTrafficSamples(entry.Samples)
+			entry.Samples = compactAppTrafficSamples(entry.Samples, now)
 		}
 		s.apps[policyID] = entry
 	}
@@ -678,11 +684,75 @@ func sampleDue(timestamp string, now time.Time) bool {
 	return err != nil || now.Sub(previous) >= appTrafficHistoryInterval
 }
 
-func trimAppTrafficSamples(samples []AppTrafficSample) []AppTrafficSample {
-	if len(samples) > maxAppTrafficSamples {
-		return samples[len(samples)-maxAppTrafficSamples:]
+func compactAppTrafficSamples(samples []AppTrafficSample, now time.Time) []AppTrafficSample {
+	if len(samples) == 0 {
+		return samples
 	}
-	return samples
+	horizonStart := now.Add(-appTrafficHistoryHorizon)
+	recentStart := now.Add(-appTrafficRecentWindow)
+	archiveSeconds := int64(appTrafficArchiveResolution / time.Second)
+	lastArchiveBucket := int64(-1)
+	needsCompaction := len(samples) > maxAppTrafficSamples
+	for _, sample := range samples {
+		sampledAt, err := time.ParseInLocation(time.DateTime, sample.Timestamp, time.Local)
+		if err != nil || sampledAt.Before(horizonStart) {
+			needsCompaction = true
+			continue
+		}
+		if sampledAt.Before(recentStart) {
+			bucket := sampledAt.Unix() / archiveSeconds
+			if bucket == lastArchiveBucket {
+				needsCompaction = true
+			}
+			lastArchiveBucket = bucket
+		}
+	}
+	if !needsCompaction {
+		return samples
+	}
+
+	capacity := len(samples)
+	if capacity > appTrafficCompactedCapacity {
+		capacity = appTrafficCompactedCapacity
+	}
+	compacted := make([]AppTrafficSample, 0, capacity)
+	lastArchiveBucket = -1
+	lastArchiveIndex := -1
+	for _, sample := range samples {
+		sampledAt, err := time.ParseInLocation(time.DateTime, sample.Timestamp, time.Local)
+		if err != nil || sampledAt.Before(horizonStart) {
+			continue
+		}
+		if sampledAt.Before(recentStart) {
+			bucket := sampledAt.Unix() / archiveSeconds
+			if bucket == lastArchiveBucket && lastArchiveIndex >= 0 {
+				// Absolute counters are monotonic, so the latest point is the most
+				// useful representative for a completed five-minute bucket.
+				compacted[lastArchiveIndex] = sample
+				continue
+			}
+			lastArchiveBucket = bucket
+			compacted = append(compacted, sample)
+			lastArchiveIndex = len(compacted) - 1
+			continue
+		}
+		compacted = append(compacted, sample)
+	}
+	if len(compacted) > maxAppTrafficSamples {
+		return append([]AppTrafficSample(nil), compacted[len(compacted)-maxAppTrafficSamples:]...)
+	}
+	return compacted
+}
+
+func (s *appTrafficState) compactSamplesLocked(now time.Time) {
+	for policyID, entry := range s.apps {
+		compacted := compactAppTrafficSamples(entry.Samples, now)
+		if len(compacted) == len(entry.Samples) && (len(compacted) == 0 || &compacted[0] == &entry.Samples[0]) {
+			continue
+		}
+		entry.Samples = compacted
+		s.apps[policyID] = entry
+	}
 }
 
 func dedupeSortedStrings(in []string) []string {
@@ -877,7 +947,7 @@ func (s *appTrafficState) migrateLegacyLimits(instances map[string][]string) (bo
 	}
 	persisted := appTrafficPersistedState{Apps: s.apps, Baselines: s.baselines, Limits: candidate, LegacyBridges: s.legacyBridges}
 	now := time.Now()
-	if err := writeJSONFile(s.path, persisted, true); err != nil {
+	if err := writeJSONFile(s.path, persisted, false); err != nil {
 		return false, err
 	}
 	s.limits = candidate
@@ -892,8 +962,9 @@ func (s *appTrafficState) flush() {
 }
 
 func (s *appTrafficState) persistLocked(now time.Time) error {
+	s.compactSamplesLocked(now)
 	persisted := appTrafficPersistedState{Apps: s.apps, Baselines: s.baselines, Limits: s.limits, LegacyBridges: s.legacyBridges}
-	if err := writeJSONFile(s.path, persisted, true); err != nil {
+	if err := writeJSONFile(s.path, persisted, false); err != nil {
 		return err
 	}
 	s.lastPersist = now
