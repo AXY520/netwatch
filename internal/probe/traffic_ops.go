@@ -194,6 +194,9 @@ func (s *Service) startAppLifecycleObserver() {
 
 func (s *Service) observeAppTraffic() {
 	items := CollectAppTraffic().Bridges
+	if err := s.migrateLegacyAppInstancePolicies(items); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
+	}
 	if s.appTraffic != nil {
 		s.appTraffic.sample(items, time.Now())
 		s.reconcileAppTrafficLimits(items)
@@ -209,6 +212,9 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 	snapshot := CollectAppTraffic()
 	if s.appTraffic == nil {
 		return snapshot
+	}
+	if err := s.migrateLegacyAppInstancePolicies(snapshot.Bridges); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
 	}
 	s.appTraffic.sample(snapshot.Bridges, time.Now())
 	s.reconcileAppTrafficLimits(snapshot.Bridges)
@@ -237,12 +243,12 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 func activeAppTrafficIDs(items []AppBridgeStats) map[string]bool {
 	active := make(map[string]bool)
 	for _, item := range items {
-		appID := strings.TrimSpace(item.AppID)
-		if appID == "" {
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" {
 			continue
 		}
 		if item.RunningCount > 0 {
-			active[appID] = true
+			active[policyID] = true
 		}
 	}
 	return active
@@ -253,6 +259,17 @@ func (s *Service) AppTrafficHistory(appID string) []AppTrafficSample {
 		return []AppTrafficSample{}
 	}
 	return s.appTraffic.history(strings.TrimSpace(appID))
+}
+
+func (s *Service) AppInstanceTrafficHistory(appID, instanceID string) ([]AppTrafficSample, error) {
+	if s.appTraffic == nil {
+		return []AppTrafficSample{}, nil
+	}
+	policyID, err := resolveAppInstancePolicyID(CollectAppTraffic().Bridges, appID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.appTraffic.history(policyID), nil
 }
 
 func watchDockerLifecycleEvents(ctx context.Context, changes chan<- struct{}) {

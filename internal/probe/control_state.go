@@ -6,7 +6,7 @@ import "sync"
 type containerControlState struct {
 	mu          sync.RWMutex
 	blocked     map[string]string // legacy network target -> mode
-	blockedApps map[string]string // app_id -> mode
+	blockedApps map[string]string // instance_id -> mode; app_id remains the single-instance key
 }
 
 // networkMutationState serializes host network changes. IP, bridge and DNS

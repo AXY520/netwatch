@@ -62,7 +62,7 @@
       <thead><tr><th>应用网络模式</th><th>流量统计</th><th>限制网速</th><th>禁用外网</th><th>设置代理</th><th>控制目标</th></tr></thead>
       <tbody>
         <tr><td><span class="tag">Bridge</span></td><td class="ok">支持</td><td class="ok">支持</td><td class="ok">支持</td><td class="ok">支持</td><td><code>lzc-br-*</code> 网桥</td></tr>
-        <tr><td><span class="tag">Host</span></td><td>cgroup eBPF，真机已验证</td><td class="ok">实验性开关开启后支持</td><td>实验性开关开启后支持</td><td>实验性开关开启后支持</td><td><code>host-app:&lt;app_id&gt;</code> 对应应用父 slice</td></tr>
+        <tr><td><span class="tag">Host</span></td><td>cgroup eBPF，真机已验证</td><td class="ok">实验性开关开启后支持</td><td>实验性开关开启后支持</td><td>实验性开关开启后支持</td><td><code>host-app:&lt;instance_id&gt;</code> 对应应用实例父 slice</td></tr>
         <tr><td><span class="tag">Mixed</span></td><td>Bridge + Host 分别统计后按应用聚合</td><td class="ok">实验性开关开启后共享预算</td><td>Bridge、Host 目标分别控制</td><td>Bridge、Host 目标分别代理</td><td>网桥和 Host cgroup 两类目标</td></tr>
       </tbody>
     </table>
@@ -107,7 +107,7 @@
     <ul>
       <li>采样目标间隔约 2 秒；重复调用在半个采样间隔内会被跳过。</li>
       <li>每个独立内核计数源保存上一次计数作为 baseline：Bridge 使用网桥名，Host 使用容器 cgroup 路径。只累加正向差值；网桥/cgroup 重建或计数回退时只重建对应来源的 baseline。</li>
-      <li>同一应用的多个网桥、多个容器按 <code>app_id</code> 聚合。</li>
+      <li>同一用户实例的多个网桥、多个容器按 <code>instance_id</code> 聚合；单实例时该 key 仍等于 <code>app_id</code>。</li>
       <li>实时速率 = 本次正向字节差 / 两次采样间隔，单位为 B/s；没有有效间隔时速率为 0。</li>
       <li>今日、本月流量按每日记录汇总；应用级历史和 baseline 持久化到 <code>app_traffic_history.json</code>。</li>
       <li>应用列表只展示当前仍有运行容器的应用，删除或停止的应用不会继续作为活动条目展示。</li>
@@ -176,10 +176,10 @@
 
     <h3>4.3 状态保存与实验开关</h3>
     <ul>
-      <li>禁用状态权威保存在 <code>BlockedApps</code>，key 是 <code>app_id</code>；旧版本的 <code>BlockedBridges</code> 目标 ID 只作为迁移来源。</li>
+      <li>禁用状态权威保存在 <code>BlockedApps</code>，key 是 <code>instance_id</code>；单实例时仍等于 <code>app_id</code>，旧版本的 <code>BlockedBridges</code> 目标 ID 只作为迁移来源。</li>
       <li>Host 控制要求“Host 网络控制（实验性）”开启；关闭开关时会清理 Host cgroup iptables 规则、Host/Mixed TC 限速及对应持久化控制状态。</li>
       <li>白名单系统应用不能执行禁用外网、限速或设置代理。</li>
-      <li>Controller 负责策略事务和失败回滚；防火墙 driver 使用 Netwatch 自有双缓冲 chain，在应用生命周期、服务启动和周期 reconcile 时重建规则。网桥重建后会按 <code>app_id</code> 把禁网策略重新展开到新目标。</li>
+      <li>Controller 负责策略事务和失败回滚；防火墙 driver 使用 Netwatch 自有双缓冲 chain，在应用生命周期、服务启动和周期 reconcile 时重建规则。网桥重建后会按 <code>instance_id</code> 把禁网策略重新展开到新目标。</li>
       <li>宿主机 iptables 可能是指向 <code>/etc/alternatives/</code> 的绝对符号链接；能力检测不在容器根中跟随该链接，实际命令由 <code>nsenter -r</code> 在宿主根解析。</li>
       <li><code>xt_cgroup --path</code> 相对调用者的 cgroup namespace 解析；防火墙命令必须通过 <code>nsenter -C</code> 同时进入 PID 1 的 cgroup namespace，否则 nft 后端会以 <code>RULE_APPEND ... Invalid argument</code> 拒绝 Host 规则。</li>
     </ul>
@@ -189,7 +189,7 @@
     <h2>五、设置应用代理</h2>
     <h3>5.1 配置与状态</h3>
     <ul>
-      <li><code>app_proxy</code> 是新应用弹窗的默认值；<code>app_proxy_configs</code> 按 <code>app_id</code> 保存每个应用自己的 HTTP/SOCKS5、IP 和端口，<code>proxy_apps</code> 只记录启用状态。</li>
+      <li><code>app_proxy</code> 是新应用弹窗的默认值；<code>app_proxy_configs</code> 按 <code>instance_id</code> 保存每个实例自己的 HTTP/SOCKS5、IP 和端口，<code>proxy_apps</code> 只记录启用状态。</li>
       <li>恢复直连只关闭该应用代理并清理规则，保留其上次配置；修改默认值不会热切换已配置应用。</li>
       <li>旧版已启用应用如果没有独立配置，加载时自动复制当时的全局默认值。</li>
     </ul>
@@ -231,7 +231,7 @@
       <li><strong>代理状态不一致：</strong>先看 <code>network_policy.proxy_state</code>、<code>proxy_in_sync</code> 和 diagnostic；再检查该应用独立适配器及 Netwatch 自有 NAT/filter chain，不要只看 <code>proxy_enabled</code>。</li>
       <li><strong>HTTP 应用的 UDP 不通：</strong>这是当前协议边界，HTTP 上游只转发 TCP，剩余公网流量失败关闭；需要 UDP 时选择 SOCKS5。</li>
       <li><strong>Host/Mixed 代理与限速：</strong>两者当前互斥，必须先恢复直连或取消限速。代理按应用独立配置和监听，不共用上游或内部端口。</li>
-      <li><strong>Host 统计不可用：</strong>先看快照中的具体 diagnostic，确认 cgroup v2、宿主机 proc/cgroup 挂载、BPF capability、程序加载和附着错误。Host 统计按每个容器 cgroup 独立读取和维护 baseline，再按 <code>app_id</code> 聚合；一个 cgroup 重启归零不会重置同应用其他容器的增量。</li>
+      <li><strong>Host 统计不可用：</strong>先看快照中的具体 diagnostic，确认 cgroup v2、宿主机 proc/cgroup 挂载、BPF capability、程序加载和附着错误。Host 统计按每个容器 cgroup 独立读取和维护 baseline，再按 <code>instance_id</code> 聚合；一个 cgroup 重启归零不会重置同实例其他容器的增量。</li>
       <li><strong>限速后应用断网：</strong>检查网桥 ingress police 的动作顺序必须是 <code>conform-exceed drop/ok</code>；正常包应放行，超限包才丢弃。</li>
       <li><strong>取消后仍受限：</strong>纯 Bridge 检查 root TBF <code>194:</code> 和优先级 <code>49140-49144/49152</code>；Host/Mixed 检查默认出口优先级 <code>49160/49161</code>。同时确认后台 reconcile 没有重新读取旧的持久化状态。</li>
       <li><strong>网桥统计不是应用精确进程统计：</strong>Bridge 模式下它统计的是整个应用网桥的内核计数；同一 Compose project 的多个容器可能汇总到一个应用。</li>
@@ -262,6 +262,19 @@
       <li>空 <code>clsact</code> 可以在取消后保留；它不会替换或改变 root qdisc。</li>
     </ul>
     <div class="note"><strong>结论：</strong>Host/Mixed 限速已作为实验能力开放；UI/API 只有在实验开关、cgroup v2、默认出口和 TC/eBPF 条件都满足时才返回可用。bpffs 只影响 Host 统计 map 的跨重启累计，不是该限速方案的前置条件。</div>
+  </section>
+
+  <section>
+    <h2>九、多实例应用身份</h2>
+    <p>懒猫的 <code>application.multi_instance: true</code> 会为每个用户启动独立容器。Netwatch 保留 <code>app_id</code> 表示应用本身，另使用 <code>instance_id</code> 作为统计、历史和策略主键。</p>
+    <ul>
+      <li>优先从 <code>lzcapp.user-id</code> 生成 <code>&lt;app_id&gt;@user:&lt;user&gt;</code>；缺少该 label 且同应用存在多个 Compose project 时，生成 <code>&lt;app_id&gt;@project:&lt;project&gt;</code>。</li>
+      <li>单实例的 <code>instance_id</code> 等于原 <code>app_id</code>，所以旧持久化数据与旧 API 客户端保持兼容。</li>
+      <li>只传 <code>app_id</code> 且同时发现多个实例的变更请求会被拒绝；前端总是同时提交 <code>app_id</code> 和当前行的 <code>instance_id</code>。</li>
+      <li>旧应用级限速、禁网和代理策略会复制给当前已发现的实例后删除基础 key；旧聚合历史保留但不伪造用户间的拆分。</li>
+      <li>Host 多实例会校验 cgroup 父级是否真正独立；共享父级时保留按容器统计，但禁用限速、禁网和代理，不会把一个用户的策略应用给另一用户。</li>
+    </ul>
+    <div class="note"><strong>验证状态：</strong>2026-08-31 已部署到生产盒子。懒猫下载器的 axy/damn 实例已拆分为独立行和独立 bridge 目标，旧 10 Mbps 上下行策略已分别迁移且状态同步；两个实例已开始各自记录历史。省略 <code>instance_id</code> 的下载器请求会返回明确的多实例错误。本轮只读验收未主动执行断网、代理或限速扰动测试。</div>
   </section>
 
   <footer>Netwatch · 应用流量与网络控制实现说明</footer>

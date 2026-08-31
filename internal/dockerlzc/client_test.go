@@ -57,3 +57,40 @@ func TestPrimaryAppContainerPriority(t *testing.T) {
 		}
 	}
 }
+
+func TestAssignContainerInstanceIdentitiesSeparatesLazycatUsers(t *testing.T) {
+	appID := "cloud.lazycat.app.downloader"
+	containers := []ContainerRuntimeInfo{
+		{Name: "cloudlazycatappdownloader-app-1", AppID: appID, UserID: "axy", Project: "cloudlazycatappdownloader"},
+		{Name: "cloudlazycatappdownloader-worker-1", AppID: appID, Project: "cloudlazycatappdownloader"},
+		{Name: "cloudlazycatappdownloader1-app-1", AppID: appID, UserID: "damn", Project: "cloudlazycatappdownloader1"},
+	}
+	got := assignContainerInstanceIdentities(containers)
+	if got[0].InstanceID != appID+"@user:axy" || got[1].InstanceID != got[0].InstanceID || got[1].UserID != "axy" {
+		t.Fatalf("first user identity was not propagated to sidecars: %+v", got[:2])
+	}
+	if got[2].InstanceID != appID+"@user:damn" {
+		t.Fatalf("second user identity = %+v", got[2])
+	}
+	for _, container := range got {
+		if !container.MultiInstance {
+			t.Fatalf("container was not marked multi-instance: %+v", container)
+		}
+	}
+}
+
+func TestBuildBridgeMapKeepsMultiInstanceProjectsSeparate(t *testing.T) {
+	appID := "cloud.lazycat.app.downloader"
+	networks := []networkSummary{
+		{Name: "downloader_default", Labels: map[string]string{"com.docker.compose.project": "downloader"}, Options: map[string]string{"com.docker.network.bridge.name": "lzc-br-one"}},
+		{Name: "downloader1_default", Labels: map[string]string{"com.docker.compose.project": "downloader1"}, Options: map[string]string{"com.docker.network.bridge.name": "lzc-br-two"}},
+	}
+	containers := []ContainerRuntimeInfo{
+		{Name: "downloader-app-1", AppID: appID, UserID: "axy", Project: "downloader", State: "running", Networks: []string{"downloader_default"}},
+		{Name: "downloader1-app-1", AppID: appID, UserID: "damn", Project: "downloader1", State: "running", Networks: []string{"downloader1_default"}},
+	}
+	got := buildBridgeMapFromInventory(networks, containers)
+	if got["lzc-br-one"].InstanceID != appID+"@user:axy" || got["lzc-br-two"].InstanceID != appID+"@user:damn" {
+		t.Fatalf("bridge identities = %+v", got)
+	}
+}

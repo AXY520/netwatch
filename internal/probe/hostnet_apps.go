@@ -18,10 +18,13 @@ import (
 const hostAppTargetPrefix = "host-app:"
 
 type hostAppRuntime struct {
-	AppID      string
-	Project    string
-	Containers []dockerlzc.ContainerRuntimeInfo
-	Primary    dockerlzc.ContainerRuntimeInfo
+	AppID         string
+	InstanceID    string
+	UserID        string
+	MultiInstance bool
+	Project       string
+	Containers    []dockerlzc.ContainerRuntimeInfo
+	Primary       dockerlzc.ContainerRuntimeInfo
 }
 
 func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
@@ -52,6 +55,10 @@ func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
 		if appID == "" {
 			appID = appIDsByProject[normalizeAppProject(app.Project)]
 		}
+		instanceID := strings.TrimSpace(app.InstanceID)
+		if instanceID == "" {
+			instanceID = appID
+		}
 		if appID == "" {
 			completeCgroupInventory = false
 			continue
@@ -75,14 +82,14 @@ func collectHostNetworkTraffic(metadata appTrafficMetadata) []AppBridgeStats {
 				read.Note = pathDiagnostic
 			}
 			item := AppBridgeStats{
-				Bridge: hostAppTarget(appID), AppID: appID, Project: app.Project,
+				Bridge: hostAppTarget(instanceID), AppID: appID, InstanceID: instanceID, UserID: app.UserID, MultiInstance: app.MultiInstance, Project: app.Project,
 				SampledAt: sampledAt, CounterPerspective: "container_cgroup",
 				NetworkMode: "host", CgroupPath: relativeCgroupPath(path),
-				Experimental: true, ControlTarget: hostAppTarget(appID),
+				Experimental: true, ControlTarget: hostAppTarget(instanceID),
 				ContainerCount: 1, RunningCount: 1,
 			}
 			item.Target = AppNetworkTarget{
-				ID: item.ControlTarget, Kind: AppNetworkTargetCgroup, AppID: appID,
+				ID: item.ControlTarget, Kind: AppNetworkTargetCgroup, AppID: appID, InstanceID: instanceID,
 				CgroupPath: item.CgroupPath, NetworkMode: "host", AccountingSource: item.Source,
 			}
 			if read.Available {
@@ -145,12 +152,19 @@ func groupHostAppRuntime(containers []dockerlzc.ContainerRuntimeInfo) []hostAppR
 		}
 		app := grouped[container.Project]
 		if app == nil {
-			app = &hostAppRuntime{AppID: container.AppID, Project: container.Project, Primary: primary[container.Project]}
+			app = &hostAppRuntime{AppID: container.AppID, InstanceID: container.InstanceID, UserID: container.UserID, MultiInstance: container.MultiInstance, Project: container.Project, Primary: primary[container.Project]}
 			grouped[container.Project] = app
 		}
 		if app.AppID == "" {
 			app.AppID = container.AppID
 		}
+		if app.InstanceID == "" {
+			app.InstanceID = container.InstanceID
+		}
+		if app.UserID == "" {
+			app.UserID = container.UserID
+		}
+		app.MultiInstance = app.MultiInstance || container.MultiInstance
 		app.Containers = append(app.Containers, container)
 	}
 	out := make([]hostAppRuntime, 0, len(grouped))
@@ -164,6 +178,45 @@ func groupHostAppRuntime(containers []dockerlzc.ContainerRuntimeInfo) []hostAppR
 
 func hostAppTarget(appID string) string {
 	return hostAppTargetPrefix + strings.TrimSpace(appID)
+}
+
+// annotateHostInstanceControlIsolation prevents a per-user policy from being
+// expanded onto a cgroup parent shared by another user instance. Accounting
+// remains per-container and available; mutating controls are disabled until
+// the runtime exposes distinct parents that the kernel can match safely.
+func annotateHostInstanceControlIsolation(items []AppBridgeStats) {
+	parents := make(map[string]map[string]bool)
+	for _, item := range items {
+		if item.NetworkMode != "host" || appTrafficPolicyID(item) == strings.TrimSpace(item.AppID) {
+			continue
+		}
+		path := strings.Trim(strings.TrimSpace(filepath.ToSlash(item.CgroupPath)), "/")
+		if path == "" {
+			continue
+		}
+		parent := filepathDir(path)
+		if parents[parent] == nil {
+			parents[parent] = make(map[string]bool)
+		}
+		parents[parent][appTrafficPolicyID(item)] = true
+	}
+	for index := range items {
+		item := &items[index]
+		policyID := appTrafficPolicyID(*item)
+		if item.NetworkMode != "host" || policyID == strings.TrimSpace(item.AppID) {
+			continue
+		}
+		path := strings.Trim(strings.TrimSpace(filepath.ToSlash(item.CgroupPath)), "/")
+		diagnostic := ""
+		if path == "" {
+			diagnostic = "Host 多实例缺少可验证的 cgroup 路径，已禁用变更型网络控制"
+		} else if len(parents[filepathDir(path)]) > 1 {
+			diagnostic = "Host 多实例共享 cgroup 父级，无法安全地按用户独立控制"
+		}
+		if diagnostic != "" {
+			item.Target.ControlDiagnostic = diagnostic
+		}
+	}
 }
 
 func hostAppIDFromTarget(target string) (string, bool) {
@@ -284,7 +337,7 @@ func relativeCgroupPath(path string) string {
 	return strings.TrimPrefix(filepath.ToSlash(path), "/")
 }
 
-func hostContainersForApp(ctx context.Context, appID string) []dockerlzc.ContainerRuntimeInfo {
+func hostContainersForApp(ctx context.Context, policyID string) []dockerlzc.ContainerRuntimeInfo {
 	if !dockerlzc.Available() {
 		return nil
 	}
@@ -293,9 +346,8 @@ func hostContainersForApp(ctx context.Context, appID string) []dockerlzc.Contain
 		return nil
 	}
 	out := make([]dockerlzc.ContainerRuntimeInfo, 0)
-	normalizedAppID := normalizeAppProject(appID)
 	for _, container := range containers {
-		matchesApp := container.AppID == appID || (container.AppID == "" && normalizeAppProject(container.Project) == normalizedAppID)
+		matchesApp := container.InstanceID == policyID || (container.InstanceID == "" && container.AppID == policyID)
 		if matchesApp && container.NetworkMode == "host" {
 			out = append(out, container)
 		}

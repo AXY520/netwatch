@@ -28,8 +28,8 @@ func hostNetworkControlPath(target string) (string, error) {
 	return hostAppCgroupPath(appID)
 }
 
-func hostAppCgroupPath(appID string) (string, error) {
-	normalizedAppID := normalizeAppProject(appID)
+func hostAppCgroupPath(policyID string) (string, error) {
+	policyID = strings.TrimSpace(policyID)
 	if dockerlzc.Available() {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		containers, err := dockerlzc.ListContainerRuntime(ctx)
@@ -39,7 +39,7 @@ func hostAppCgroupPath(appID string) (string, error) {
 				if !container.Running || container.NetworkMode != "host" {
 					continue
 				}
-				if container.AppID != appID && normalizeAppProject(container.Project) != normalizedAppID {
+				if container.InstanceID != policyID && !(container.InstanceID == "" && container.AppID == policyID) {
 					continue
 				}
 				path := containerHostCgroupPath(container)
@@ -55,8 +55,8 @@ func hostAppCgroupPath(appID string) (string, error) {
 	// feature can remove the rule instead of leaving a rule that would affect a
 	// later restart of the same app.
 	root := systemCgroupV2Root()
-	if root != "" {
-		needle := "lzcapp-" + strings.TrimSpace(appID) + ".slice"
+	if root != "" && baseAppID(policyID) == policyID {
+		needle := "lzcapp-" + policyID + ".slice"
 		var found string
 		_ = filepath.WalkDir(root, func(path string, entryDir fs.DirEntry, walkErr error) error {
 			if walkErr != nil || entryDir == nil {
@@ -72,7 +72,7 @@ func hostAppCgroupPath(appID string) (string, error) {
 			return relativeCgroupPath(found), nil
 		}
 	}
-	return "", fmt.Errorf("host application %s has no running host container", appID)
+	return "", fmt.Errorf("host application instance %s has no running host container", policyID)
 }
 
 var errStopCgroupWalk = errors.New("stop cgroup walk")

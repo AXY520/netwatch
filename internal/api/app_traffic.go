@@ -22,11 +22,17 @@ func (h *Handler) handleAppTrafficHistory(w http.ResponseWriter, r *http.Request
 		return
 	}
 	appID := strings.TrimSpace(r.URL.Query().Get("app_id"))
+	instanceID := strings.TrimSpace(r.URL.Query().Get("instance_id"))
 	if appID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app_id is required"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"app_id": appID, "samples": h.service.AppTrafficHistory(appID)})
+	samples, err := h.service.AppInstanceTrafficHistory(appID, instanceID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"app_id": appID, "instance_id": instanceID, "samples": samples})
 }
 
 func (h *Handler) handleAppTrafficLimit(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +42,7 @@ func (h *Handler) handleAppTrafficLimit(w http.ResponseWriter, r *http.Request) 
 	}
 	var request struct {
 		AppID        string `json:"app_id"`
+		InstanceID   string `json:"instance_id"`
 		UploadKbps   int64  `json:"upload_kbps"`
 		DownloadKbps int64  `json:"download_kbps"`
 	}
@@ -43,11 +50,11 @@ func (h *Handler) handleAppTrafficLimit(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
-	if err := h.service.SetAppTrafficLimit(r.Context(), request.AppID, probe.AppTrafficLimit{UploadKbps: request.UploadKbps, DownloadKbps: request.DownloadKbps}); err != nil {
+	if err := h.service.SetAppInstanceTrafficLimit(r.Context(), request.AppID, request.InstanceID, probe.AppTrafficLimit{UploadKbps: request.UploadKbps, DownloadKbps: request.DownloadKbps}); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID), "upload_kbps": request.UploadKbps, "download_kbps": request.DownloadKbps})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID), "instance_id": strings.TrimSpace(request.InstanceID), "upload_kbps": request.UploadKbps, "download_kbps": request.DownloadKbps})
 }
 
 func (h *Handler) handleAppNetworkPolicy(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +64,7 @@ func (h *Handler) handleAppNetworkPolicy(w http.ResponseWriter, r *http.Request)
 	}
 	var request struct {
 		AppID           string                  `json:"app_id"`
+		InstanceID      string                  `json:"instance_id"`
 		UploadKbps      *int64                  `json:"upload_kbps"`
 		DownloadKbps    *int64                  `json:"download_kbps"`
 		InternetAllowed *bool                   `json:"internet_allowed"`
@@ -71,11 +79,11 @@ func (h *Handler) handleAppNetworkPolicy(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app_id and at least one policy field are required"})
 		return
 	}
-	if err := h.service.UpdateAppNetworkPolicy(r.Context(), request.AppID, request.UploadKbps, request.DownloadKbps, request.InternetAllowed, request.ProxyEnabled, request.ProxySettings); err != nil {
+	if err := h.service.UpdateAppInstanceNetworkPolicy(r.Context(), request.AppID, request.InstanceID, request.UploadKbps, request.DownloadKbps, request.InternetAllowed, request.ProxyEnabled, request.ProxySettings); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID)})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "app_id": strings.TrimSpace(request.AppID), "instance_id": strings.TrimSpace(request.InstanceID)})
 }
 
 func (h *Handler) handleAppProxySettings(w http.ResponseWriter, r *http.Request) {

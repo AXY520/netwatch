@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"netwatch/internal/appidentity"
 )
 
 const socketPath = "/var/run/docker.sock"
@@ -148,6 +150,9 @@ func FormatContainerStarted(started int64) string {
 // BridgeAppInfo is the joined record returned by BuildBridgeMap.
 type BridgeAppInfo struct {
 	AppID          string // e.g. "cloud.lazycat.app.netwatch" — empty if unknown
+	InstanceID     string // stable per-user instance identity; app_id for single-instance apps
+	UserID         string // lzcapp.user-id for multi-instance applications
+	MultiInstance  bool
 	Project        string // docker compose project name, e.g. "cloudlazycatappnetwatch"
 	Title          string // human-friendly app name; falls back to AppID when missing
 	ContainerCount int    // total containers in this project
@@ -218,21 +223,24 @@ func WatchEvents(ctx context.Context, onEvent func(Event)) error {
 // inspect data. This is intentionally kept independent from Lazycat app APIs:
 // labels are enough to group most lzc-docker containers by app/project.
 type ContainerRuntimeInfo struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Image       string            `json:"image,omitempty"`
-	AppID       string            `json:"app_id,omitempty"`
-	Project     string            `json:"project,omitempty"`
-	State       string            `json:"state,omitempty"`
-	Status      string            `json:"status,omitempty"`
-	Created     int64             `json:"created,omitempty"`
-	StartedAt   int64             `json:"started_at,omitempty"`
-	NetworkMode string            `json:"network_mode,omitempty"`
-	CgroupPath  string            `json:"cgroup_path,omitempty"`
-	Networks    []string          `json:"networks,omitempty"`
-	PID         int               `json:"pid,omitempty"`
-	Running     bool              `json:"running,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image,omitempty"`
+	AppID         string            `json:"app_id,omitempty"`
+	InstanceID    string            `json:"instance_id,omitempty"`
+	UserID        string            `json:"user_id,omitempty"`
+	MultiInstance bool              `json:"multi_instance,omitempty"`
+	Project       string            `json:"project,omitempty"`
+	State         string            `json:"state,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	Created       int64             `json:"created,omitempty"`
+	StartedAt     int64             `json:"started_at,omitempty"`
+	NetworkMode   string            `json:"network_mode,omitempty"`
+	CgroupPath    string            `json:"cgroup_path,omitempty"`
+	Networks      []string          `json:"networks,omitempty"`
+	PID           int               `json:"pid,omitempty"`
+	Running       bool              `json:"running,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
 }
 
 // BuildBridgeMap returns a "host bridge name → app info" map by joining the
@@ -268,6 +276,7 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 }
 
 func buildBridgeMapFromInventory(networks []networkSummary, containers []ContainerRuntimeInfo) map[string]BridgeAppInfo {
+	containers = assignContainerInstanceIdentities(containers)
 	// Keep project identity separate from per-network runtime. During app
 	// recreation one project can temporarily own both an old and a new network.
 	projectInfo := map[string]BridgeAppInfo{}
@@ -285,6 +294,9 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 			info.Project = project
 			info.Title = appid
 		}
+		info.InstanceID = c.InstanceID
+		info.UserID = c.UserID
+		info.MultiInstance = c.MultiInstance
 		info.ContainerCount++
 		if c.State == "running" {
 			info.RunningCount++
@@ -297,6 +309,9 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 				networkRuntime.Project = project
 				networkRuntime.Title = appid
 			}
+			networkRuntime.InstanceID = c.InstanceID
+			networkRuntime.UserID = c.UserID
+			networkRuntime.MultiInstance = c.MultiInstance
 			networkRuntime.ContainerCount++
 			if c.State == "running" {
 				networkRuntime.RunningCount++
@@ -308,6 +323,10 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 	// by whichever sidecar Docker happened to return first.
 	for project, primary := range primaryByProject {
 		info := projectInfo[project]
+		info.AppID = firstNonEmpty(primary.AppID, info.AppID)
+		info.InstanceID = firstNonEmpty(primary.InstanceID, info.InstanceID)
+		info.UserID = firstNonEmpty(primary.UserID, info.UserID)
+		info.MultiInstance = primary.MultiInstance || info.MultiInstance
 		info.StatusText = containerStatusStart(primary)
 		if primary.StartedAt > 0 {
 			info.CreatedAt = primary.StartedAt
@@ -336,6 +355,11 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 		if info.AppID == "" {
 			info.AppID = identity.AppID
 			info.Title = identity.Title
+		}
+		if info.InstanceID == "" {
+			info.InstanceID = identity.InstanceID
+			info.UserID = identity.UserID
+			info.MultiInstance = identity.MultiInstance
 		}
 		if info.Project == "" {
 			info.Project = project
@@ -470,6 +494,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 			Name:    firstContainerName(c.Names),
 			Image:   c.Image,
 			AppID:   c.Labels["lzcapp.app-id"],
+			UserID:  c.Labels["lzcapp.user-id"],
 			Project: c.Labels["com.docker.compose.project"],
 			State:   c.State,
 			Status:  c.Status,
@@ -490,6 +515,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 			if inspect.Config.Labels != nil {
 				info.Labels = inspect.Config.Labels
 				info.AppID = inspect.Config.Labels["lzcapp.app-id"]
+				info.UserID = inspect.Config.Labels["lzcapp.user-id"]
 				info.Project = inspect.Config.Labels["com.docker.compose.project"]
 			}
 			info.NetworkMode = inspect.HostConfig.NetworkMode
@@ -509,7 +535,66 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 		}
 		out = append(out, info)
 	}
-	return out, nil
+	return assignContainerInstanceIdentities(out), nil
+}
+
+// assignContainerInstanceIdentities propagates the app/user identity from the
+// primary or labelled container to every sidecar in the same Compose project.
+// Multiple projects for one app are treated as separate instances even on
+// older runtimes that do not expose lzcapp.user-id.
+func assignContainerInstanceIdentities(containers []ContainerRuntimeInfo) []ContainerRuntimeInfo {
+	type projectIdentity struct {
+		appID  string
+		userID string
+	}
+	projects := make(map[string]projectIdentity)
+	primary := PrimaryAppContainers(containers)
+	for project, container := range primary {
+		projects[project] = projectIdentity{appID: strings.TrimSpace(container.AppID), userID: strings.TrimSpace(container.UserID)}
+	}
+	for _, container := range containers {
+		project := strings.TrimSpace(container.Project)
+		if project == "" {
+			continue
+		}
+		identity := projects[project]
+		if identity.appID == "" {
+			identity.appID = strings.TrimSpace(container.AppID)
+		}
+		if identity.userID == "" {
+			identity.userID = strings.TrimSpace(container.UserID)
+		}
+		projects[project] = identity
+	}
+	appProjects := make(map[string]map[string]bool)
+	for project, identity := range projects {
+		if identity.appID == "" {
+			continue
+		}
+		if appProjects[identity.appID] == nil {
+			appProjects[identity.appID] = make(map[string]bool)
+		}
+		appProjects[identity.appID][project] = true
+	}
+	out := append([]ContainerRuntimeInfo(nil), containers...)
+	for index := range out {
+		project := strings.TrimSpace(out[index].Project)
+		identity := projects[project]
+		out[index].AppID = firstNonEmpty(identity.appID, strings.TrimSpace(out[index].AppID))
+		out[index].UserID = firstNonEmpty(identity.userID, strings.TrimSpace(out[index].UserID))
+		out[index].MultiInstance = out[index].UserID != "" || len(appProjects[out[index].AppID]) > 1
+		out[index].InstanceID = appidentity.Build(out[index].AppID, out[index].UserID, project, out[index].MultiInstance)
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type containerSummary struct {

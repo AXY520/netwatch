@@ -632,15 +632,19 @@ func (m *hostTrafficLimiter) runtimeStatus(appID string, desired AppTrafficLimit
 
 func (m *hostTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStats, limits map[string]AppTrafficLimit, enabled bool) map[string]bool {
 	hostApps := make(map[string]bool)
+	unsupported := make(map[string]bool)
 	for _, item := range items {
-		if item.AppID != "" && (item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix)) {
-			hostApps[item.AppID] = true
+		if policyID := appTrafficPolicyID(item); policyID != "" && (item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix)) {
+			hostApps[policyID] = true
+			if item.Target.ControlDiagnostic != "" {
+				unsupported[policyID] = true
+			}
 		}
 	}
 	cleared := make(map[string]bool)
 	for appID := range hostApps {
 		limit := limits[appID]
-		if !enabled || limit.UploadKbps == 0 && limit.DownloadKbps == 0 {
+		if !enabled || unsupported[appID] || limit.UploadKbps == 0 && limit.DownloadKbps == 0 {
 			m.mu.Lock()
 			err := m.closeAppLocked(appID)
 			m.mu.Unlock()

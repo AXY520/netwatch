@@ -23,8 +23,8 @@ func (s *Service) clearHostNetworkExperimentalState(persist bool) {
 	items := CollectAppTraffic().Bridges
 	hostApps := make(map[string]bool)
 	for _, item := range items {
-		if item.AppID != "" && (item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix)) {
-			hostApps[item.AppID] = true
+		if policyID := appTrafficPolicyID(item); policyID != "" && (item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix)) {
+			hostApps[policyID] = true
 		}
 	}
 	blockedApps := s.containers.snapshotBlockedApps()

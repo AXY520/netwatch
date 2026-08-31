@@ -62,6 +62,9 @@ func sanitizeIconURL(raw, boxDomain string) string {
 type AppBridgeStats struct {
 	Bridge             string           `json:"bridge"`
 	AppID              string           `json:"app_id,omitempty"`
+	InstanceID         string           `json:"instance_id,omitempty"`
+	UserID             string           `json:"user_id,omitempty"`
+	MultiInstance      bool             `json:"multi_instance,omitempty"`
 	AppTitle           string           `json:"app_title,omitempty"`
 	Project            string           `json:"project,omitempty"`
 	SubnetV4           string           `json:"subnet_v4,omitempty"`
@@ -327,7 +330,7 @@ func isExcludedApp(appID, title string) bool {
 }
 
 func appTrafficIdentityKey(item AppBridgeStats) string {
-	if value := strings.TrimSpace(item.AppID); value != "" {
+	if value := appTrafficPolicyID(item); value != "" {
 		return "app:" + value
 	}
 	if value := strings.TrimSpace(item.Project); value != "" {
@@ -422,6 +425,12 @@ func collectAppTraffic() AppTrafficSnapshot {
 				stats.AppID = projectAppIDs[normalizeAppProject(info.Project)]
 			}
 			stats.Project = info.Project
+			stats.InstanceID = info.InstanceID
+			stats.UserID = info.UserID
+			stats.MultiInstance = info.MultiInstance
+			if stats.InstanceID == "" {
+				stats.InstanceID = stats.AppID
+			}
 			stats.ContainerCount = info.ContainerCount
 			stats.RunningCount = info.RunningCount
 			stats.StatusText = info.StatusText
@@ -446,7 +455,7 @@ func collectAppTraffic() AppTrafficSnapshot {
 		}
 		if stats.AppID != "" {
 			stats.Target = AppNetworkTarget{
-				ID: stats.Bridge, Kind: AppNetworkTargetBridge, AppID: stats.AppID,
+				ID: stats.Bridge, Kind: AppNetworkTargetBridge, AppID: stats.AppID, InstanceID: stats.InstanceID,
 				Interface: stats.Bridge, NetworkMode: "bridge", AccountingSource: stats.Source,
 			}
 		}
@@ -455,6 +464,7 @@ func collectAppTraffic() AppTrafficSnapshot {
 	snap.Bridges = filterSupersededAppBridges(snap.Bridges)
 	hostStats := collectHostNetworkTraffic(metadata)
 	snap.Bridges = append(snap.Bridges, hostStats...)
+	annotateHostInstanceControlIsolation(snap.Bridges)
 	hostStatsAvailable := false
 	hostStatsUnavailable := false
 	for _, item := range hostStats {

@@ -22,14 +22,16 @@ const (
 // enforcement/accounting point. IDs remain compatible with the legacy API,
 // while Kind removes the need for callers to infer semantics from prefixes.
 type AppNetworkTarget struct {
-	ID               string               `json:"id"`
-	Kind             AppNetworkTargetKind `json:"kind"`
-	AppID            string               `json:"app_id"`
-	Interface        string               `json:"interface,omitempty"`
-	CgroupPath       string               `json:"cgroup_path,omitempty"`
-	NetworkMode      string               `json:"network_mode"`
-	AccountingSource string               `json:"accounting_source,omitempty"`
-	Diagnostic       string               `json:"diagnostic,omitempty"`
+	ID                string               `json:"id"`
+	Kind              AppNetworkTargetKind `json:"kind"`
+	AppID             string               `json:"app_id"`
+	InstanceID        string               `json:"instance_id,omitempty"`
+	Interface         string               `json:"interface,omitempty"`
+	CgroupPath        string               `json:"cgroup_path,omitempty"`
+	NetworkMode       string               `json:"network_mode"`
+	AccountingSource  string               `json:"accounting_source,omitempty"`
+	Diagnostic        string               `json:"diagnostic,omitempty"`
+	ControlDiagnostic string               `json:"control_diagnostic,omitempty"`
 }
 
 type AppNetworkCapabilities struct {
@@ -165,8 +167,9 @@ func (d cgroupNetworkDriver) ApplyLimit(ctx context.Context, target AppNetworkTa
 	if d.limiter == nil || d.limiter.host == nil {
 		return errors.New("Host/Mixed traffic limiter is unavailable")
 	}
-	targets := appNetworkTargetsForApp(CollectAppTraffic().Bridges, target.AppID)
-	return d.limiter.host.apply(ctx, target.AppID, targets, limit)
+	policyID := appNetworkTargetPolicyID(target)
+	targets := appNetworkTargetsForApp(CollectAppTraffic().Bridges, policyID)
+	return d.limiter.host.apply(ctx, policyID, targets, limit)
 }
 
 func appNetworkTargetFromStats(item AppBridgeStats) (AppNetworkTarget, bool) {
@@ -174,32 +177,33 @@ func appNetworkTargetFromStats(item AppBridgeStats) (AppNetworkTarget, bool) {
 		return item.Target, true
 	}
 	appID := strings.TrimSpace(item.AppID)
+	instanceID := appTrafficPolicyID(item)
 	if appID == "" {
 		return AppNetworkTarget{}, false
 	}
 	if item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix) {
 		id := strings.TrimSpace(item.ControlTarget)
 		if id == "" {
-			id = hostAppTarget(appID)
+			id = hostAppTarget(instanceID)
 		}
 		return AppNetworkTarget{
-			ID: id, Kind: AppNetworkTargetCgroup, AppID: appID,
+			ID: id, Kind: AppNetworkTargetCgroup, AppID: appID, InstanceID: instanceID,
 			CgroupPath: item.CgroupPath, NetworkMode: "host", AccountingSource: item.Source, Diagnostic: item.Diagnostic,
 		}, true
 	}
 	if strings.HasPrefix(item.Bridge, lzcBridgePrefix) {
 		return AppNetworkTarget{
-			ID: item.Bridge, Kind: AppNetworkTargetBridge, AppID: appID,
+			ID: item.Bridge, Kind: AppNetworkTargetBridge, AppID: appID, InstanceID: instanceID,
 			Interface: item.Bridge, NetworkMode: "bridge", AccountingSource: item.Source,
 		}, true
 	}
 	return AppNetworkTarget{}, false
 }
 
-func appNetworkTargetsForApp(items []AppBridgeStats, appID string) []AppNetworkTarget {
+func appNetworkTargetsForApp(items []AppBridgeStats, policyID string) []AppNetworkTarget {
 	byID := make(map[string]AppNetworkTarget)
 	for _, item := range items {
-		if strings.TrimSpace(item.AppID) != strings.TrimSpace(appID) {
+		if appTrafficPolicyID(item) != strings.TrimSpace(policyID) {
 			continue
 		}
 		target, ok := appNetworkTargetFromStats(item)
@@ -215,6 +219,9 @@ func appNetworkTargetsForApp(items []AppBridgeStats, appID string) []AppNetworkT
 			}
 			if current.Diagnostic == "" {
 				current.Diagnostic = target.Diagnostic
+			}
+			if current.ControlDiagnostic == "" {
+				current.ControlDiagnostic = target.ControlDiagnostic
 			}
 			byID[target.ID] = current
 			continue
@@ -249,6 +256,9 @@ func appendUniqueAppNetworkTarget(targets []AppNetworkTarget, candidate AppNetwo
 			if targets[index].Diagnostic == "" {
 				targets[index].Diagnostic = candidate.Diagnostic
 			}
+			if targets[index].ControlDiagnostic == "" {
+				targets[index].ControlDiagnostic = candidate.ControlDiagnostic
+			}
 			return targets
 		}
 	}
@@ -256,6 +266,7 @@ func appendUniqueAppNetworkTarget(targets []AppNetworkTarget, candidate AppNetwo
 }
 
 func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string]string) AppNetworkPolicyStatus {
+	policyID := appUsagePolicyID(app)
 	status := AppNetworkPolicyStatus{
 		Desired: AppNetworkPolicy{
 			UploadKbps: app.Limit.UploadKbps, DownloadKbps: app.Limit.DownloadKbps, InternetAllowed: true,
@@ -264,14 +275,14 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 		ProxyState: "direct", ProxyInSync: true,
 	}
 	if s.settings != nil {
-		status.Desired.ProxyEnabled = s.settings.appProxyEnabled(app.AppID)
-		status.ProxySettings = s.settings.appProxyConfig(app.AppID)
+		status.Desired.ProxyEnabled = s.settings.appProxyEnabled(policyID)
+		status.ProxySettings = s.settings.appProxyConfig(policyID)
 	}
 	if len(app.NetworkTargets) == 0 {
 		// Persisted records from before the target model are upgraded from the
 		// legacy bridge/host fields at read time.
 		for _, bridge := range app.Bridges {
-			if target, ok := appNetworkTargetFromStats(AppBridgeStats{AppID: app.AppID, Bridge: bridge, NetworkMode: app.NetworkTopology}); ok {
+			if target, ok := appNetworkTargetFromStats(AppBridgeStats{AppID: app.AppID, InstanceID: policyID, Bridge: bridge, NetworkMode: app.NetworkTopology}); ok {
 				app.NetworkTargets = appendUniqueAppNetworkTarget(app.NetworkTargets, target)
 			}
 		}
@@ -288,7 +299,7 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 	}
 	blockedCount := 0
 	proxiedCount := 0
-	appBlocked := s.containers != nil && s.containers.appBlocked(app.AppID) != ""
+	appBlocked := s.containers != nil && s.containers.appBlocked(policyID) != ""
 	desiredBlocked := appBlocked
 	inSync := true
 	for _, target := range app.NetworkTargets {
@@ -343,6 +354,20 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			targetStatus.Capabilities.InternetControl = false
 			targetStatus.Capabilities.ProxyControl = false
 		}
+		if target.ControlDiagnostic != "" {
+			targetStatus.Capabilities.UploadLimit = false
+			targetStatus.Capabilities.DownloadLimit = false
+			targetStatus.Capabilities.InternetControl = false
+			targetStatus.Capabilities.ProxyControl = false
+			if targetStatus.Diagnostic == "" {
+				targetStatus.Diagnostic = target.ControlDiagnostic
+			} else if !strings.Contains(targetStatus.Diagnostic, target.ControlDiagnostic) {
+				targetStatus.Diagnostic += "；" + target.ControlDiagnostic
+			}
+			if status.Diagnostic == "" {
+				status.Diagnostic = target.ControlDiagnostic
+			}
+		}
 		if isWhitelistedApp(app.AppID, app.AppTitle) {
 			targetStatus.Capabilities.UploadLimit = false
 			targetStatus.Capabilities.DownloadLimit = false
@@ -353,7 +378,7 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 			desired := AppTrafficLimit{UploadKbps: app.Limit.UploadKbps, DownloadKbps: app.Limit.DownloadKbps}
 			runtime := s.appTrafficLimiter.runtimeStatus(target.Interface, desired)
 			if hasHostTarget && s.appTrafficLimiter.host != nil {
-				runtime = s.appTrafficLimiter.host.runtimeStatus(app.AppID, desired)
+				runtime = s.appTrafficLimiter.host.runtimeStatus(policyID, desired)
 			}
 			targetStatus.LimitInSync = runtime.InSync
 			if !runtime.InSync {
@@ -455,14 +480,14 @@ func aggregateAppNetworkCapabilities(targets []AppNetworkTargetStatus) AppNetwor
 	return result
 }
 
-func (s *Service) currentAppNetworkPolicy(appID string, targets []AppNetworkTarget) AppNetworkPolicy {
-	limit := s.appTraffic.limitForApp(appID)
+func (s *Service) currentAppNetworkPolicy(policyID string, targets []AppNetworkTarget) AppNetworkPolicy {
+	limit := s.appTraffic.limitForApp(policyID)
 	blocked := s.containers.snapshotBlocked()
 	policy := AppNetworkPolicy{
 		UploadKbps: limit.UploadKbps, DownloadKbps: limit.DownloadKbps, InternetAllowed: true,
 	}
-	policy.ProxyEnabled = s.settings != nil && s.settings.appProxyEnabled(appID)
-	if s.containers.appBlocked(appID) != "" {
+	policy.ProxyEnabled = s.settings != nil && s.settings.appProxyEnabled(policyID)
+	if s.containers.appBlocked(policyID) != "" {
 		policy.InternetAllowed = false
 	}
 	for _, target := range targets {
@@ -481,6 +506,10 @@ func (s *Service) SetAppNetworkPolicy(ctx context.Context, appID string, desired
 }
 
 func (s *Service) updateAppNetworkPolicy(ctx context.Context, appID string, update appNetworkPolicyUpdate) error {
+	return s.updateAppInstanceNetworkPolicy(ctx, appID, "", update)
+}
+
+func (s *Service) updateAppInstanceNetworkPolicy(ctx context.Context, appID, instanceID string, update appNetworkPolicyUpdate) error {
 	appID = strings.TrimSpace(appID)
 	if appID == "" || isNetwatchTrafficItem(AppBridgeStats{AppID: appID}) {
 		return errors.New("invalid application id")
@@ -491,15 +520,28 @@ func (s *Service) updateAppNetworkPolicy(ctx context.Context, appID string, upda
 	if s.appNetworkController == nil || s.appTrafficLimiter == nil || s.appTraffic == nil || s.containers == nil || s.settings == nil {
 		return errors.New("application network controller is unavailable")
 	}
-	targets := appNetworkTargetsForApp(CollectAppTraffic().Bridges, appID)
-	if len(targets) == 0 {
-		return fmt.Errorf("application %s has no controllable network target", appID)
+	items := CollectAppTraffic().Bridges
+	policyID, err := resolveAppInstancePolicyID(items, appID, instanceID)
+	if err != nil {
+		return err
 	}
-	return s.applyAppNetworkPolicyUpdate(ctx, appID, targets, update)
+	targets := appNetworkTargetsForApp(items, policyID)
+	if len(targets) == 0 {
+		return fmt.Errorf("application instance %s has no controllable network target", policyID)
+	}
+	return s.applyAppNetworkPolicyUpdateForInstance(ctx, appID, policyID, targets, update)
 }
 
 func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string, targets []AppNetworkTarget, update appNetworkPolicyUpdate) error {
-	current := s.currentAppNetworkPolicy(appID, targets)
+	policyID := appID
+	if len(targets) > 0 && appNetworkTargetPolicyID(targets[0]) != "" {
+		policyID = appNetworkTargetPolicyID(targets[0])
+	}
+	return s.applyAppNetworkPolicyUpdateForInstance(ctx, appID, policyID, targets, update)
+}
+
+func (s *Service) applyAppNetworkPolicyUpdateForInstance(ctx context.Context, appID, policyID string, targets []AppNetworkTarget, update appNetworkPolicyUpdate) error {
+	current := s.currentAppNetworkPolicy(policyID, targets)
 	desired := current
 	if update.UploadKbps != nil {
 		desired.UploadKbps = *update.UploadKbps
@@ -547,7 +589,7 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 	s.appTrafficLimiter.operationMu.Lock()
 	defer s.appTrafficLimiter.operationMu.Unlock()
 
-	previousLimit := s.appTraffic.limitForApp(appID)
+	previousLimit := s.appTraffic.limitForApp(policyID)
 	previousBlockedApps := s.containers.snapshotBlockedApps()
 	proxyDefault, previousProxyApps, previousProxyConfigs := s.settings.appProxyState()
 	candidateBlockedApps := make(map[string]string, len(previousBlockedApps)+1)
@@ -556,23 +598,23 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 	}
 	if internetChangedRequested {
 		if desired.InternetAllowed {
-			delete(candidateBlockedApps, appID)
+			delete(candidateBlockedApps, policyID)
 		} else {
-			candidateBlockedApps[appID] = "internet"
+			candidateBlockedApps[policyID] = "internet"
 		}
 	}
 	candidateProxyApps := cloneProxyApps(previousProxyApps)
 	candidateProxyConfigs := cloneAppProxyConfigs(previousProxyConfigs)
 	if proxyChangedRequested {
 		if desired.ProxyEnabled {
-			candidateProxyApps[appID] = true
+			candidateProxyApps[policyID] = true
 			if update.ProxySettings != nil {
-				candidateProxyConfigs[appID] = requestedProxySettings
-			} else if _, ok := candidateProxyConfigs[appID]; !ok {
-				candidateProxyConfigs[appID] = proxyDefault
+				candidateProxyConfigs[policyID] = requestedProxySettings
+			} else if _, ok := candidateProxyConfigs[policyID]; !ok {
+				candidateProxyConfigs[policyID] = proxyDefault
 			}
 		} else {
-			delete(candidateProxyApps, appID)
+			delete(candidateProxyApps, policyID)
 		}
 	}
 	proxyReconcileNeeded := proxyChangedRequested || len(previousProxyApps) > 0 || len(candidateProxyApps) > 0
@@ -601,6 +643,12 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 			capabilities.ProxyControl = false
 		}
 		if target.Kind == AppNetworkTargetCgroup && !s.hostNetworkExperimentalEnabled() {
+			capabilities.UploadLimit = false
+			capabilities.DownloadLimit = false
+			capabilities.InternetControl = false
+			capabilities.ProxyControl = false
+		}
+		if target.ControlDiagnostic != "" {
 			capabilities.UploadLimit = false
 			capabilities.DownloadLimit = false
 			capabilities.InternetControl = false
@@ -670,7 +718,7 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 	}
 
 	if limitChanged {
-		if err := s.appTraffic.setLimit(appID, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
+		if err := s.appTraffic.setLimit(policyID, AppTrafficLimit{UploadKbps: desired.UploadKbps, DownloadKbps: desired.DownloadKbps}); err != nil {
 			var rollbackErrors []error
 			if controlChanged {
 				if rollbackErr := rollbackControls(); rollbackErr != nil {
@@ -680,7 +728,7 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 			if rollbackErr := rollbackAppNetworkLimits(ctx, limited, previousLimit); rollbackErr != nil {
 				rollbackErrors = append(rollbackErrors, rollbackErr)
 			}
-			if rollbackErr := s.appTraffic.setLimit(appID, previousLimit); rollbackErr != nil {
+			if rollbackErr := s.appTraffic.setLimit(policyID, previousLimit); rollbackErr != nil {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore persisted application traffic limit: %w", rollbackErr))
 			}
 			return errors.Join(fmt.Errorf("persist application network policy: %w", err), errors.Join(rollbackErrors...))
@@ -696,7 +744,7 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 				rollbackErrors = append(rollbackErrors, rollbackErr)
 			}
 			if limitChanged {
-				if rollbackErr := s.appTraffic.setLimit(appID, previousLimit); rollbackErr != nil {
+				if rollbackErr := s.appTraffic.setLimit(policyID, previousLimit); rollbackErr != nil {
 					rollbackErrors = append(rollbackErrors, fmt.Errorf("restore persisted application traffic limit: %w", rollbackErr))
 				}
 			}
@@ -734,7 +782,7 @@ func (s *Service) resolveLegacyAppNetworkTarget(ctx context.Context, targetID st
 		return AppNetworkTarget{}, errors.New("network target is required")
 	}
 	if appID, ok := hostAppIDFromTarget(targetID); ok {
-		return AppNetworkTarget{ID: targetID, Kind: AppNetworkTargetCgroup, AppID: appID, NetworkMode: "host"}, nil
+		return AppNetworkTarget{ID: targetID, Kind: AppNetworkTargetCgroup, AppID: baseAppID(appID), InstanceID: appID, NetworkMode: "host"}, nil
 	}
 	if !strings.HasPrefix(targetID, lzcBridgePrefix) {
 		return AppNetworkTarget{}, fmt.Errorf("unsupported network target %q", targetID)
@@ -749,7 +797,7 @@ func (s *Service) resolveLegacyAppNetworkTarget(ctx context.Context, targetID st
 		appID = strings.TrimSpace(info.Project)
 	}
 	return AppNetworkTarget{
-		ID: targetID, Kind: AppNetworkTargetBridge, AppID: appID,
+		ID: targetID, Kind: AppNetworkTargetBridge, AppID: appID, InstanceID: firstNonEmptyProbe(info.InstanceID, appID),
 		Interface: targetID, NetworkMode: "bridge", AccountingSource: appTrafficSource,
 	}, nil
 }
@@ -762,7 +810,7 @@ func (s *Service) setLegacyTargetInternetAccess(ctx context.Context, targetID st
 	if isWhitelistedApp(target.AppID, "") {
 		return fmt.Errorf("application %s does not allow internet control", target.AppID)
 	}
-	return s.SetAppInternetAccess(ctx, target.AppID, allowed)
+	return s.updateAppInstanceNetworkPolicy(ctx, target.AppID, appNetworkTargetPolicyID(target), appNetworkPolicyUpdate{InternetAllowed: &allowed})
 }
 
 func (s *Service) SetAppInternetAccess(ctx context.Context, appID string, allowed bool) error {
@@ -771,6 +819,12 @@ func (s *Service) SetAppInternetAccess(ctx context.Context, appID string, allowe
 
 func (s *Service) UpdateAppNetworkPolicy(ctx context.Context, appID string, uploadKbps, downloadKbps *int64, internetAllowed, proxyEnabled *bool, proxySettings *AppProxySettings) error {
 	return s.updateAppNetworkPolicy(ctx, appID, appNetworkPolicyUpdate{
+		UploadKbps: uploadKbps, DownloadKbps: downloadKbps, InternetAllowed: internetAllowed, ProxyEnabled: proxyEnabled, ProxySettings: proxySettings,
+	})
+}
+
+func (s *Service) UpdateAppInstanceNetworkPolicy(ctx context.Context, appID, instanceID string, uploadKbps, downloadKbps *int64, internetAllowed, proxyEnabled *bool, proxySettings *AppProxySettings) error {
+	return s.updateAppInstanceNetworkPolicy(ctx, appID, instanceID, appNetworkPolicyUpdate{
 		UploadKbps: uploadKbps, DownloadKbps: downloadKbps, InternetAllowed: internetAllowed, ProxyEnabled: proxyEnabled, ProxySettings: proxySettings,
 	})
 }

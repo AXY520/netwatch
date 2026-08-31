@@ -272,7 +272,7 @@ func (c *appProxyController) reconcile(ctx context.Context, targets []AppNetwork
 	checkedAt := now.Format(time.DateTime)
 	next := make(map[string]appProxyTargetRuntime, len(targets))
 	for _, target := range targets {
-		_, desired := configs[target.AppID]
+		_, desired := configs[appNetworkTargetPolicyID(target)]
 		next[target.ID] = appProxyTargetRuntime{
 			Desired: desired, Active: desired && !blocked[target.ID], InSync: true, CheckedAt: checkedAt,
 		}
@@ -294,7 +294,7 @@ func (c *appProxyController) markFailedLocked(targets []AppNetworkTarget, config
 	now := time.Now().Format(time.DateTime)
 	for _, target := range targets {
 		status := c.runtime[target.ID]
-		_, status.Desired = configs[target.AppID]
+		_, status.Desired = configs[appNetworkTargetPolicyID(target)]
 		status.InSync = false
 		status.Diagnostic = err.Error()
 		status.CheckedAt = now
@@ -346,11 +346,12 @@ func cloneAppProxyRuleSet(in appProxyRuleSet) appProxyRuleSet {
 
 func buildAppProxyRules(targets []AppNetworkTarget, configs map[string]AppProxySettings, blocked map[string]bool, listenPorts map[string]int) (v4Guard, v6Guard, v4, v6 appProxyRuleSet, err error) {
 	for _, target := range targets {
-		config, proxied := configs[target.AppID]
+		policyID := appNetworkTargetPolicyID(target)
+		config, proxied := configs[policyID]
 		if !proxied {
 			continue
 		}
-		listenPort := listenPorts[target.AppID]
+		listenPort := listenPorts[policyID]
 		switch target.Kind {
 		case AppNetworkTargetBridge:
 			if target.Interface == "" || !strings.HasPrefix(target.Interface, lzcBridgePrefix) {
@@ -559,17 +560,19 @@ func (s *Service) reconcileAppProxyControls(ctx context.Context, items []AppBrid
 	}
 	defaultConfig, _, _ := s.settings.appProxyState()
 	legacyBlocked := s.containers.snapshotBlocked()
+	unsupported := unsupportedAppNetworkPolicies(targets)
 	activeConfigs := make(map[string]AppProxySettings)
 	blockedTargets := make(map[string]bool)
 	for _, target := range targets {
-		if proxyApps[target.AppID] {
-			config, ok := proxyConfigs[target.AppID]
+		policyID := appNetworkTargetPolicyID(target)
+		if proxyApps[policyID] && !unsupported[policyID] {
+			config, ok := proxyConfigs[policyID]
 			if !ok {
 				config = defaultConfig
 			}
-			activeConfigs[target.AppID] = config
+			activeConfigs[policyID] = config
 		}
-		if blockedApps[target.AppID] != "" || legacyBlocked[target.ID] != "" {
+		if blockedApps[policyID] != "" || legacyBlocked[target.ID] != "" {
 			blockedTargets[target.ID] = true
 		}
 	}

@@ -79,6 +79,14 @@ async function main() {
     const bridgeCombinedMenu = global.__app.appTrafficMoreMenu(trafficItem(['bridge'], { download_kbps: 1000 }, false), true, 'test.app');
     assert.match(bridgeCombinedMenu, /data-action="traffic-limit"/);
     assert.match(bridgeCombinedMenu, /data-action="traffic-proxy"/, 'Bridge apps may combine proxy and limit');
+    const multiInstanceItem = trafficItem(['bridge'], {}, false);
+    multiInstanceItem.instance_id = 'test.app@user:axy';
+    multiInstanceItem.user_id = 'axy';
+    multiInstanceItem.multi_instance = true;
+    const multiInstanceMenu = global.__app.appTrafficMoreMenu(multiInstanceItem, true, multiInstanceItem.instance_id);
+    assert.match(multiInstanceMenu, /data-app-id="test\.app"/);
+    assert.match(multiInstanceMenu, /data-instance-id="test\.app@user:axy"/, 'actions must preserve the selected user instance');
+    assert.match(multiInstanceMenu, /aria-expanded="true"/, 'menu identity must be instance-scoped');
 
     [
         'web/app-network-config.js',

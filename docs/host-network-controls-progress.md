@@ -7,7 +7,7 @@
 
 ## 一、总体目标
 
-- 以 `app_id` 作为应用级策略和展示主键。
+- `app_id` 表示应用本身，`instance_id` 表示具体用户实例；单实例时两者保持相同以兼容旧数据和 API。
 - 根据运行时拓扑，把策略展开到 Bridge 网桥或 Host cgroup。
 - 分离期望策略、内核实际状态和能力限制。
 - 应用重启、网桥重建和 Netwatch 重启后，尽可能恢复状态。
@@ -21,7 +21,7 @@
 已接入 `AppNetworkTarget`、`AppNetworkPolicy` 和 `AppNetworkPolicyStatus`：
 
 - Bridge 目标为 `lzc-br-*` 网桥。
-- Host 目标为 `host-app:<app_id>`，运行时关联应用 cgroup。
+- Host 目标为 `host-app:<instance_id>`，运行时关联该用户实例的 cgroup。
 - Mixed 应用可以同时发现 Bridge 和 Host 两类目标。
 - API 支持字段级修改限速、外网或代理策略。
 - 多目标更新先检查能力，再逐目标执行；失败时回滚，成功后持久化。
@@ -29,7 +29,7 @@
 
 ### 2.2 禁用外网
 
-- 权威状态为 `BlockedApps`，即 `app_id -> internet`。
+- 权威状态为 `BlockedApps`，即 `instance_id -> internet`；单实例的 key 仍是原 `app_id`。
 - 旧 `BlockedBridges` 仅作为迁移来源。
 - Bridge 使用宿主机 `iptables/ip6tables` 和 Netwatch 双缓冲 chain。
 - Host 使用宿主机 `OUTPUT` 链的 cgroup 匹配规则。
@@ -78,7 +78,7 @@ Host 统计使用 `cgroup_skb` eBPF：
 - ingress/egress 分别写入 RX/TX map。
 - map key 为 cgroup ID，value 为字节数和包数。
 - collector 为每个 Host 容器输出独立计数记录。
-- 状态层按 cgroup 路径维护独立 baseline，再按 `app_id` 聚合。
+- 状态层按 cgroup 路径维护独立 baseline，再按 `instance_id` 聚合。
 - 一个 Host 容器重启或计数归零，不会丢失同应用其他容器的增量。
 - Bridge 与 Host 混合应用分别计算增量后再聚合。
 
@@ -103,7 +103,7 @@ Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写�
 ### 2.9 应用列表和历史
 
 - 活动列表只展示当前仍有运行容器的应用。
-- 历史数据按 `app_id` 持久化，旧版 Bridge 历史支持迁移。
+- 历史数据按 `instance_id` 持久化（单实例即 `app_id`），旧版 Bridge 历史支持迁移。
 - Bridge baseline 的旧存储键保持兼容。
 - 应用实时刷新只更新实时速率展示，不重建整行交互状态。
 - 控制实现和边界已同步写入 [app-traffic-controls.html](./app-traffic-controls.html)。
@@ -206,7 +206,7 @@ git diff --check
 ### 7.2 已落地模型
 
 - `app_proxy` 保留为全局默认值，只用于新应用第一次设置代理时预填，不再改变已经配置的应用。
-- 新增 `app_proxy_configs`，保存 `app_id -> AppProxySettings`；现有 `proxy_apps` 继续只表示启用状态。这样“恢复直连”后仍能保留该应用上次填写的地址。
+- 新增 `app_proxy_configs`，保存 `instance_id -> AppProxySettings`；现有 `proxy_apps` 继续只表示启用状态。这样“恢复直连”后仍能保留该实例上次填写的地址。
 - 旧数据中已启用但没有独立配置的应用，在加载时复制当时的全局 `app_proxy`，保证升级后行为不变。
 - “启用”通过一次应用策略请求同时提交 `proxy_enabled` 和代理配置；配置校验、规则切换、内存状态和持久化沿用现有事务回滚路径。
 - 应用流量响应返回该应用保存的代理配置；弹窗优先显示应用配置，没有时才显示全局默认值。
@@ -262,3 +262,23 @@ git diff --check
 - 手动回滚成功恢复测试网卡初始地址；第二轮未确认变更在 3 分钟到期时自动触发 `rollback_start` / `rollback`，运行态地址恢复且 pending 清空。
 - 第三轮确认后自定义 MAC 保持生效；随后通过同一 MAC-only 路径恢复测试网卡初始地址并确认。
 - 测试结束后已删除临时 NetworkManager 连接、`nwmac0/nwpeer0`、辅助容器和辅助程序；生产环境没有测试 pending 任务或探针残留。
+
+## 九、多实例应用（已部署并完成真机验收）
+
+- 官方 `application.multi_instance: true` 会为每个用户启动独立容器。Netwatch 优先使用 `app_id + lzcapp.user-id` 构造稳定 `instance_id`；旧运行时缺少 `user-id` 且同应用出现多个 Compose project 时，使用 project 兜底。
+- 单实例仍使用原 `app_id` 作为统计和策略 key；多实例使用如 `cloud.lazycat.app.downloader@user:axy` 的 key。
+- Bridge/Host 发现、流量 baseline/历史、限速、禁网、代理、Host/Mixed limiter 和生命周期事件均已改为按 `instance_id` 聚合与执行。
+- API 接受 `app_id + instance_id`。旧客户端只传 `app_id` 时，当前只有一个实例则继续兼容；同时发现多个实例则返回明确错误，防止误操作所有用户。
+- 前端将多实例拆成独立行，显示为“应用名（用户）”，菜单、限速窗口和代理窗口全部携带对应 `instance_id`。
+- 升级时，旧 `app_id` 限速/禁网/代理策略会先复制给当前已发现的每个实例，持久化成功后再删除模糊的基础 key；未来新用户实例不会意外继承旧策略。
+- 旧的应用级聚合历史无法可靠拆分，因此保留在磁盘但不映射到某个用户；实例历史从首次识别到的当前计数建立。
+- 本地单测已覆盖两个下载器用户的身份传播、统计隔离、模糊 API 拒绝、目标选择和旧策略迁移。
+- Host 多实例只在各用户的 cgroup 父级确实不同时开放变更型控制。如果运行时把两个用户放在同一父级，统计仍按容器隔离，但限速/禁网/代理能力会失效关闭并给出 diagnostic，避免误伤另一用户。
+
+### 9.1 生产部署验收（2026-08-31）
+
+- 通过 `deploy.sh` 将 `cloud.lazycat.app.netwatch` 0.9.9 部署到默认生产盒子，运行镜像更新为 `sha256:940c5e0daca10b782f91884af540358c01be6aa1d1ac95ac81f581656abf4d15`；app、netwatch 和 proxy 服务均进入 Running/healthy。
+- 懒猫下载器已拆为 `cloud.lazycat.app.downloader@user:axy` 和 `cloud.lazycat.app.downloader@user:damn`；分别只绑定 `lzc-br-896bc2d5` 与 `lzc-br-2ce090b4`，不再把两个用户的目标合并到一条策略中。
+- 原应用级 10000/10000 Kbit/s 限速成功迁移到两个实例，两个实例均报告 `limited` 且 `limit_in_sync=true`；禁网和代理继续保持未启用。
+- 两个实例分别建立独立历史采样；省略 `instance_id` 访问下载器历史返回 400 和明确的多实例错误，不会模糊选择用户。
+- 启动日志没有策略迁移或控制恢复错误；容器列表中没有 `netwatch.proxy.probe` 或 `netwatch.proxy.bridgeprobe` 残留。本轮只读验收未主动执行断网、代理或限速扰动测试。

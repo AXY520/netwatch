@@ -137,11 +137,11 @@ type MutableSettings struct {
 
 	// Application network policy. BlockedApps is authoritative; BlockedBridges
 	// remains a read-time migration source for releases that persisted target IDs.
-	BlockedApps     map[string]string           `json:"blocked_apps,omitempty"`      // app_id → "internet"
+	BlockedApps     map[string]string           `json:"blocked_apps,omitempty"`      // instance_id → "internet"; app_id is the single-instance compatibility key
 	BlockedBridges  map[string]string           `json:"blocked_bridges,omitempty"`   // legacy target → "internet" | "all"
 	AppProxy        AppProxySettings            `json:"app_proxy"`                   // default for new app proxy settings
-	ProxyApps       map[string]bool             `json:"proxy_apps,omitempty"`        // app_id → proxy enabled
-	AppProxyConfigs map[string]AppProxySettings `json:"app_proxy_configs,omitempty"` // app_id → saved upstream
+	ProxyApps       map[string]bool             `json:"proxy_apps,omitempty"`        // instance_id → proxy enabled
+	AppProxyConfigs map[string]AppProxySettings `json:"app_proxy_configs,omitempty"` // instance_id → saved upstream
 }
 
 type AppProxySettings struct {
@@ -164,6 +164,9 @@ type AppContainerGroup struct {
 	Bridge         string                 `json:"bridge"`
 	ControlTargets []string               `json:"control_targets,omitempty"`
 	AppID          string                 `json:"app_id,omitempty"`
+	InstanceID     string                 `json:"instance_id,omitempty"`
+	UserID         string                 `json:"user_id,omitempty"`
+	MultiInstance  bool                   `json:"multi_instance,omitempty"`
 	AppTitle       string                 `json:"app_title,omitempty"`
 	Project        string                 `json:"project,omitempty"`
 	BlockMode      string                 `json:"block_mode"` // "" | "internet" | "all"

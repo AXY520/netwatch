@@ -25,12 +25,15 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 
 	// Group containers by project
 	type projGroup struct {
-		Project string
-		AppID   string
-		Bridge  string
-		Title   string
-		Conts   []ContainerRuntimeInfo
-		Targets []string
+		Project       string
+		AppID         string
+		InstanceID    string
+		UserID        string
+		MultiInstance bool
+		Bridge        string
+		Title         string
+		Conts         []ContainerRuntimeInfo
+		Targets       []string
 	}
 	projGroups := map[string]*projGroup{}
 	projBridge := map[string]string{} // project → first bridge found
@@ -44,9 +47,12 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 		}
 		g, ok := projGroups[proj]
 		if !ok {
-			g = &projGroup{Project: c.Project, AppID: c.AppID, Bridge: projBridge[proj]}
+			g = &projGroup{Project: c.Project, AppID: c.AppID, InstanceID: c.InstanceID, UserID: c.UserID, MultiInstance: c.MultiInstance, Bridge: projBridge[proj]}
 			if bi, has := bridgeMap[g.Bridge]; has {
 				g.AppID = bi.AppID
+				g.InstanceID = bi.InstanceID
+				g.UserID = bi.UserID
+				g.MultiInstance = bi.MultiInstance
 				g.Title = bi.Title
 			}
 			projGroups[proj] = g
@@ -55,12 +61,12 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 			ID: c.ID, Name: c.Name, Image: c.Image, State: c.State,
 		})
 		if s.hostNetworkExperimentalEnabled() && c.NetworkMode == "host" && c.Running {
-			appID := c.AppID
-			if appID == "" {
-				appID = g.AppID
+			instanceID := c.InstanceID
+			if instanceID == "" {
+				instanceID = firstNonEmptyProbe(g.InstanceID, c.AppID, g.AppID)
 			}
-			if appID != "" {
-				g.Targets = appendUniqueTrafficValue(g.Targets, hostAppTarget(appID))
+			if instanceID != "" {
+				g.Targets = appendUniqueTrafficValue(g.Targets, hostAppTarget(instanceID))
 			}
 		}
 	}
@@ -79,7 +85,8 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 		if g.Bridge != "" {
 			targets = appendUniqueTrafficValue(targets, g.Bridge)
 		}
-		blockMode := blockedApps[g.AppID]
+		policyID := firstNonEmptyProbe(g.InstanceID, g.AppID)
+		blockMode := blockedApps[policyID]
 		for _, target := range targets {
 			if mode := blocked[target]; mode != "" {
 				blockMode = mode
@@ -98,6 +105,9 @@ func (s *Service) ListContainers(ctx context.Context) AppContainersResponse {
 			Bridge:         g.Bridge,
 			ControlTargets: targets,
 			AppID:          g.AppID,
+			InstanceID:     policyID,
+			UserID:         g.UserID,
+			MultiInstance:  g.MultiInstance,
 			AppTitle:       appTitle,
 			Project:        g.Project,
 			BlockMode:      blockMode,

@@ -359,12 +359,17 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 
 	canControlTraffic := trafficControlAvailable()
 	hostApps := make(map[string]bool)
+	unsupported := make(map[string]bool)
 	for _, item := range items {
-		if item.AppID == "" {
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" {
 			continue
 		}
 		if item.NetworkMode == "host" || strings.HasPrefix(item.Bridge, hostAppTargetPrefix) {
-			hostApps[item.AppID] = true
+			hostApps[policyID] = true
+		}
+		if item.Target.ControlDiagnostic != "" {
+			unsupported[policyID] = true
 		}
 	}
 
@@ -375,7 +380,8 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 		bridgeCleared[appID] = true
 	}
 	for _, item := range items {
-		if item.AppID == "" || item.Bridge == "" || isNetwatchTrafficItem(item) {
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" || item.Bridge == "" || isNetwatchTrafficItem(item) {
 			continue
 		}
 		if strings.HasPrefix(item.Bridge, hostAppTargetPrefix) {
@@ -385,21 +391,24 @@ func (l *appTrafficLimiter) reconcile(ctx context.Context, items []AppBridgeStat
 			continue
 		}
 		activeBridges[item.Bridge] = true
-		if hostApps[item.AppID] {
+		if hostApps[policyID] {
 			if !canControlTraffic {
-				limit := limits[item.AppID]
+				limit := limits[policyID]
 				if limit.UploadKbps != 0 || limit.DownloadKbps != 0 {
-					bridgeCleared[item.AppID] = false
+					bridgeCleared[policyID] = false
 				}
 				continue
 			}
 			if err := l.clearUnlimitedBridge(ctx, item.Bridge); err != nil {
 				logger.Warn("clear per-bridge limit before Host/Mixed policy on %s: %v", item.Bridge, err)
-				bridgeCleared[item.AppID] = false
+				bridgeCleared[policyID] = false
 			}
 			continue
 		}
-		limit := limits[item.AppID]
+		limit := limits[policyID]
+		if unsupported[policyID] {
+			limit = AppTrafficLimit{}
+		}
 		if limit.UploadKbps == 0 && limit.DownloadKbps == 0 {
 			if canControlTraffic {
 				if err := l.clearUnlimitedBridge(ctx, item.Bridge); err != nil {
@@ -651,6 +660,12 @@ func trafficControlError(action, bridge, output string, err error) error {
 // a kernel rule could not be installed.
 func (s *Service) SetAppTrafficLimit(ctx context.Context, appID string, limit AppTrafficLimit) error {
 	return s.updateAppNetworkPolicy(ctx, appID, appNetworkPolicyUpdate{
+		UploadKbps: &limit.UploadKbps, DownloadKbps: &limit.DownloadKbps,
+	})
+}
+
+func (s *Service) SetAppInstanceTrafficLimit(ctx context.Context, appID, instanceID string, limit AppTrafficLimit) error {
+	return s.updateAppInstanceNetworkPolicy(ctx, appID, instanceID, appNetworkPolicyUpdate{
 		UploadKbps: &limit.UploadKbps, DownloadKbps: &limit.DownloadKbps,
 	})
 }

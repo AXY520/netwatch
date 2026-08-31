@@ -272,20 +272,23 @@ func (s *Service) reconcileAppInternetControls(ctx context.Context, items []AppB
 		return nil
 	}
 	legacy := s.containers.snapshotBlocked()
+	unsupported := unsupportedAppNetworkPolicies(targets)
 	migrated := false
 	for _, target := range targets {
-		if legacy[target.ID] == "" || target.AppID == "" {
+		policyID := appNetworkTargetPolicyID(target)
+		if legacy[target.ID] == "" || policyID == "" || unsupported[policyID] {
 			continue
 		}
-		if desiredApps[target.AppID] == "" {
-			desiredApps[target.AppID] = "internet"
+		if desiredApps[policyID] == "" {
+			desiredApps[policyID] = "internet"
 		}
 		delete(legacy, target.ID)
 		migrated = true
 	}
 	blockedTargets := make(map[string]string)
 	for _, target := range targets {
-		if desiredApps[target.AppID] != "" {
+		policyID := appNetworkTargetPolicyID(target)
+		if desiredApps[policyID] != "" && !unsupported[policyID] {
 			blockedTargets[target.ID] = "internet"
 		}
 	}

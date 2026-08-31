@@ -60,7 +60,7 @@ function initAppTraffic() {
         return enabled;
     };
     var getAppTrafficName = function (item) {
-        return String(item.app_title || item.app_id || item.project || '').toLowerCase();
+        return String(appTrafficDisplayName(item)).toLowerCase();
     };
     var sortAppTrafficRows = function (a, b, key, direction) {
         var result = 0;
@@ -90,7 +90,7 @@ function initAppTraffic() {
         });
     };
     var trafficRowKey = function (item, index) {
-        return String((item && (item.app_id || item.project || item.app_title)) || ('row-' + index));
+        return String((item && (item.instance_id || item.app_id || item.project || item.app_title)) || ('row-' + index));
     };
     var trafficRenderSignature = function (list, showRealtime, data) {
         return JSON.stringify({
@@ -150,7 +150,7 @@ function initAppTraffic() {
         } else if (image) {
             image.style.display = 'none';
         }
-        var name = item.app_title || item.app_id || item.project || i18n('unknown_status');
+        var name = appTrafficDisplayName(item) || i18n('unknown_status');
         setTrafficCellHTML(info, '<strong>' + NetwatchShared.escapeHtml(name) + '</strong>' +
             (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : ''));
     };
@@ -164,6 +164,7 @@ function initAppTraffic() {
     };
     var updateTrafficRow = function (row, item, showRealtime, data, index) {
         row.dataset.appId = String(item.app_id || '');
+        row.dataset.instanceId = appTrafficInstanceID(item);
         row.dataset.appRowKey = trafficRowKey(item, index);
         updateTrafficAppCell(row.querySelector('.col-app'), item);
         setTrafficCellHTML(row.querySelector('.col-status'), appTrafficControlStatusMarkup(item));
@@ -179,9 +180,9 @@ function initAppTraffic() {
     };
     var updateTrafficMenus = function () {
         if (!latestTrafficData || !Array.isArray(latestTrafficData.apps)) return;
-        var apps = new Map(latestTrafficData.apps.map(function (item) { return [String(item.app_id || ''), item]; }));
-        tbody.querySelectorAll('tr[data-app-id]').forEach(function (row) {
-            var item = apps.get(row.dataset.appId || '');
+        var apps = new Map(latestTrafficData.apps.map(function (item) { return [appTrafficInstanceID(item), item]; }));
+        tbody.querySelectorAll('tr[data-instance-id]').forEach(function (row) {
+            var item = apps.get(row.dataset.instanceId || '');
             if (item) setTrafficCellHTML(row.querySelector('.col-actions'), appTrafficMoreMenu(item, latestTrafficData.limit_support, activeMenuAppID));
         });
     };
@@ -308,9 +309,9 @@ function initAppTraffic() {
     };
     window.__app.refreshAppTraffic = load;
 
-    var appForID = function (appID) {
+    var appForID = function (instanceID) {
         var apps = latestTrafficData && Array.isArray(latestTrafficData.apps) ? latestTrafficData.apps : [];
-        return apps.find(function (item) { return item.app_id === appID; }) || null;
+        return apps.find(function (item) { return appTrafficInstanceID(item) === instanceID; }) || null;
     };
     var closeLimit = function () {
         if (limitWindow) limitWindow.classList.remove('active');
@@ -324,11 +325,11 @@ function initAppTraffic() {
         var proxyEnabled = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.proxy_enabled === true;
         if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && proxyEnabled) || capabilities.upload_limit !== true || capabilities.download_limit !== true || !limitWindow) return;
         activeMenuAppID = '';
-        activeLimitAppID = item.app_id;
+        activeLimitAppID = appTrafficInstanceID(item);
         updateTrafficMenus();
         var limit = item.limit || {};
-        if (limitTitle) limitTitle.textContent = i18n('app_traffic_limit') + ' · ' + (item.app_title || item.app_id);
-        if (limitNote) limitNote.textContent = item.app_id;
+        if (limitTitle) limitTitle.textContent = i18n('app_traffic_limit') + ' · ' + appTrafficDisplayName(item);
+        if (limitNote) limitNote.textContent = appTrafficInstanceCaption(item);
         appTrafficShowLimitError(limitError, '');
         if (limitUpload) limitUpload.value = appTrafficNumber(limit.upload_kbps) ? appTrafficNumber(limit.upload_kbps) / 1000 : '';
         if (limitDownload) limitDownload.value = appTrafficNumber(limit.download_kbps) ? appTrafficNumber(limit.download_kbps) / 1000 : '';
@@ -350,11 +351,11 @@ function initAppTraffic() {
         var blocked = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.internet_allowed === false;
         if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && appTrafficHasLimit(item)) || capabilities.proxy_control !== true || !proxyWindow) return;
         activeMenuAppID = '';
-        activeProxyAppID = item.app_id;
+        activeProxyAppID = appTrafficInstanceID(item);
         updateTrafficMenus();
 		var config = item.network_policy.proxy_settings || state.settings.app_proxy || {};
-        if (proxyTitle) proxyTitle.textContent = i18n('app_proxy_set') + ' · ' + (item.app_title || item.app_id);
-        if (proxyNote) proxyNote.textContent = item.app_id;
+        if (proxyTitle) proxyTitle.textContent = i18n('app_proxy_set') + ' · ' + appTrafficDisplayName(item);
+        if (proxyNote) proxyNote.textContent = appTrafficInstanceCaption(item);
         if (proxyProtocol) {
             proxyProtocol.value = config.protocol || 'socks5';
             if (window.syncCustomSelect) window.syncCustomSelect(proxyProtocol);
@@ -379,13 +380,14 @@ function initAppTraffic() {
         if (!action) return;
         e.stopPropagation();
         var appID = action.dataset.appId || '';
+        var instanceID = action.dataset.instanceId || appID;
         if (action.dataset.action === 'traffic-more') {
-            activeMenuAppID = activeMenuAppID === appID ? '' : appID;
+            activeMenuAppID = activeMenuAppID === instanceID ? '' : instanceID;
             updateTrafficMenus();
         } else if (action.dataset.action === 'traffic-limit') {
-            openLimit(appForID(appID));
+			openLimit(appForID(instanceID));
 		} else if (action.dataset.action === 'traffic-network') {
-            var item = appForID(appID);
+            var item = appForID(instanceID);
             if (!item) return;
             action.disabled = true;
             try {
@@ -399,7 +401,7 @@ function initAppTraffic() {
                 action.disabled = false;
 			}
         } else if (action.dataset.action === 'traffic-proxy') {
-            var proxyItem = appForID(appID);
+            var proxyItem = appForID(instanceID);
             if (!proxyItem) return;
             if (action.dataset.proxyState === 'enable') {
                 openProxy(proxyItem);
@@ -409,6 +411,7 @@ function initAppTraffic() {
             try {
                 await netwatchPost('/api/v1/network/app-policy', {
                     app_id: appID,
+                    instance_id: instanceID,
                     proxy_enabled: false
                 });
                 NetwatchShared.showToast(i18n('app_proxy_updated'), 'success');
@@ -443,8 +446,11 @@ function initAppTraffic() {
         var submit = limitForm.querySelector('[type="submit"]');
         if (submit) submit.disabled = true;
         try {
+            var limitItem = appForID(activeLimitAppID);
+            if (!limitItem) throw new Error('application instance is no longer available');
             await netwatchPost('/api/v1/network/app-policy', {
-                app_id: activeLimitAppID,
+                app_id: limitItem.app_id,
+                instance_id: appTrafficInstanceID(limitItem),
                 upload_kbps: Math.round(upload * 1000),
                 download_kbps: Math.round(download * 1000)
             });
@@ -477,8 +483,11 @@ function initAppTraffic() {
         var submit = proxyForm.querySelector('[type="submit"]');
         if (submit) submit.disabled = true;
         try {
+			var proxyItem = appForID(activeProxyAppID);
+			if (!proxyItem) throw new Error('application instance is no longer available');
 			await netwatchPost('/api/v1/network/app-policy', {
-				app_id: activeProxyAppID,
+				app_id: proxyItem.app_id,
+				instance_id: appTrafficInstanceID(proxyItem),
 				proxy_enabled: true,
 				proxy_settings: config
             });
@@ -559,6 +568,24 @@ function appTrafficNumber(value) {
     return Number(value) || 0;
 }
 
+function appTrafficInstanceID(item) {
+    return String(item && (item.instance_id || item.app_id) || '').trim();
+}
+
+function appTrafficDisplayName(item) {
+    if (!item) return '';
+    var name = item.app_title || item.app_id || item.project || '';
+    var instanceLabel = item.multi_instance && (item.user_id || item.project);
+    if (instanceLabel) name += '（' + instanceLabel + '）';
+    return name;
+}
+
+function appTrafficInstanceCaption(item) {
+    if (!item) return '';
+    var instanceLabel = item.multi_instance && (item.user_id || item.project);
+    return instanceLabel ? item.app_id + ' · ' + instanceLabel : item.app_id;
+}
+
 function appTrafficPeriod(item, period) {
     return appTrafficNumber(item[period + '_upload']) + appTrafficNumber(item[period + '_download']);
 }
@@ -633,6 +660,7 @@ function appTrafficHasLimit(item) {
 function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var appID = item && item.app_id;
     if (!appID) return '';
+    var instanceID = appTrafficInstanceID(item);
     var policy = item.network_policy || {};
     var capabilities = policy.capabilities || {};
     var limitAllowed = capabilities.upload_limit === true && capabilities.download_limit === true;
@@ -644,23 +672,24 @@ function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var limited = appTrafficHasLimit(item);
     var showLimit = limitSupported && limitAllowed && !blocked && !(hostTarget && proxyEnabled);
     var showProxy = proxyAllowed && (!blocked || proxyEnabled) && (proxyEnabled || !hostTarget || !limited);
-    var open = activeAppID === appID;
-    var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
+    var open = activeAppID === instanceID;
+    var identityAttrs = ' data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-instance-id="' + NetwatchShared.escapeHtml(instanceID) + '"';
+    var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more"' + identityAttrs + ' aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
     if (!limitAllowed && !internetAllowed && !proxyAllowed) return '';
     if (!open) return '<div class="app-traffic-action-menu">' + menu + '</div>';
     var panel = '<div class="app-traffic-more-panel" role="menu">';
     // The experimental switch gates Host/Mixed policing; read-only accounting
     // stays active regardless of that setting.
 	if (showLimit) {
-        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit" data-app-id="' + NetwatchShared.escapeHtml(appID) + '"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
+        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit"' + identityAttrs + '><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
 	}
     if (showProxy) {
         if (showLimit) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
-        panel += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
+        panel += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy"' + identityAttrs + ' data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
     }
     if (internetAllowed) {
         if (showLimit || showProxy) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
-        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network" data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
+        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network"' + identityAttrs + ' data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
     return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
 }
@@ -670,6 +699,7 @@ async function appTrafficSetInternetAccess(item, restore) {
     if (!item || !item.app_id || capabilities.internet_control !== true) throw new Error('internet control is not allowed');
     await netwatchPost('/api/v1/network/app-policy', {
         app_id: item.app_id,
+        instance_id: appTrafficInstanceID(item),
         internet_allowed: restore === true
     });
 }

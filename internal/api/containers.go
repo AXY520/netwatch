@@ -23,9 +23,10 @@ func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Bridge string `json:"bridge"`
-		AppID  string `json:"app_id"`
-		Mode   string `json:"mode"` // currently only "internet" is supported
+		Bridge     string `json:"bridge"`
+		AppID      string `json:"app_id"`
+		InstanceID string `json:"instance_id"`
+		Mode       string `json:"mode"` // currently only "internet" is supported
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || (body.Bridge == "" && body.AppID == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
@@ -40,7 +41,8 @@ func (h *Handler) handleContainerBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(body.AppID) != "" {
-		if err := h.service.SetAppInternetAccess(r.Context(), body.AppID, false); err != nil {
+		allowed := false
+		if err := h.service.UpdateAppInstanceNetworkPolicy(r.Context(), body.AppID, body.InstanceID, nil, nil, &allowed, nil, nil); err != nil {
 			logger.Error("block app %s: %v", body.AppID, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -62,15 +64,17 @@ func (h *Handler) handleContainerUnblock(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		Bridge string `json:"bridge"`
-		AppID  string `json:"app_id"`
+		Bridge     string `json:"bridge"`
+		AppID      string `json:"app_id"`
+		InstanceID string `json:"instance_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&body); err != nil || (body.Bridge == "" && body.AppID == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
 	if strings.TrimSpace(body.AppID) != "" {
-		if err := h.service.SetAppInternetAccess(r.Context(), body.AppID, true); err != nil {
+		allowed := true
+		if err := h.service.UpdateAppInstanceNetworkPolicy(r.Context(), body.AppID, body.InstanceID, nil, nil, &allowed, nil, nil); err != nil {
 			logger.Error("unblock app %s: %v", body.AppID, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
