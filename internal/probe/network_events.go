@@ -170,7 +170,7 @@ func networkEventDisplayable(event NetworkEvent) bool {
 		return false
 	}
 	source := event.Details["lifecycle_source"]
-	return source == "container_runtime_v2" || source == "container_runtime_v3"
+	return source == "container_runtime_v2" || source == "container_runtime_v3" || source == "container_runtime_v4"
 }
 
 func parseEventTime(value string) (time.Time, bool) {
@@ -308,17 +308,26 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 				app := hostApps[item.Project]
 				app.Bridge = "app-runtime:" + item.Project
 				app.AppID, app.Project = item.AppID, item.Project
+				app.InstanceID, app.UserID, app.MultiInstance = item.InstanceID, item.UserID, item.MultiInstance
 				if app.AppTitle == "" {
 					app.AppTitle = item.AppID
 				}
 				app.ContainerCount++
 				if item.Running {
 					app.RunningCount++
-					if app.CreatedAt == 0 || (item.StartedAt > 0 && item.StartedAt < app.CreatedAt) {
-						app.CreatedAt = item.StartedAt
-					}
 				}
 				hostApps[item.Project] = app
+			}
+			for project, item := range dockerlzc.PrimaryAppContainers(containers) {
+				app, ok := hostApps[project]
+				if !ok {
+					continue
+				}
+				app.CreatedAt = item.StartedAt
+				if app.CreatedAt == 0 {
+					app.CreatedAt = item.Created
+				}
+				hostApps[project] = app
 			}
 			for _, app := range hostApps {
 				counters = append(counters, app)
@@ -355,6 +364,9 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 	for index := range counters {
 		if item, ok := metadata[counters[index].Bridge]; ok {
 			counters[index].AppID = item.AppID
+			counters[index].InstanceID = item.InstanceID
+			counters[index].UserID = item.UserID
+			counters[index].MultiInstance = item.MultiInstance
 			counters[index].AppTitle = item.AppTitle
 			counters[index].Project = item.Project
 			counters[index].Icon = item.Icon
@@ -362,6 +374,11 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 		if item, ok := runtime[counters[index].Bridge]; ok {
 			if counters[index].AppID == "" {
 				counters[index].AppID = item.AppID
+			}
+			if counters[index].InstanceID == "" {
+				counters[index].InstanceID = item.InstanceID
+				counters[index].UserID = item.UserID
+				counters[index].MultiInstance = item.MultiInstance
 			}
 			if counters[index].Project == "" {
 				counters[index].Project = item.Project
@@ -379,7 +396,11 @@ func (s *Service) appTrafficEventStats() []AppBridgeStats {
 
 func appTrafficEventName(item AppBridgeStats) string {
 	if strings.TrimSpace(item.AppTitle) != "" {
-		return strings.TrimSpace(item.AppTitle)
+		name := strings.TrimSpace(item.AppTitle)
+		if item.MultiInstance && strings.TrimSpace(item.UserID) != "" {
+			name += "（" + strings.TrimSpace(item.UserID) + "）"
+		}
+		return name
 	}
 	if strings.TrimSpace(item.AppID) != "" {
 		return strings.TrimSpace(item.AppID)
@@ -405,6 +426,11 @@ func aggregateAppTrafficRuntime(stats []AppBridgeStats) map[string]AppBridgeStat
 		}
 		if current.AppID == "" {
 			current.AppID = item.AppID
+		}
+		if current.InstanceID == "" {
+			current.InstanceID = item.InstanceID
+			current.UserID = item.UserID
+			current.MultiInstance = item.MultiInstance
 		}
 		if current.AppTitle == "" {
 			current.AppTitle = item.AppTitle
@@ -463,7 +489,7 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: appEnabledEventTimestamp(item, previousAt, now), Kind: "app_enabled", Severity: "info", Source: "app_traffic_observer", Title: "应用已启用",
-				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v3"}, DedupeKey: "app_lifecycle:" + key,
+				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "instance_id": item.InstanceID, "user_id": item.UserID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v4"}, DedupeKey: "app_lifecycle:" + key,
 			})
 		}
 	}
@@ -473,7 +499,7 @@ func (s *networkEventStore) observeAppTraffic(stats []AppBridgeStats, now time.T
 			appName := appTrafficEventName(item)
 			s.append(NetworkEvent{
 				Timestamp: now.Format(time.DateTime), Kind: "app_disabled", Severity: "warning", Source: "app_traffic_observer", Title: "应用已停用",
-				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v3"}, DedupeKey: "app_lifecycle:" + key,
+				Summary: appName, Details: map[string]any{"bridge": item.Bridge, "app_id": item.AppID, "instance_id": item.InstanceID, "user_id": item.UserID, "app_title": item.AppTitle, "project": item.Project, "icon": item.Icon, "lifecycle_source": "container_runtime_v4"}, DedupeKey: "app_lifecycle:" + key,
 			})
 		}
 	}

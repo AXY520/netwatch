@@ -18,17 +18,15 @@ var (
 )
 
 type FileConfig struct {
-	Port                  string `json:"port"`
-	RefreshIntervalSec    int    `json:"refresh_interval_sec"`
-	HTTPTimeoutSec        int    `json:"http_timeout_sec"`
-	NATTimeoutSec         int    `json:"nat_timeout_sec"`
-	PublicIPv4Endpoint    string `json:"public_ipv4_endpoint"`
-	PublicIPv6Endpoint    string `json:"public_ipv6_endpoint"`
-	DataDir               string `json:"data_dir"`
-	BroadbandTestSec      int    `json:"broadband_test_sec"`
-	BroadbandDomesticOnly *bool  `json:"broadband_domestic_only"`
-	BroadbandStreams      int    `json:"broadband_streams"`
-	LocalTransferTestSec  int    `json:"local_transfer_test_sec"`
+	Port                 string `json:"port"`
+	RefreshIntervalSec   int    `json:"refresh_interval_sec"`
+	HTTPTimeoutSec       int    `json:"http_timeout_sec"`
+	NATTimeoutSec        int    `json:"nat_timeout_sec"`
+	PublicIPv4Endpoint   string `json:"public_ipv4_endpoint"`
+	PublicIPv6Endpoint   string `json:"public_ipv6_endpoint"`
+	DataDir              string `json:"data_dir"`
+	BroadbandTestSec     int    `json:"broadband_test_sec"`
+	LocalTransferTestSec int    `json:"local_transfer_test_sec"`
 
 	LocalTransferPayloadMB int `json:"local_transfer_payload_mb"`
 }
@@ -73,12 +71,6 @@ func (f FileConfig) Apply(cfg *Config) error {
 	if f.BroadbandTestSec > 0 {
 		cfg.BroadbandDuration = time.Duration(f.BroadbandTestSec) * time.Second
 	}
-	if f.BroadbandDomesticOnly != nil {
-		cfg.BroadbandDomesticOnly = *f.BroadbandDomesticOnly
-	}
-	if f.BroadbandStreams > 0 {
-		cfg.BroadbandStreams = f.BroadbandStreams
-	}
 	if f.LocalTransferTestSec > 0 {
 		cfg.LocalTransferDuration = time.Duration(f.LocalTransferTestSec) * time.Second
 	}
@@ -117,8 +109,6 @@ type Config struct {
 	PublicIPv6Endpoint     string
 	DataDir                string
 	BroadbandDuration      time.Duration
-	BroadbandDomesticOnly  bool
-	BroadbandStreams       int
 	LocalTransferDuration  time.Duration
 	LocalTransferPayloadMB int
 }
@@ -148,8 +138,6 @@ func DefaultConfig() Config {
 		PublicIPv6Endpoint:     envOrDefault("PUBLIC_IPV6_ENDPOINT", "https://api64.ipify.org"),
 		DataDir:                envOrDefault("DATA_DIR", "/app/data"),
 		BroadbandDuration:      envDurationValue("BROADBAND_TEST_SEC", 15*time.Second),
-		BroadbandDomesticOnly:  envBool("BROADBAND_DOMESTIC_ONLY", true),
-		BroadbandStreams:       envInt("BROADBAND_STREAMS", 10),
 		LocalTransferDuration:  envDurationValue("LOCAL_TRANSFER_TEST_SEC", 10*time.Second),
 		LocalTransferPayloadMB: envInt("LOCAL_TRANSFER_PAYLOAD_MB", 32),
 	}

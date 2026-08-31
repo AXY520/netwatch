@@ -90,7 +90,6 @@ if [ -n "${IP_BIN}" ]; then
   copy_binary_with_libs "${IP_BIN}" dist/rootfs
 fi
 
-
 # nmcli is NOT packed into the LPK rootfs by default.
 # On Lazycat, network_config / host bridge call nmcli via lzcsdk (host NetworkManager),
 # not a container-local binary. Shipping nmcli + libnm/glib/nss/systemd ~+12MB rootfs

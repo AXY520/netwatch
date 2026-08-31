@@ -305,7 +305,6 @@ const state = {
         return {
             ...data,
             refresh_interval_sec: data.refresh_interval_sec || 10,
-            broadband_domestic_only: !!data.broadband_domestic_only,
             nic_realtime_enabled: data.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: data.nic_realtime_interval_sec || 1,
             chart_time_label_interval: data.chart_time_label_interval || 0,
@@ -480,21 +479,21 @@ const state = {
             if (dev.interface) netRows.push(`<div class="lan-net-row"><span class="lan-net-label">IF</span><span class="lan-net-value">${escapeHtml(dev.interface)}</span></div>`);
             return `
                 <tr class="lan-device-row" data-mac="${escapeHtml(dev.mac || '')}">
-                    <td>
+                    <td class="lan-device-cell">
                         <div class="lan-name-line">
                             <div class="lan-device-name">${escapeHtml(name)}</div>
                             <button class="lan-name-edit" data-action="note" data-mac="${escapeHtml(dev.mac || '')}" data-note="${escapeHtml(dev.note || '')}" title="编辑设备备注">${editIcon()}</button>
                         </div>
                         <div class="lan-tag-row">${tags.join('')}</div>
                     </td>
-                    <td title="邻居状态：${escapeHtml(reachability)}">${statusBadge(dev.status)}</td>
-                    <td>
+                    <td class="lan-device-status-cell" title="邻居状态：${escapeHtml(reachability)}">${statusBadge(dev.status)}</td>
+                    <td class="lan-device-network-cell">
                         <div class="lan-network-lines">
                             ${netRows.join('')}
                         </div>
                     </td>
-                    <td><span class="number">首次 ${escapeHtml(dev.first_seen || '--')}</span><small class="lan-seen-sub">在线 ${escapeHtml(formatOnlineDuration(onlineDurationSeconds(dev, now)))}<br>最后 ${escapeHtml(dev.last_seen || '--')}</small></td>
-                    <td>
+                    <td class="lan-device-seen-cell"><span class="number">首次 ${escapeHtml(dev.first_seen || '--')}</span><small class="lan-seen-sub">在线 ${escapeHtml(formatOnlineDuration(onlineDurationSeconds(dev, now)))}<br>最后 ${escapeHtml(dev.last_seen || '--')}</small></td>
+                    <td class="lan-device-actions-cell">
                         <div class="lan-action-group">
                             <button class="lan-action danger" data-action="ignore" data-mac="${escapeHtml(dev.mac || '')}" title="从设备列表隐藏">忽略</button>
                         </div>

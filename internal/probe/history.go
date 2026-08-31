@@ -19,6 +19,13 @@ func (s *Service) loadHistory() {
 			s.broadbandHistory[i].ID = fmt.Sprintf("broadband-legacy-%d", i)
 			changed = true
 		}
+		// History created before browser-side broadband tests existed can only
+		// be server-egress data. Persist the inferred mode once so every client
+		// sees a stable, explicit distinction.
+		if s.broadbandHistory[i].TestMode == "" {
+			s.broadbandHistory[i].TestMode = "server"
+			changed = true
+		}
 	}
 	for i := range s.localTransferHistory {
 		if s.localTransferHistory[i].ID == "" {

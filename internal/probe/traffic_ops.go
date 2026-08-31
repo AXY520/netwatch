@@ -13,6 +13,7 @@ import (
 const (
 	appLifecycleEventDebounce     = 2 * time.Second
 	appLifecycleCalibrationPeriod = time.Minute
+	appTrafficReconcileInterval   = 2 * time.Second
 )
 
 func (s *Service) GetBroadbandHistory() []BroadbandSpeedResult {
@@ -48,6 +49,26 @@ func (s *Service) pushBroadbandHistory(result BroadbandSpeedResult) {
 		s.broadbandHistory = s.broadbandHistory[:maxHistoryItems]
 	}
 	s.saveBroadbandHistory()
+}
+
+// RecordClientBroadbandResult stores a browser-to-public-network result. The
+// test traffic itself never traverses this service; this endpoint only keeps
+// the local history together with server-exit test results.
+func (s *Service) RecordClientBroadbandResult(result BroadbandSpeedResult) BroadbandSpeedResult {
+	result.TestMode = "client"
+	result.DownloadMbps = sanitizeSpeedMetric(result.DownloadMbps, 0, 100000)
+	result.UploadMbps = sanitizeSpeedMetric(result.UploadMbps, 0, 100000)
+	if result.LatencyMS < 0 || result.LatencyMS > 600000 {
+		result.LatencyMS = 0
+	}
+	if result.JitterMS < 0 || result.JitterMS > 600000 {
+		result.JitterMS = 0
+	}
+	if result.Timestamp == "" {
+		result.Timestamp = localTimestamp()
+	}
+	s.pushBroadbandHistory(result)
+	return result
 }
 
 func (s *Service) pushLocalTransferHistory(result LocalTransferResult) {
@@ -92,6 +113,23 @@ func (s *Service) UpdateSpeedHistoryNote(kind, id, note string) bool {
 	return false
 }
 
+func (s *Service) ClearSpeedHistory(kind string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch kind {
+	case "broadband":
+		s.broadbandHistory = make([]BroadbandSpeedResult, 0)
+		s.saveBroadbandHistory()
+		return true
+	case "local":
+		s.localTransferHistory = make([]LocalTransferResult, 0)
+		s.saveLocalTransferHistory()
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) startAppLifecycleObserver() {
 	go func() {
 		defer close(s.appLifecycleDone)
@@ -102,6 +140,8 @@ func (s *Service) startAppLifecycleObserver() {
 
 		calibration := time.NewTicker(appLifecycleCalibrationPeriod)
 		defer calibration.Stop()
+		reconcile := time.NewTicker(appTrafficReconcileInterval)
+		defer reconcile.Stop()
 		var debounce *time.Timer
 		var debounceC <-chan time.Time
 		scheduleObservation := func() {
@@ -120,6 +160,8 @@ func (s *Service) startAppLifecycleObserver() {
 		}
 
 		dockerlzc.InvalidateBridgeMapCache()
+		InvalidateAppTrafficMetadataCache()
+		s.observeAppTraffic()
 		s.recordAppTrafficEvents()
 		for {
 			select {
@@ -133,15 +175,101 @@ func (s *Service) startAppLifecycleObserver() {
 			case <-debounceC:
 				debounceC = nil
 				dockerlzc.InvalidateBridgeMapCache()
+				InvalidateAppTrafficMetadataCache()
+				s.observeAppTraffic()
 				s.recordAppTrafficEvents()
 			case <-calibration.C:
 				if debounceC == nil {
 					dockerlzc.InvalidateBridgeMapCache()
+					InvalidateAppTrafficMetadataCache()
+					s.observeAppTraffic()
 					s.recordAppTrafficEvents()
 				}
+			case <-reconcile.C:
+				s.observeAppTraffic()
 			}
 		}
 	}()
+}
+
+func (s *Service) observeAppTraffic() {
+	items := CollectAppTraffic().Bridges
+	if err := s.migrateLegacyAppInstancePolicies(items); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
+	}
+	if s.appTraffic != nil {
+		s.appTraffic.sample(items, time.Now())
+		s.reconcileAppTrafficLimits(items)
+	}
+	blockedApps := s.containers.snapshotBlockedApps()
+	_, proxyApps, proxyConfigs := s.settings.appProxyState()
+	_ = s.reconcileAppProxyControls(s.LifecycleContext(), items, proxyApps, proxyConfigs, blockedApps)
+	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, blockedApps)
+}
+
+func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
+	experimentalHost := s.settings.hostNetworkExperimental()
+	snapshot := CollectAppTraffic()
+	if s.appTraffic == nil {
+		return snapshot
+	}
+	if err := s.migrateLegacyAppInstancePolicies(snapshot.Bridges); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
+	}
+	s.appTraffic.sample(snapshot.Bridges, time.Now())
+	s.reconcileAppTrafficLimits(snapshot.Bridges)
+	overview := s.appTraffic.overviewForActiveAppsWithControls(
+		trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges), experimentalHost,
+	)
+	snapshot.Apps = overview.Apps
+	blocked := s.containers.snapshotBlocked()
+	for index := range snapshot.Apps {
+		app := &snapshot.Apps[index]
+		app.NetworkPolicy = s.appNetworkPolicyStatus(*app, blocked)
+		app.TrafficLimitAllowed = app.NetworkPolicy.Capabilities.UploadLimit && app.NetworkPolicy.Capabilities.DownloadLimit
+		app.InternetControlAllowed = app.NetworkPolicy.Capabilities.InternetControl
+	}
+	snapshot.LimitSupport = overview.LimitSupport
+	if snapshot.Note == "" && overview.Note != "" {
+		snapshot.Note = overview.Note
+	}
+	return snapshot
+}
+
+// activeAppTrafficIDs identifies applications that currently have at least
+// one running container. An empty result intentionally hides persisted
+// history when current runtime metadata cannot identify a live application;
+// showing old rows in that case would make deleted apps look active.
+func activeAppTrafficIDs(items []AppBridgeStats) map[string]bool {
+	active := make(map[string]bool)
+	for _, item := range items {
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" {
+			continue
+		}
+		if item.RunningCount > 0 {
+			active[policyID] = true
+		}
+	}
+	return active
+}
+
+func (s *Service) AppTrafficHistory(appID string) []AppTrafficSample {
+	if s.appTraffic == nil {
+		return []AppTrafficSample{}
+	}
+	return s.appTraffic.history(strings.TrimSpace(appID))
+}
+
+func (s *Service) AppInstanceTrafficHistory(appID, instanceID string) ([]AppTrafficSample, error) {
+	if s.appTraffic == nil {
+		return []AppTrafficSample{}, nil
+	}
+	policyID, err := resolveAppInstancePolicyID(CollectAppTraffic().Bridges, appID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.appTraffic.history(policyID), nil
 }
 
 func watchDockerLifecycleEvents(ctx context.Context, changes chan<- struct{}) {

@@ -12,7 +12,7 @@ func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResul
 	duration := s.cfg.BroadbandDuration
 	s.mu.RUnlock()
 
-	result, completed := executeBroadbandSpeedTest(ctx, s, duration, nil, nil)
+	result, completed := executeServerBroadbandSpeedTest(ctx, duration, BroadbandServerRequest{}, nil)
 	if completed {
 		s.pushBroadbandHistory(result)
 	}
@@ -20,14 +20,30 @@ func (s *Service) RunBroadbandSpeedTest(ctx context.Context) BroadbandSpeedResul
 }
 
 func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
-	s.mu.Lock()
+	return s.startBroadbandTask(BroadbandServerRequest{})
+}
+
+// StartBroadbandTaskWithNode starts a server-exit broadband test against a
+// selected public node. Empty input selects the default CDN group.
+func (s *Service) StartBroadbandTaskWithNode(nodeID string) BroadbandTaskStatus {
+	return s.startBroadbandTask(BroadbandServerRequest{NodeID: nodeID})
+}
+
+func (s *Service) StartBroadbandTaskWithRequest(request BroadbandServerRequest) BroadbandTaskStatus {
+	return s.startBroadbandTask(request)
+}
+
+func (s *Service) startBroadbandTask(request BroadbandServerRequest) BroadbandTaskStatus {
+	s.tasks.broadbandMu.Lock()
 	if s.tasks.broadbandTask.Running {
 		task := s.tasks.broadbandTask
-		s.mu.Unlock()
+		s.tasks.broadbandMu.Unlock()
 		return task
 	}
 
+	s.mu.RLock()
 	duration := s.cfg.BroadbandDuration
+	s.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(s.backgroundCtx(), broadbandTaskTimeout(duration))
 	task := BroadbandTaskStatus{
 		ID:              fmt.Sprintf("broadband-%d", time.Now().UnixNano()),
@@ -37,34 +53,36 @@ func (s *Service) StartBroadbandTask() BroadbandTaskStatus {
 		Message:         "准备开始宽带测速",
 		UpdatedAt:       localTimestamp(),
 		Result: BroadbandSpeedResult{
-			Timestamp:    localTimestamp(),
-			Provider:     "Speedtest China",
-			ServerRegion: "中国测速节点",
+			Timestamp: localTimestamp(),
+			TestMode:  "server",
 		},
 	}
 	s.tasks.broadbandTask = task
 	s.tasks.broadbandCancel = cancel
-	s.mu.Unlock()
+	s.tasks.broadbandMu.Unlock()
 
-	go s.runBroadbandTask(ctx, duration)
+	go s.runBroadbandTask(ctx, duration, request)
 	return task
 }
 
 func (s *Service) GetBroadbandTask() BroadbandTaskStatus {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.tasks.broadbandTask
+	s.tasks.broadbandMu.Lock()
+	defer s.tasks.broadbandMu.Unlock()
+	task := s.tasks.broadbandTask
+	task.Steps = append([]BroadbandTaskStep(nil), task.Steps...)
+	return task
 }
 
 func (s *Service) CancelBroadbandTask() BroadbandTaskStatus {
-	s.mu.Lock()
+	s.tasks.broadbandMu.Lock()
 	cancel := s.tasks.broadbandCancel
 	if s.tasks.broadbandTask.Running {
 		s.tasks.broadbandTask.Message = "正在取消测速"
 		s.tasks.broadbandTask.UpdatedAt = localTimestamp()
 	}
 	task := s.tasks.broadbandTask
-	s.mu.Unlock()
+	task.Steps = append([]BroadbandTaskStep(nil), task.Steps...)
+	s.tasks.broadbandMu.Unlock()
 
 	if cancel != nil {
 		cancel()
@@ -74,8 +92,8 @@ func (s *Service) CancelBroadbandTask() BroadbandTaskStatus {
 
 // appendBroadbandStep 追加一条测速过程步骤(供前端实时展示),并限制最多保留 maxBroadbandSteps 条。
 func (s *Service) appendBroadbandStep(stage, status, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.tasks.broadbandMu.Lock()
+	defer s.tasks.broadbandMu.Unlock()
 	seq := 1
 	if n := len(s.tasks.broadbandTask.Steps); n > 0 {
 		seq = s.tasks.broadbandTask.Steps[n-1].Seq + 1
@@ -93,21 +111,20 @@ func (s *Service) appendBroadbandStep(stage, status, message string) {
 	s.tasks.broadbandTask.UpdatedAt = localTimestamp()
 }
 
-func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration) {
-	result, completed := executeBroadbandSpeedTest(ctx, s, duration, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
-		s.mu.Lock()
+func (s *Service) runBroadbandTask(ctx context.Context, duration time.Duration, request BroadbandServerRequest) {
+	result, completed := executeServerBroadbandSpeedTest(ctx, duration, request, func(stage string, progress int, message string, partial BroadbandSpeedResult) {
+		s.tasks.broadbandMu.Lock()
 		s.tasks.broadbandTask.Stage = stage
 		s.tasks.broadbandTask.ProgressPercent = progress
 		s.tasks.broadbandTask.Message = message
 		s.tasks.broadbandTask.Result = partial
 		s.tasks.broadbandTask.UpdatedAt = localTimestamp()
-		s.mu.Unlock()
-	}, func(stage, status, message string) {
-		s.appendBroadbandStep(stage, status, message)
+		s.tasks.broadbandMu.Unlock()
+		s.appendBroadbandStep(stage, "running", message)
 	})
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.tasks.broadbandMu.Lock()
+	defer s.tasks.broadbandMu.Unlock()
 
 	s.tasks.broadbandTask.Result = result
 	s.tasks.broadbandTask.UpdatedAt = localTimestamp()

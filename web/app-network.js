@@ -52,6 +52,19 @@ function netwatchPost(path, body) {
 
 
 function detectProxyState() {
+	var environment = state.summary && state.summary.network_info && state.summary.network_info.proxy_environment;
+	if (environment && environment.mode) {
+		var interfaces = (environment.interfaces || []).filter(Boolean);
+		var suffix = '';
+		if (environment.mode === 'tun') suffix = 'TUN' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
+		if (environment.mode === 'environment') suffix = 'ENV';
+		if (environment.mode === 'mixed') suffix = 'TUN + ENV' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
+		return {
+			mode: environment.mode,
+			label: environment.detected ? (i18n('proxy_detected') + (suffix ? ' · ' + suffix : '')) : i18n('no_proxy'),
+			note: environment.note || ''
+		};
+	}
     var ci = (state.summary && state.summary.website_connectivity) || {};
     var globalSites = (ci.global || []).filter(function (s) { return s && s.status; });
     if (globalSites.length === 0) {
@@ -108,7 +121,11 @@ function detectProxyState() {
 function renderProxyBanner() {
     var inlineEl = document.getElementById('proxy-inline-status');
     var s = detectProxyState();
-    if (inlineEl) inlineEl.textContent = s.label;
+	if (inlineEl) {
+		inlineEl.textContent = s.label;
+		inlineEl.title = s.note || '';
+		inlineEl.dataset.proxyMode = s.mode || 'unknown';
+	}
 }
 
 function refreshProxyDisplay() {
@@ -244,27 +261,6 @@ async function loadSummary(showOverlay, refresh) {
     }
 }
 
-async function runFastRefresh(showOverlay) {
-    if (showOverlay === undefined) showOverlay = true;
-    if (state.fastRefreshing) return;
-    state.fastRefreshing = true;
-    els.refreshBtn.disabled = true;
-    if (showOverlay) els.overlay.style.display = 'flex';
-    try {
-        var data = window.NetwatchAPI
-            ? await window.NetwatchAPI.post('/api/v1/probe/run')
-            : await (await fetch('/api/v1/probe/run', { method: 'POST' })).json();
-        renderSummary(data);
-    } catch (error) {
-        console.error(error);
-        NetwatchShared.showToast(i18n('refresh_failed'), 'error');
-    } finally {
-        state.fastRefreshing = false;
-        if (showOverlay) els.overlay.style.display = 'none';
-        els.refreshBtn.disabled = false;
-    }
-}
-
 async function refreshInterfacesOnly() {
     if (!els.interfacesRefreshBtn || state.interfacesRefreshing) return;
     state.interfacesRefreshing = true;
@@ -298,7 +294,7 @@ async function runWebsiteRefresh() {
     els.websiteRefreshBtn.disabled = true;
     var previous = (state.summary && state.summary.website_connectivity) || {};
     updateWebsiteObservationStatus(previous, previous.generated_at ? 'refreshing' : 'loading');
-    document.querySelector('.connectivity-card')?.setAttribute('aria-busy', 'true');
+    document.getElementById('connectivity-card')?.setAttribute('aria-busy', 'true');
     try {
         var websiteData = window.NetwatchAPI
             ? await window.NetwatchAPI.post('/api/v1/connectivity/websites/run')
@@ -322,7 +318,7 @@ async function runWebsiteRefresh() {
         NetwatchShared.showToast(i18n('check_failed'), 'error');
     } finally {
         els.websiteRefreshBtn.disabled = false;
-        document.querySelector('.connectivity-card')?.removeAttribute('aria-busy');
+        document.getElementById('connectivity-card')?.removeAttribute('aria-busy');
     }
 }
 
@@ -637,7 +633,6 @@ window.__app.refreshNetworkDetailCards = refreshNetworkDetailCards;
 window.__app.renderSummary = renderSummary;
 window.__app.applyIncomingSummary = applyIncomingSummary;
 window.__app.mergeIncomingSummary = mergeIncomingSummary;
-window.__app.runFastRefresh = runFastRefresh;
 window.__app.refreshInterfacesOnly = refreshInterfacesOnly;
 window.__app.runWebsiteRefresh = runWebsiteRefresh;
 window.__app.runNATRefresh = runNATRefresh;

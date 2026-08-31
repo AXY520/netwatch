@@ -36,13 +36,18 @@ func (h *Handler) registerObservationRoutes(mux *http.ServeMux) {
 
 func (h *Handler) registerSpeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/speed/config", h.handleSpeedConfig)
-	mux.HandleFunc("/api/v1/speed/broadband/start", h.handleBroadbandStart)
-	mux.HandleFunc("/api/v1/speed/broadband/task", h.handleBroadbandTask)
-	mux.HandleFunc("/api/v1/speed/broadband/cancel", h.handleBroadbandCancel)
-	mux.HandleFunc("/api/v1/speed/broadband/run", h.handleBroadbandRun)
+	mux.HandleFunc("/api/v1/speed/broadband/catalog", h.handleBroadbandCatalog)
+	mux.HandleFunc("/api/v1/speed/broadband/server/start", h.handleBroadbandStart)
+	mux.HandleFunc("/api/v1/speed/broadband/server/task", h.handleBroadbandTask)
+	mux.HandleFunc("/api/v1/speed/broadband/server/cancel", h.handleBroadbandCancel)
+	mux.HandleFunc("/api/v1/speed/broadband/client/result", h.handleBroadbandClientResult)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/start", h.handleBroadbandPortPolicyStart)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/task", h.handleBroadbandPortPolicyTask)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/cancel", h.handleBroadbandPortPolicyCancel)
 	mux.HandleFunc("/api/v1/speed/broadband/history", h.handleBroadbandHistory)
 	mux.HandleFunc("/api/v1/speed/local/history", h.handleLocalHistory)
 	mux.HandleFunc("/api/v1/speed/history/note", h.handleSpeedHistoryNote)
+	mux.HandleFunc("/api/v1/speed/history/clear", h.handleSpeedHistoryClear)
 	mux.HandleFunc("/api/v1/speed/local/result", h.handleLocalResult)
 	mux.HandleFunc("/api/v1/speed/local/ping", h.handleLocalPing)
 	mux.HandleFunc("/api/v1/speed/local/download", h.handleLocalDownload)
@@ -60,6 +65,10 @@ func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
 
 func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
+	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
+	mux.HandleFunc("/api/v1/network/app-traffic/limit", h.handleAppTrafficLimit)
+	mux.HandleFunc("/api/v1/network/app-policy", h.handleAppNetworkPolicy)
+	mux.HandleFunc("/api/v1/network/app-proxy/settings", h.handleAppProxySettings)
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {
@@ -70,6 +79,7 @@ func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/config/pending", h.handleNetworkConfigPending)
 	mux.HandleFunc("/api/v1/network/config/check-ip", h.handleNetworkConfigCheckIP)
 	mux.HandleFunc("/api/v1/network/config/apply", h.handleNetworkConfigApply)
+	mux.HandleFunc("/api/v1/network/config/restart", h.handleNetworkConfigRestart)
 	mux.HandleFunc("/api/v1/network/config/confirm", h.handleNetworkConfigConfirm)
 	mux.HandleFunc("/api/v1/network/config/rollback", h.handleNetworkConfigRollback)
 	mux.HandleFunc("/api/v1/network/dns", h.handleHostDNS)

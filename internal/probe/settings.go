@@ -17,7 +17,6 @@ func DefaultMutableSettings() MutableSettings {
 		RefreshIntervalSec:             10,
 		NICRealtimeEnabled:             true,
 		NICRealtimeIntervalSec:         1,
-		BroadbandDomesticOnly:          true,
 		BackgroundMonitorEnabled:       false,
 		BackgroundMonitorIntervalSec:   60,
 		NotificationsEnabled:           false,
@@ -46,7 +45,9 @@ func DefaultMutableSettings() MutableSettings {
 		LANFlappingWindowSec:           600,
 		LANDeviceAutoRemoveDays:        30,
 		ChartTimeLabelInterval:         0,
-		ContainerControlEnabled:        false,
+		AppTrafficRealtimeEnabled:      true,
+		HostNetworkExperimentalEnabled: false,
+		AppProxy:                       defaultAppProxySettings(),
 	}
 }
 
@@ -66,9 +67,6 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	// Re-apply defaults for keys absent from the on-disk document so new fields
 	// introduced later do not silently stay zero-valued after upgrade.
 	def := DefaultMutableSettings()
-	if _, ok := raw["broadband_domestic_only"]; !ok {
-		s.BroadbandDomesticOnly = def.BroadbandDomesticOnly
-	}
 	if _, ok := raw["background_monitor_interval_sec"]; !ok {
 		s.BackgroundMonitorIntervalSec = def.BackgroundMonitorIntervalSec
 	}
@@ -139,9 +137,19 @@ func loadMutableSettings(dataDir string) (MutableSettings, bool) {
 	if _, ok := raw["chart_time_label_interval"]; !ok {
 		s.ChartTimeLabelInterval = def.ChartTimeLabelInterval
 	}
-	if _, ok := raw["container_control_enabled"]; !ok {
-		s.ContainerControlEnabled = def.ContainerControlEnabled
+	if _, ok := raw["app_traffic_realtime_enabled"]; !ok {
+		s.AppTrafficRealtimeEnabled = def.AppTrafficRealtimeEnabled
 	}
+	if _, ok := raw["host_network_experimental_enabled"]; !ok {
+		s.HostNetworkExperimentalEnabled = def.HostNetworkExperimentalEnabled
+	}
+	// Preserve the stored default long enough to migrate legacy enabled apps,
+	// then refresh the fallback for newly configured apps from the current host
+	// address. The global proxy setting is no longer user-facing, so carrying a
+	// DHCP-era address forward only creates a stale default.
+	storedProxy := normalizeAppProxySettings(s.AppProxy, def.AppProxy)
+	s.AppProxyConfigs = normalizeAppProxyConfigs(s.AppProxyConfigs, s.ProxyApps, storedProxy)
+	s.AppProxy = def.AppProxy
 	return s, true
 }
 

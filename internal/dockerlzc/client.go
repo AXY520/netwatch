@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"netwatch/internal/appidentity"
 )
 
 const socketPath = "/var/run/docker.sock"
@@ -148,6 +150,9 @@ func FormatContainerStarted(started int64) string {
 // BridgeAppInfo is the joined record returned by BuildBridgeMap.
 type BridgeAppInfo struct {
 	AppID          string // e.g. "cloud.lazycat.app.netwatch" — empty if unknown
+	InstanceID     string // stable per-user instance identity; app_id for single-instance apps
+	UserID         string // lzcapp.user-id for multi-instance applications
+	MultiInstance  bool
 	Project        string // docker compose project name, e.g. "cloudlazycatappnetwatch"
 	Title          string // human-friendly app name; falls back to AppID when missing
 	ContainerCount int    // total containers in this project
@@ -218,20 +223,24 @@ func WatchEvents(ctx context.Context, onEvent func(Event)) error {
 // inspect data. This is intentionally kept independent from Lazycat app APIs:
 // labels are enough to group most lzc-docker containers by app/project.
 type ContainerRuntimeInfo struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Image       string            `json:"image,omitempty"`
-	AppID       string            `json:"app_id,omitempty"`
-	Project     string            `json:"project,omitempty"`
-	State       string            `json:"state,omitempty"`
-	Status      string            `json:"status,omitempty"`
-	Created     int64             `json:"created,omitempty"`
-	StartedAt   int64             `json:"started_at,omitempty"`
-	NetworkMode string            `json:"network_mode,omitempty"`
-	Networks    []string          `json:"networks,omitempty"`
-	PID         int               `json:"pid,omitempty"`
-	Running     bool              `json:"running,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image,omitempty"`
+	AppID         string            `json:"app_id,omitempty"`
+	InstanceID    string            `json:"instance_id,omitempty"`
+	UserID        string            `json:"user_id,omitempty"`
+	MultiInstance bool              `json:"multi_instance,omitempty"`
+	Project       string            `json:"project,omitempty"`
+	State         string            `json:"state,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	Created       int64             `json:"created,omitempty"`
+	StartedAt     int64             `json:"started_at,omitempty"`
+	NetworkMode   string            `json:"network_mode,omitempty"`
+	CgroupPath    string            `json:"cgroup_path,omitempty"`
+	Networks      []string          `json:"networks,omitempty"`
+	PID           int               `json:"pid,omitempty"`
+	Running       bool              `json:"running,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
 }
 
 // BuildBridgeMap returns a "host bridge name → app info" map by joining the
@@ -267,10 +276,12 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 }
 
 func buildBridgeMapFromInventory(networks []networkSummary, containers []ContainerRuntimeInfo) map[string]BridgeAppInfo {
+	containers = assignContainerInstanceIdentities(containers)
 	// Keep project identity separate from per-network runtime. During app
 	// recreation one project can temporarily own both an old and a new network.
 	projectInfo := map[string]BridgeAppInfo{}
 	networkInfo := map[string]BridgeAppInfo{}
+	primaryByProject := PrimaryAppContainers(containers)
 	for _, c := range containers {
 		project := c.Project
 		appid := c.AppID
@@ -283,26 +294,12 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 			info.Project = project
 			info.Title = appid
 		}
+		info.InstanceID = c.InstanceID
+		info.UserID = c.UserID
+		info.MultiInstance = c.MultiInstance
 		info.ContainerCount++
 		if c.State == "running" {
 			info.RunningCount++
-			// Use the earliest running container's precise start time.
-			if info.StatusText == "" {
-				info.StatusText = FormatContainerStarted(c.StartedAt)
-				if info.StatusText == "" {
-					info.StatusText = FormatDockerStatus(c.Status)
-				}
-				// Fallback: use created timestamp if status text can't be parsed
-				if info.StatusText == "" && c.Created > 0 {
-					info.StatusText = FormatContainerCreated(c.Created)
-				}
-			}
-		}
-		// Track earliest actual start time; creation is only a fallback.
-		if c.StartedAt > 0 && (info.CreatedAt == 0 || c.StartedAt < info.CreatedAt) {
-			info.CreatedAt = c.StartedAt
-		} else if info.CreatedAt == 0 && c.Created > 0 {
-			info.CreatedAt = c.Created
 		}
 		projectInfo[project] = info
 		for _, network := range c.Networks {
@@ -312,22 +309,37 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 				networkRuntime.Project = project
 				networkRuntime.Title = appid
 			}
+			networkRuntime.InstanceID = c.InstanceID
+			networkRuntime.UserID = c.UserID
+			networkRuntime.MultiInstance = c.MultiInstance
 			networkRuntime.ContainerCount++
 			if c.State == "running" {
 				networkRuntime.RunningCount++
-				if networkRuntime.StatusText == "" {
-					networkRuntime.StatusText = FormatContainerStarted(c.StartedAt)
-					if networkRuntime.StatusText == "" {
-						networkRuntime.StatusText = FormatDockerStatus(c.Status)
-					}
-				}
-			}
-			if c.StartedAt > 0 && (networkRuntime.CreatedAt == 0 || c.StartedAt < networkRuntime.CreatedAt) {
-				networkRuntime.CreatedAt = c.StartedAt
-			} else if networkRuntime.CreatedAt == 0 && c.Created > 0 {
-				networkRuntime.CreatedAt = c.Created
 			}
 			networkInfo[network] = networkRuntime
+		}
+	}
+	// Application lifecycle time is defined by the primary app container, not
+	// by whichever sidecar Docker happened to return first.
+	for project, primary := range primaryByProject {
+		info := projectInfo[project]
+		info.AppID = firstNonEmpty(primary.AppID, info.AppID)
+		info.InstanceID = firstNonEmpty(primary.InstanceID, info.InstanceID)
+		info.UserID = firstNonEmpty(primary.UserID, info.UserID)
+		info.MultiInstance = primary.MultiInstance || info.MultiInstance
+		info.StatusText = containerStatusStart(primary)
+		if primary.StartedAt > 0 {
+			info.CreatedAt = primary.StartedAt
+		} else if primary.Created > 0 {
+			info.CreatedAt = primary.Created
+		}
+		projectInfo[project] = info
+	}
+	for network, info := range networkInfo {
+		if identity, ok := projectInfo[info.Project]; ok {
+			info.StatusText = identity.StatusText
+			info.CreatedAt = identity.CreatedAt
+			networkInfo[network] = info
 		}
 	}
 
@@ -344,12 +356,118 @@ func buildBridgeMapFromInventory(networks []networkSummary, containers []Contain
 			info.AppID = identity.AppID
 			info.Title = identity.Title
 		}
+		if info.InstanceID == "" {
+			info.InstanceID = identity.InstanceID
+			info.UserID = identity.UserID
+			info.MultiInstance = identity.MultiInstance
+		}
 		if info.Project == "" {
 			info.Project = project
 		}
 		out[bridge] = info
 	}
 	return out
+}
+
+// PrimaryAppContainers returns the Lazycat application container for each
+// compose project. The app service is identified from its container name; the
+// running/latest instance wins during a short recreate window.
+func PrimaryAppContainers(containers []ContainerRuntimeInfo) map[string]ContainerRuntimeInfo {
+	selected := map[string]ContainerRuntimeInfo{}
+	priorities := map[string]int{}
+	for _, c := range containers {
+		project := strings.TrimSpace(c.Project)
+		if project == "" {
+			continue
+		}
+		priority := primaryAppContainerPriority(c.Name)
+		if priority == 0 {
+			continue
+		}
+		current, exists := selected[project]
+		if !exists || primaryAppContainerPreferred(c, priority, current, priorities[project]) {
+			selected[project] = c
+			priorities[project] = priority
+		}
+	}
+	return selected
+}
+
+func primaryAppContainerPreferred(candidate ContainerRuntimeInfo, candidatePriority int, current ContainerRuntimeInfo, currentPriority int) bool {
+	if candidatePriority != currentPriority {
+		return candidatePriority > currentPriority
+	}
+	candidateRunning := candidate.State == "running" || candidate.Running
+	currentRunning := current.State == "running" || current.Running
+	if candidateRunning != currentRunning {
+		return candidateRunning
+	}
+	if candidate.StartedAt != current.StartedAt {
+		return candidate.StartedAt > current.StartedAt
+	}
+	if candidate.Created != current.Created {
+		return candidate.Created > current.Created
+	}
+	return candidate.Name < current.Name
+}
+
+// primaryAppContainerPriority identifies the Lazycat application service.
+// Compose sidecars may also contain "app" in the project prefix, so a suffix
+// such as "-app-1" receives the highest priority.
+func primaryAppContainerPriority(name string) int {
+	name = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(name, "/")))
+	if name == "" {
+		return 0
+	}
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == '/'
+	})
+	priority := 0
+	for i, part := range parts {
+		if part != "app" {
+			continue
+		}
+		if i == len(parts)-1 || (i == len(parts)-2 && isDecimalToken(parts[i+1])) {
+			priority = 3
+		} else {
+			priority = maxInt(priority, 1)
+		}
+	}
+	if priority == 0 && strings.Contains(name, "app") {
+		// Some runtimes use a service name such as "appserver" instead of a
+		// separate "app" token. Keep it above a project-prefix-only match.
+		return 2
+	}
+	return priority
+}
+
+func isDecimalToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func containerStatusStart(c ContainerRuntimeInfo) string {
+	if value := FormatContainerStarted(c.StartedAt); value != "" {
+		return value
+	}
+	if value := FormatDockerStatus(c.Status); value != "" {
+		return value
+	}
+	return FormatContainerCreated(c.Created)
 }
 
 func cloneBridgeMap(source map[string]BridgeAppInfo) map[string]BridgeAppInfo {
@@ -376,6 +494,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 			Name:    firstContainerName(c.Names),
 			Image:   c.Image,
 			AppID:   c.Labels["lzcapp.app-id"],
+			UserID:  c.Labels["lzcapp.user-id"],
 			Project: c.Labels["com.docker.compose.project"],
 			State:   c.State,
 			Status:  c.Status,
@@ -396,6 +515,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 			if inspect.Config.Labels != nil {
 				info.Labels = inspect.Config.Labels
 				info.AppID = inspect.Config.Labels["lzcapp.app-id"]
+				info.UserID = inspect.Config.Labels["lzcapp.user-id"]
 				info.Project = inspect.Config.Labels["com.docker.compose.project"]
 			}
 			info.NetworkMode = inspect.HostConfig.NetworkMode
@@ -403,6 +523,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 				info.Networks = append(info.Networks, network)
 			}
 			info.PID = inspect.State.Pid
+			info.CgroupPath = inspect.State.CgroupPath
 			info.Running = inspect.State.Running
 			if inspect.State.Status != "" {
 				info.State = inspect.State.Status
@@ -414,7 +535,66 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 		}
 		out = append(out, info)
 	}
-	return out, nil
+	return assignContainerInstanceIdentities(out), nil
+}
+
+// assignContainerInstanceIdentities propagates the app/user identity from the
+// primary or labelled container to every sidecar in the same Compose project.
+// Multiple projects for one app are treated as separate instances even on
+// older runtimes that do not expose lzcapp.user-id.
+func assignContainerInstanceIdentities(containers []ContainerRuntimeInfo) []ContainerRuntimeInfo {
+	type projectIdentity struct {
+		appID  string
+		userID string
+	}
+	projects := make(map[string]projectIdentity)
+	primary := PrimaryAppContainers(containers)
+	for project, container := range primary {
+		projects[project] = projectIdentity{appID: strings.TrimSpace(container.AppID), userID: strings.TrimSpace(container.UserID)}
+	}
+	for _, container := range containers {
+		project := strings.TrimSpace(container.Project)
+		if project == "" {
+			continue
+		}
+		identity := projects[project]
+		if identity.appID == "" {
+			identity.appID = strings.TrimSpace(container.AppID)
+		}
+		if identity.userID == "" {
+			identity.userID = strings.TrimSpace(container.UserID)
+		}
+		projects[project] = identity
+	}
+	appProjects := make(map[string]map[string]bool)
+	for project, identity := range projects {
+		if identity.appID == "" {
+			continue
+		}
+		if appProjects[identity.appID] == nil {
+			appProjects[identity.appID] = make(map[string]bool)
+		}
+		appProjects[identity.appID][project] = true
+	}
+	out := append([]ContainerRuntimeInfo(nil), containers...)
+	for index := range out {
+		project := strings.TrimSpace(out[index].Project)
+		identity := projects[project]
+		out[index].AppID = firstNonEmpty(identity.appID, strings.TrimSpace(out[index].AppID))
+		out[index].UserID = firstNonEmpty(identity.userID, strings.TrimSpace(out[index].UserID))
+		out[index].MultiInstance = out[index].UserID != "" || len(appProjects[out[index].AppID]) > 1
+		out[index].InstanceID = appidentity.Build(out[index].AppID, out[index].UserID, project, out[index].MultiInstance)
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type containerSummary struct {
@@ -432,10 +612,11 @@ type containerInspect struct {
 	Name    string `json:"Name"`
 	Created string `json:"Created"`
 	State   struct {
-		Status    string `json:"Status"`
-		Running   bool   `json:"Running"`
-		Pid       int    `json:"Pid"`
-		StartedAt string `json:"StartedAt"`
+		Status     string `json:"Status"`
+		Running    bool   `json:"Running"`
+		Pid        int    `json:"Pid"`
+		StartedAt  string `json:"StartedAt"`
+		CgroupPath string `json:"CgroupPath"`
 	} `json:"State"`
 	Config struct {
 		Image  string            `json:"Image"`

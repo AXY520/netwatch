@@ -195,4 +195,3 @@ func isPrivateIPv6(ip net.IP) bool {
 	}
 	return false
 }
-

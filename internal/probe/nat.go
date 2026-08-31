@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -21,15 +20,26 @@ const (
 	NAT1       = "NAT1"
 	NAT2       = "NAT2"
 	NAT3       = "NAT3"
+	NAT23      = "NAT2_OR_NAT3"
 	NAT4       = "NAT4"
 	NATUnknown = "unknown"
 )
 
+type natClassification struct {
+	Type              string
+	Confidence        string
+	MappingBehavior   string
+	FilteringBehavior string
+	Diagnostic        string
+}
+
 func (s *Service) ProbeNAT(ctx context.Context) NATInfo {
+	proxyEnvironment := detectProxyEnvironment()
 	results := NATInfo{
-		GeneratedAt: localTimestamp(),
-		Type:        NATUnknown,
-		Note:        "基于服务器后端 UDP STUN 多点观测推断，结果反映当前部署环境的出口 NAT，不代表浏览器客户端本地网络。",
+		GeneratedAt:   localTimestamp(),
+		Type:          NATUnknown,
+		ProxyAffected: proxyEnvironment.NATMayBeAffected,
+		Note:          "使用同一 UDP socket 向多个 STUN 服务器观测映射；结果反映微服出口，不代表浏览器所在网络。",
 	}
 
 	observations := parallelSTUNObservations(ctx, s.cfg.STUNServers, s.cfg.NATTimeout)
@@ -45,8 +55,26 @@ func (s *Service) ProbeNAT(ctx context.Context) NATInfo {
 		}
 	}
 
-	results.Type, results.Confidence = classifyNAT(observations, results.Reachable)
+	classification := classifyNATDetailed(observations, results.Reachable)
+	results.Type = classification.Type
+	results.Confidence = classification.Confidence
+	results.MappingBehavior = classification.MappingBehavior
+	results.FilteringBehavior = classification.FilteringBehavior
+	results.Diagnostic = classification.Diagnostic
+	if results.ProxyAffected {
+		results.Diagnostic = appendDiagnostic(results.Diagnostic, "检测到代理 TUN，STUN 映射可能受分流或 UDP 代理影响")
+	}
 	return results
+}
+
+func appendDiagnostic(current, next string) string {
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+	return current + "；" + next
 }
 
 func successfulNATObservations(observations []NATObservation) []NATObservation {
@@ -60,75 +88,74 @@ func successfulNATObservations(observations []NATObservation) []NATObservation {
 }
 
 func parallelSTUNObservations(ctx context.Context, servers []string, timeout time.Duration) []NATObservation {
-	observations := make([]NATObservation, len(servers))
-	var wg sync.WaitGroup
-	wg.Add(len(servers))
-
-	for i, server := range servers {
-		go func(index int, server string) {
-			defer wg.Done()
-			observations[index] = stunBindingObservation(ctx, server, timeout)
-		}(i, server)
-	}
-
-	wg.Wait()
-	return observations
+	return sharedSocketSTUNObservations(ctx, servers, timeout)
 }
 
 func classifyNAT(observations []NATObservation, reachable bool) (string, string) {
+	classification := classifyNATDetailed(observations, reachable)
+	return classification.Type, classification.Confidence
+}
+
+func classifyNATDetailed(observations []NATObservation, reachable bool) natClassification {
 	if !reachable {
-		return NAT4, "high"
+		return natClassification{
+			Type:            NATUnknown,
+			Confidence:      "low",
+			MappingBehavior: "unknown",
+			Diagnostic:      "UDP STUN 不可达；这可能是防火墙、代理、路由或服务器超时，不能据此判定为 NAT4",
+		}
 	}
 
-	externalHosts := map[string]struct{}{}
-	externalPorts := map[string]struct{}{}
-	localHosts := map[string]struct{}{}
-	localPorts := map[string]struct{}{}
+	externalAddresses := map[string]struct{}{}
 	successful := 0
+	direct := true
 	for _, observation := range observations {
 		if observation.ExternalAddr == "" {
 			continue
 		}
 		successful++
-		host, port, err := net.SplitHostPort(observation.ExternalAddr)
-		if err != nil {
-			continue
-		}
-		externalHosts[host] = struct{}{}
-		externalPorts[port] = struct{}{}
-		localHost, localPort, err := net.SplitHostPort(observation.LocalAddr)
-		if err == nil {
-			localHosts[localHost] = struct{}{}
-			localPorts[localPort] = struct{}{}
+		externalAddresses[observation.ExternalAddr] = struct{}{}
+		if observation.LocalAddr == "" || observation.LocalAddr != observation.ExternalAddr {
+			direct = false
 		}
 	}
 
-	if len(externalHosts) == 0 {
-		return NAT4, "medium"
+	if successful == 0 {
+		return natClassification{Type: NATUnknown, Confidence: "low", MappingBehavior: "unknown", Diagnostic: "没有可用的 STUN 映射观测"}
 	}
-
-	if len(externalHosts) == 1 && len(localHosts) == 1 && sameOnlyValue(externalHosts, localHosts) {
-		return NAT1, confidenceForSTUN(successful)
+	if direct {
+		return natClassification{
+			Type:              NAT1,
+			Confidence:        confidenceForSTUN(successful),
+			MappingBehavior:   "public",
+			FilteringBehavior: "not_applicable",
+			Diagnostic:        "本地 UDP 地址与 STUN 映射地址一致，未观察到地址转换",
+		}
 	}
-	if len(externalHosts) > 1 || len(externalPorts) > 1 {
-		return NAT4, confidenceForSTUN(successful)
+	if successful < 2 {
+		return natClassification{
+			Type:            NATUnknown,
+			Confidence:      "low",
+			MappingBehavior: "unknown",
+			Diagnostic:      "只有一个 STUN 服务器返回结果，无法比较不同目标下的端口映射",
+		}
 	}
-	if len(localPorts) == 1 && sameOnlyValue(externalPorts, localPorts) {
-		return NAT2, confidenceForSTUN(successful)
+	if len(externalAddresses) == 1 {
+		return natClassification{
+			Type:              NAT23,
+			Confidence:        confidenceForSTUN(successful),
+			MappingBehavior:   "endpoint_independent",
+			FilteringBehavior: "unknown",
+			Diagnostic:        "不同 STUN 目标得到相同映射；普通 Binding 响应无法继续区分 NAT2 与 NAT3",
+		}
 	}
-	return NAT3, confidenceForSTUN(successful)
-}
-
-func sameOnlyValue(a, b map[string]struct{}) bool {
-	if len(a) != 1 || len(b) != 1 {
-		return false
+	return natClassification{
+		Type:              NAT4,
+		Confidence:        confidenceForSTUN(successful),
+		MappingBehavior:   "endpoint_dependent",
+		FilteringBehavior: "unknown",
+		Diagnostic:        "同一 UDP socket 访问不同 STUN 目标时映射发生变化，符合对称型/目标相关映射特征",
 	}
-	var av string
-	for value := range a {
-		av = value
-	}
-	_, ok := b[av]
-	return ok
 }
 
 func confidenceForSTUN(successful int) string {
@@ -138,51 +165,151 @@ func confidenceForSTUN(successful int) string {
 	return "medium"
 }
 
-func stunBindingObservation(ctx context.Context, server string, timeout time.Duration) NATObservation {
-	observation := NATObservation{Server: server}
+func sharedSocketSTUNObservations(ctx context.Context, servers []string, timeout time.Duration) []NATObservation {
+	observations := make([]NATObservation, len(servers))
+	for i, server := range servers {
+		observations[i].Server = server
+	}
+	if len(servers) == 0 {
+		return observations
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := dialer.DialContext(ctx, "udp4", server)
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		observation.Error = err.Error()
-		return observation
+		for i := range observations {
+			observations[i].Error = err.Error()
+		}
+		return observations
 	}
 	defer conn.Close()
+	localPort := conn.LocalAddr().(*net.UDPAddr).Port
 
-	observation.LocalAddr = conn.LocalAddr().String()
-
-	txID := make([]byte, 12)
-	if _, err := rand.Read(txID); err != nil {
-		observation.Error = err.Error()
-		return observation
+	type pendingRequest struct {
+		index int
+		txID  []byte
+	}
+	type resolvedServer struct {
+		index  int
+		remote *net.UDPAddr
+		err    error
+	}
+	pending := make(map[string]pendingRequest, len(servers))
+	resolved := make(chan resolvedServer, len(servers))
+	for index, server := range servers {
+		go func(index int, server string) {
+			remote, resolveErr := resolveUDP4Addr(probeCtx, server)
+			resolved <- resolvedServer{index: index, remote: remote, err: resolveErr}
+		}(index, server)
 	}
 
-	request := make([]byte, 20)
-	binary.BigEndian.PutUint16(request[0:2], stunBindingRequest)
-	binary.BigEndian.PutUint16(request[2:4], 0)
-	binary.BigEndian.PutUint32(request[4:8], stunMagicCookie)
-	copy(request[8:20], txID)
-
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write(request); err != nil {
-		observation.Error = err.Error()
-		return observation
+resolveLoop:
+	for range servers {
+		var target resolvedServer
+		select {
+		case target = <-resolved:
+		case <-probeCtx.Done():
+			for index := range observations {
+				if observations[index].Error == "" && observations[index].LocalAddr == "" {
+					observations[index].Error = probeCtx.Err().Error()
+				}
+			}
+			break resolveLoop
+		}
+		if target.err != nil {
+			observations[target.index].Error = target.err.Error()
+			continue
+		}
+		observations[target.index].LocalAddr = routeLocalAddress(target.remote, localPort)
+		txID := make([]byte, 12)
+		if _, readErr := rand.Read(txID); readErr != nil {
+			observations[target.index].Error = readErr.Error()
+			continue
+		}
+		request := make([]byte, 20)
+		binary.BigEndian.PutUint16(request[0:2], stunBindingRequest)
+		binary.BigEndian.PutUint32(request[4:8], stunMagicCookie)
+		copy(request[8:20], txID)
+		if _, writeErr := conn.WriteToUDP(request, target.remote); writeErr != nil {
+			observations[target.index].Error = writeErr.Error()
+			continue
+		}
+		pending[string(txID)] = pendingRequest{index: target.index, txID: txID}
 	}
 
-	response := make([]byte, 1024)
-	n, err := conn.Read(response)
+	deadline, _ := probeCtx.Deadline()
+	_ = conn.SetReadDeadline(deadline)
+	response := make([]byte, 2048)
+	for len(pending) > 0 {
+		n, _, readErr := conn.ReadFromUDP(response)
+		if readErr != nil {
+			break
+		}
+		if n < 20 || binary.BigEndian.Uint32(response[4:8]) != stunMagicCookie {
+			continue
+		}
+		key := string(response[8:20])
+		request, ok := pending[key]
+		if !ok {
+			continue
+		}
+		address, parseErr := parseSTUNResponse(response[:n], request.txID)
+		if parseErr != nil {
+			observations[request.index].Error = parseErr.Error()
+		} else {
+			observations[request.index].ExternalAddr = address
+		}
+		delete(pending, key)
+	}
+	for _, request := range pending {
+		if err := probeCtx.Err(); err != nil {
+			observations[request.index].Error = err.Error()
+		} else {
+			observations[request.index].Error = "stun timeout"
+		}
+	}
+	return observations
+}
+
+func resolveUDP4Addr(ctx context.Context, address string) (*net.UDPAddr, error) {
+	host, portText, err := net.SplitHostPort(address)
 	if err != nil {
-		observation.Error = err.Error()
-		return observation
+		return nil, err
 	}
-
-	address, err := parseSTUNResponse(response[:n], txID)
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid stun port %q", portText)
+	}
+	if parsed := net.ParseIP(host); parsed != nil {
+		if ipv4 := parsed.To4(); ipv4 != nil {
+			return &net.UDPAddr{IP: ipv4, Port: port}, nil
+		}
+		return nil, fmt.Errorf("stun server %q has no IPv4 address", host)
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
 	if err != nil {
-		observation.Error = err.Error()
-		return observation
+		return nil, err
 	}
-	observation.ExternalAddr = address
-	return observation
+	for _, ip := range ips {
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return &net.UDPAddr{IP: ipv4, Port: port}, nil
+		}
+	}
+	return nil, fmt.Errorf("stun server %q has no IPv4 address", host)
+}
+
+func routeLocalAddress(remote *net.UDPAddr, port int) string {
+	conn, err := net.DialUDP("udp4", nil, remote)
+	if err != nil {
+		return net.JoinHostPort(net.IPv4zero.String(), strconv.Itoa(port))
+	}
+	defer conn.Close()
+	local, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return net.JoinHostPort(net.IPv4zero.String(), strconv.Itoa(port))
+	}
+	return net.JoinHostPort(local.IP.String(), strconv.Itoa(port))
 }
 
 func parseSTUNResponse(message, txID []byte) (string, error) {

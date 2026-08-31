@@ -7,14 +7,6 @@ var i18n = window.__app.i18n;
 var netwatchGet = window.__app.netwatchGet;
 var netwatchPost = window.__app.netwatchPost;
 
-function appTrafficUploadBytes(item) {
-    return Number(item && item.upload_bytes != null ? item.upload_bytes : item && item.rx_bytes) || 0;
-}
-
-function appTrafficDownloadBytes(item) {
-    return Number(item && item.download_bytes != null ? item.download_bytes : item && item.tx_bytes) || 0;
-}
-
 function initAppTraffic() {
     if (state.appTrafficInitialized) return;
     state.appTrafficInitialized = true;
@@ -25,27 +17,69 @@ function initAppTraffic() {
     var btn = document.getElementById('app-traffic-refresh-btn');
     var sortButtons = Array.from(document.querySelectorAll('#app-traffic-table [data-sort-key]'));
     var latestTrafficData = null;
-    var lastSuccessfulData = null;
+    var activeMenuAppID = '';
+    var activeLimitAppID = '';
+    var activeProxyAppID = '';
+    var limitWindow = document.getElementById('app-traffic-limit-window');
+    var limitBackdrop = document.getElementById('app-traffic-limit-backdrop');
+    var limitTitle = document.getElementById('app-traffic-limit-title');
+    var limitNote = document.getElementById('app-traffic-limit-note');
+    var limitForm = document.getElementById('app-traffic-limit-form');
+    var limitUpload = document.getElementById('app-traffic-limit-upload');
+    var limitDownload = document.getElementById('app-traffic-limit-download');
+    var limitError = document.getElementById('app-traffic-limit-error');
+    var proxyWindow = document.getElementById('app-traffic-proxy-window');
+    var proxyBackdrop = document.getElementById('app-traffic-proxy-backdrop');
+    var proxyTitle = document.getElementById('app-traffic-proxy-title');
+    var proxyNote = document.getElementById('app-traffic-proxy-note');
+    var proxyForm = document.getElementById('app-traffic-proxy-form');
+    var proxyProtocol = document.getElementById('app-traffic-proxy-protocol');
+    var proxyHost = document.getElementById('app-traffic-proxy-host');
+    var proxyPort = document.getElementById('app-traffic-proxy-port');
+    var proxyError = document.getElementById('app-traffic-proxy-error');
+    var trafficLoading = false;
+    // Keep failed icon URLs out of subsequent renders so a missing/broken icon
+    // is not fetched again on every counter sample. A later URL change (or
+    // expiry) can retry.
+    var failedAppIcons = Object.create(null);
+    var failedAppIconRetryMs = 10 * 60 * 1000;
+    var lastTrafficRenderSignature = '';
+    var lastTrafficStructureSignature = '';
+    var renderedTrafficMode = null;
     if (!tbody) return;
+    var appTrafficRealtimeEnabled = function () {
+        return state.settings.app_traffic_realtime_enabled !== false;
+    };
+    var syncAppTrafficRealtimeColumn = function () {
+        var enabled = appTrafficRealtimeEnabled();
+        if (!enabled && state.appTrafficSort.key === 'rate') {
+            state.appTrafficSort.key = 'total';
+            state.appTrafficSort.direction = 'desc';
+        }
+        if (table) table.classList.toggle('app-traffic-realtime-hidden', !enabled);
+        return enabled;
+    };
     var getAppTrafficName = function (item) {
-        return String(item.app_title || item.app_id || item.project || item.bridge || '').toLowerCase();
+        return String(appTrafficDisplayName(item)).toLowerCase();
     };
     var sortAppTrafficRows = function (a, b, key, direction) {
         var result = 0;
         if (key === 'app') {
             result = getAppTrafficName(a).localeCompare(getAppTrafficName(b), 'zh-CN');
-        } else if (key === 'rx') {
-            result = appTrafficUploadBytes(a) - appTrafficUploadBytes(b);
-        } else if (key === 'tx') {
-            result = appTrafficDownloadBytes(a) - appTrafficDownloadBytes(b);
+        } else if (key === 'rate') {
+            result = appTrafficRate(a) - appTrafficRate(b);
+        } else if (key === 'today') {
+            result = appTrafficPeriod(a, 'today') - appTrafficPeriod(b, 'today');
+        } else if (key === 'month') {
+            result = appTrafficPeriod(a, 'month') - appTrafficPeriod(b, 'month');
         } else {
-            result = (appTrafficUploadBytes(a) + appTrafficDownloadBytes(a)) -
-                (appTrafficUploadBytes(b) + appTrafficDownloadBytes(b));
+            result = appTrafficPeriod(a, 'total') - appTrafficPeriod(b, 'total');
         }
         return direction === 'asc' ? result : -result;
     };
     var updateSortHeaders = function () {
         if (!table) return;
+        syncAppTrafficRealtimeColumn();
         var key = state.appTrafficSort.key;
         var direction = state.appTrafficSort.direction;
         sortButtons.forEach(function (button) {
@@ -55,109 +89,453 @@ function initAppTraffic() {
             button.setAttribute('aria-sort', active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none');
         });
     };
-    var renderTraffic = function (data) {
-        latestTrafficData = data;
-        var ctrlEnabled = !!(state.settings && state.settings.container_control_enabled);
-        var containerData = null;
-        if (ctrlEnabled && window.__app.lastContainerData) {
-            containerData = window.__app.lastContainerData;
+    var trafficRowKey = function (item, index) {
+        return String((item && (item.instance_id || item.app_id || item.project || item.app_title)) || ('row-' + index));
+    };
+    var trafficRenderSignature = function (list, showRealtime, data) {
+        return JSON.stringify({
+            mode: showRealtime,
+            sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
+            limit: !!data.limit_support,
+            apps: list.map(function (item, index) {
+                return [
+                    trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
+                    item.upload_bps || 0, item.download_bps || 0,
+                    item.today_upload || 0, item.today_download || 0,
+                    item.month_upload || 0, item.month_download || 0,
+                    item.total_upload || 0, item.total_download || 0,
+                    item.limit || null, item.bridges || [], item.network_modes || [],
+                    item.network_topology || '', item.network_policy || null
+                ];
+            })
+        });
+    };
+    var trafficStructureSignature = function (list, showRealtime, data) {
+        return JSON.stringify({
+            mode: showRealtime,
+            sort: state.appTrafficSort.key + ':' + state.appTrafficSort.direction,
+            limit: !!data.limit_support,
+            apps: list.map(function (item, index) {
+                return [
+                    trafficRowKey(item, index), item.icon || '', item.app_title || '', item.status_text || '',
+                    item.limit || null, item.bridges || [], item.network_modes || [],
+                    item.network_topology || '', item.network_policy || null
+                ];
+            })
+        });
+    };
+    var setTrafficCellHTML = function (cell, html) {
+        if (cell && cell.innerHTML !== html) cell.innerHTML = html;
+    };
+    var updateTrafficAppCell = function (cell, item) {
+        var wrapper = cell.querySelector('.app-cell');
+        var info = cell.querySelector('.app-cell-info');
+        if (!wrapper || !info) return;
+        var iconURL = String(item.icon || '').trim();
+        var iconKey = appTrafficIconKey(item);
+        var failed = iconKey && iconURL ? failedAppIcons[iconKey] : null;
+        var iconRetryAllowed = !failed || failed.url !== iconURL || (Date.now() - failed.at) >= failedAppIconRetryMs;
+        var image = wrapper.querySelector('img.app-icon');
+        if (iconURL && iconRetryAllowed) {
+            if (!image) {
+                image = document.createElement('img');
+                image.className = 'app-icon';
+                image.alt = '';
+                image.loading = 'lazy';
+                wrapper.insertBefore(image, info);
+            }
+            image.dataset.appIconKey = iconKey;
+            if (image.getAttribute('src') !== iconURL) image.src = iconURL;
+            image.style.display = '';
+        } else if (image) {
+            image.style.display = 'none';
         }
-        var containerMap = {};
-        if (containerData && containerData.applications) {
-            containerData.applications.forEach(function (app) {
-                containerMap[app.bridge] = app.block_mode || '';
-            });
+        var name = appTrafficDisplayName(item) || i18n('unknown_status');
+        setTrafficCellHTML(info, '<strong>' + NetwatchShared.escapeHtml(name) + '</strong>' +
+            (item.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(item.status_text) + '</div>' : ''));
+    };
+    var createTrafficRow = function (item, showRealtime) {
+        var row = document.createElement('tr');
+        row.innerHTML = '<td class="col-app"><div class="app-cell"><div class="app-cell-info"></div></div></td>' +
+            '<td class="col-status"></td>' +
+            (showRealtime ? '<td class="col-rate"></td>' : '') +
+            '<td class="col-period col-today"></td><td class="col-period col-month"></td><td class="col-total"></td><td class="col-actions"></td>';
+        return row;
+    };
+    var updateTrafficRow = function (row, item, showRealtime, data, index) {
+        row.dataset.appId = String(item.app_id || '');
+        row.dataset.instanceId = appTrafficInstanceID(item);
+        row.dataset.appRowKey = trafficRowKey(item, index);
+        updateTrafficAppCell(row.querySelector('.col-app'), item);
+        var statusCell = row.querySelector('.col-status');
+        statusCell.dataset.label = i18n('status_col');
+        setTrafficCellHTML(statusCell, appTrafficControlStatusMarkup(item));
+        var rateCell = row.querySelector('.col-rate');
+        if (showRealtime) {
+            rateCell.dataset.label = i18n('app_traffic_realtime');
+            setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
         }
-        var list = Array.isArray(data.bridges) ? data.bridges.filter(function (b) { return !NetwatchShared.isNetwatchBridge(b); }) : [];
-        updateSortHeaders();
-        if (list.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
-        } else {
-            var key = state.appTrafficSort.key;
-            var direction = state.appTrafficSort.direction;
-            list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
-            tbody.innerHTML = list.map(function (b) {
-                var uploadBytes = appTrafficUploadBytes(b);
-                var downloadBytes = appTrafficDownloadBytes(b);
-                var total = uploadBytes + downloadBytes;
-                var iconHtml = b.icon ? '<img class="app-icon" src="' + NetwatchShared.escapeHtml(b.icon) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '';
-                var statusLine = b.status_text ? '<div class="app-status-text">' + NetwatchShared.escapeHtml(b.status_text) + '</div>' : '';
-                var nameHtml;
-                if (b.app_title) {
-                    nameHtml = '<strong>' + NetwatchShared.escapeHtml(b.app_title) + '</strong>' + statusLine;
-                } else if (b.app_id) {
-                    nameHtml = '<strong>' + NetwatchShared.escapeHtml(window.__app.shortAppName(b.app_id)) + '</strong>' + statusLine + '<div class="app-status-text">' + NetwatchShared.escapeHtml(b.app_id) + '</div>';
-                } else if (b.project) {
-                    nameHtml = '<small style="color:var(--text-muted)">' + NetwatchShared.escapeHtml(b.project) + '</small>';
-                } else {
-                    nameHtml = '<small style="color:var(--text-muted)">' + NetwatchShared.escapeHtml(b.bridge) + '</small>';
-                }
-                var blockMode = containerMap[b.bridge] || '';
-                var blockBtns = '';
-                if (ctrlEnabled && containerMap.hasOwnProperty(b.bridge)) {
-                    if (blockMode) {
-                        blockBtns = '<button class="ctr-inline-btn ctr-btn-unblock" data-action="unblock" data-bridge="' + b.bridge + '">' + i18n('unblock_btn') + '</button>';
-                    } else {
-                        blockBtns = '<button class="ctr-inline-btn ctr-btn-block-net" data-action="block" data-mode="internet" data-bridge="' + b.bridge + '" title="' + i18n('block_internet_title') + '">' + i18n('block_internet_btn') + '</button>';
-                    }
-                }
-                return '<tr data-bridge="' + b.bridge + '" data-block="' + blockMode + '">' +
-                    '<td class="col-app"><div class="app-cell">' + iconHtml + '<div class="app-cell-info">' + nameHtml + '</div></div>' + blockBtns + '</td>' +
-                    '<td class="col-rx">' + NetwatchShared.formatBytes(uploadBytes) + '</td>' +
-                    '<td class="col-tx">' + NetwatchShared.formatBytes(downloadBytes) + '</td>' +
-                    '<td class="col-total">' + NetwatchShared.formatBytes(total) + '</td>' +
-                '</tr>';
-            }).join('');
-        }
+        var periods = row.querySelectorAll('.col-period');
+        periods[0].dataset.label = i18n('app_traffic_today');
+        periods[1].dataset.label = i18n('app_traffic_month');
+        setTrafficCellHTML(periods[0], appTrafficDualValue(item.today_upload, item.today_download, false));
+        setTrafficCellHTML(periods[1], appTrafficDualValue(item.month_upload, item.month_download, false));
+        var total = row.querySelector('.col-total');
+        total.dataset.label = i18n('total');
+        setTrafficCellHTML(total, appTrafficDualValue(item.total_upload, item.total_download, false));
+        var actions = row.querySelector('.col-actions');
+        setTrafficCellHTML(actions, appTrafficMoreMenu(item, data.limit_support, activeMenuAppID));
+    };
+    var updateTrafficMenus = function () {
+        if (!latestTrafficData || !Array.isArray(latestTrafficData.apps)) return;
+        var apps = new Map(latestTrafficData.apps.map(function (item) { return [appTrafficInstanceID(item), item]; }));
+        tbody.querySelectorAll('tr[data-instance-id]').forEach(function (row) {
+            var item = apps.get(row.dataset.instanceId || '');
+            if (item) setTrafficCellHTML(row.querySelector('.col-actions'), appTrafficMoreMenu(item, latestTrafficData.limit_support, activeMenuAppID));
+        });
+    };
+    var updateTrafficStatus = function (data, list) {
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
-            state: list.length ? (list.some(function (item) { return item.stale; }) ? 'stale' : 'fresh') : 'empty',
+            state: list.length ? 'fresh' : 'empty',
             count: list.length,
             countLabel: i18n('apps_unit'),
             generatedAt: data.generated_at,
-            stale: list.some(function (item) { return item.stale; }),
-            staleAfterSeconds: 180,
             title: data.note || ''
         });
         if (noteEl) noteEl.textContent = data.note || '';
     };
-    var load = async function () {
-        if (btn) btn.disabled = true;
-        var previousList = lastSuccessfulData && Array.isArray(lastSuccessfulData.bridges) ? lastSuccessfulData.bridges.filter(function (b) { return !NetwatchShared.isNetwatchBridge(b); }) : [];
-        if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
-            state: lastSuccessfulData ? 'refreshing' : 'loading',
-            count: lastSuccessfulData ? previousList.length : null,
-            countLabel: i18n('apps_unit'),
-            generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at
-        });
-        document.getElementById('app-traffic-section')?.setAttribute('aria-busy', 'true');
-        try {
-            var ctrlEnabled = !!(state.settings && state.settings.container_control_enabled);
-            if (ctrlEnabled && window.__app.fetchContainers) {
-                await window.__app.fetchContainers().catch(function () {});
+    var updateRealtimeTrafficCells = function (list, showRealtime) {
+        if (!showRealtime || renderedTrafficMode !== true) return false;
+        var rows = new Map(Array.from(tbody.querySelectorAll('tr[data-app-row-key]')).map(function (row) {
+            return [row.dataset.appRowKey, row];
+        }));
+        if (rows.size !== list.length) return false;
+        for (var index = 0; index < list.length; index++) {
+            var item = list[index];
+            var row = rows.get(trafficRowKey(item, index));
+            if (!row) return false;
+            setTrafficCellHTML(row.querySelector('.col-rate'), appTrafficDualValue(item.upload_bps, item.download_bps, true));
+        }
+        if (state.appTrafficSort.key === 'rate') {
+            // Reorder existing rows without replacing them. This preserves
+            // hover/focus state for the action menu while keeping rate sort
+            // semantics correct.
+            var orderedRows = list.map(function (item, index) {
+                return rows.get(trafficRowKey(item, index));
+            });
+            var currentRows = Array.from(tbody.children);
+            var needsReorder = orderedRows.some(function (row, index) {
+                return currentRows[index] !== row;
+            });
+            if (needsReorder) {
+                var fragment = document.createDocumentFragment();
+                orderedRows.forEach(function (row) { fragment.appendChild(row); });
+                tbody.appendChild(fragment);
             }
+        }
+        return true;
+    };
+    var renderTraffic = function (data, options) {
+        options = options || {};
+        latestTrafficData = data;
+        var list = Array.isArray(data.apps) ? data.apps.slice() : [];
+        var showRealtime = syncAppTrafficRealtimeColumn();
+        updateSortHeaders();
+        var key = state.appTrafficSort.key;
+        var direction = state.appTrafficSort.direction;
+        list.sort(function (a, b) { return sortAppTrafficRows(a, b, key, direction); });
+        var structureSignature = trafficStructureSignature(list, showRealtime, data);
+        if (options.realtimeOnly && structureSignature === lastTrafficStructureSignature && updateRealtimeTrafficCells(list, showRealtime)) {
+            updateTrafficStatus(data, list);
+            return;
+        }
+        var signature = trafficRenderSignature(list, showRealtime, data);
+        if (signature === lastTrafficRenderSignature) {
+            updateTrafficStatus(data, list);
+            return;
+        }
+        lastTrafficRenderSignature = signature;
+        lastTrafficStructureSignature = structureSignature;
+        if (list.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="' + (showRealtime ? 7 : 6) + '" class="placeholder">' + i18n('no_app_data') + '</td></tr>';
+            renderedTrafficMode = showRealtime;
+        } else {
+            if (renderedTrafficMode !== showRealtime || tbody.querySelector('.placeholder')) tbody.replaceChildren();
+            var existingRows = new Map(Array.from(tbody.querySelectorAll('tr[data-app-row-key]')).map(function (row) {
+                return [row.dataset.appRowKey, row];
+            }));
+            var fragment = document.createDocumentFragment();
+            list.forEach(function (item, index) {
+                var row = existingRows.get(trafficRowKey(item, index));
+                if (!row) row = createTrafficRow(item, showRealtime);
+                updateTrafficRow(row, item, showRealtime, data, index);
+                fragment.appendChild(row);
+            });
+            tbody.replaceChildren(fragment);
+            renderedTrafficMode = showRealtime;
+        }
+        updateTrafficStatus(data, list);
+    };
+
+    function appTrafficIconKey(item) {
+        return String((item && (item.app_id || item.project || item.app_title)) || '').trim();
+    }
+
+    // `error` does not bubble, so capture it on the table before the first
+    // render. This also catches a cached failure that fires immediately.
+    tbody.addEventListener('error', function (event) {
+        var image = event.target;
+        if (!image || !image.matches || !image.matches('img.app-icon')) return;
+        var key = image.dataset.appIconKey || '';
+        var url = image.getAttribute('src') || '';
+        if (key && url) failedAppIcons[key] = { url: url, at: Date.now() };
+        image.style.display = 'none';
+    }, true);
+    var load = async function (options) {
+        options = options || {};
+        if (trafficLoading) return;
+        trafficLoading = true;
+        var silent = !!options.silent;
+        if (btn && !silent) btn.disabled = true;
+        if (statusEl && !silent) NetwatchShared.setObservationStatus(statusEl, {
+            state: latestTrafficData ? 'refreshing' : 'loading'
+        });
+        if (!silent) document.getElementById('app-traffic-section')?.setAttribute('aria-busy', 'true');
+        try {
             var trafficData = await netwatchGet('/api/v1/network/app-traffic');
-            lastSuccessfulData = trafficData;
-            renderTraffic(trafficData);
+            renderTraffic(trafficData, { realtimeOnly: silent });
         } catch (e) {
             if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
                 state: 'error',
-                count: lastSuccessfulData ? previousList.length : null,
-                countLabel: i18n('apps_unit'),
-                generatedAt: lastSuccessfulData && lastSuccessfulData.generated_at,
                 error: e.message
             });
         } finally {
-            if (btn) btn.disabled = false;
-            document.getElementById('app-traffic-section')?.removeAttribute('aria-busy');
+            trafficLoading = false;
+            if (btn && !silent) btn.disabled = false;
+            if (!silent) document.getElementById('app-traffic-section')?.removeAttribute('aria-busy');
         }
     };
     window.__app.refreshAppTraffic = load;
 
-    // Event delegation for container action buttons
-    document.addEventListener('click', function (e) {
-        if (window.__app.handleContainerAction) {
-            window.__app.handleContainerAction(e);
+    var appForID = function (instanceID) {
+        var apps = latestTrafficData && Array.isArray(latestTrafficData.apps) ? latestTrafficData.apps : [];
+        return apps.find(function (item) { return appTrafficInstanceID(item) === instanceID; }) || null;
+    };
+    var closeLimit = function () {
+        if (limitWindow) limitWindow.classList.remove('active');
+        if (limitBackdrop) limitBackdrop.classList.remove('active');
+        activeLimitAppID = '';
+        NetwatchShared.unlockModalScroll();
+    };
+    var openLimit = function (item) {
+        var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+        var blocked = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.internet_allowed === false;
+        var proxyEnabled = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.proxy_enabled === true;
+        if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && proxyEnabled) || capabilities.upload_limit !== true || capabilities.download_limit !== true || !limitWindow) return;
+        activeMenuAppID = '';
+        activeLimitAppID = appTrafficInstanceID(item);
+        updateTrafficMenus();
+        var limit = item.limit || {};
+        if (limitTitle) limitTitle.textContent = i18n('app_traffic_limit') + ' · ' + appTrafficDisplayName(item);
+        if (limitNote) limitNote.textContent = appTrafficInstanceCaption(item);
+        appTrafficShowLimitError(limitError, '');
+        if (limitUpload) limitUpload.value = appTrafficNumber(limit.upload_kbps) ? appTrafficNumber(limit.upload_kbps) / 1000 : '';
+        if (limitDownload) limitDownload.value = appTrafficNumber(limit.download_kbps) ? appTrafficNumber(limit.download_kbps) / 1000 : '';
+        appTrafficSetLimitInputValidity(limitUpload);
+        appTrafficSetLimitInputValidity(limitDownload);
+        if (limitBackdrop) limitBackdrop.classList.add('active');
+        limitWindow.classList.add('active');
+        NetwatchShared.lockModalScroll();
+        setTimeout(function () { if (limitUpload) limitUpload.focus(); }, 0);
+    };
+    var closeProxy = function () {
+        if (proxyWindow) proxyWindow.classList.remove('active');
+        if (proxyBackdrop) proxyBackdrop.classList.remove('active');
+        activeProxyAppID = '';
+        NetwatchShared.unlockModalScroll();
+    };
+    var openProxy = function (item) {
+        var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+        var blocked = item && item.network_policy && item.network_policy.desired && item.network_policy.desired.internet_allowed === false;
+        if (!item || !item.app_id || blocked || (appTrafficHasHostTarget(item) && appTrafficHasLimit(item)) || capabilities.proxy_control !== true || !proxyWindow) return;
+        activeMenuAppID = '';
+        activeProxyAppID = appTrafficInstanceID(item);
+        updateTrafficMenus();
+		var config = item.network_policy.proxy_settings || state.settings.app_proxy || {};
+        if (proxyTitle) proxyTitle.textContent = i18n('app_proxy_set') + ' · ' + appTrafficDisplayName(item);
+        if (proxyNote) proxyNote.textContent = appTrafficInstanceCaption(item);
+        if (proxyProtocol) {
+            proxyProtocol.value = config.protocol || 'socks5';
+            if (window.syncCustomSelect) window.syncCustomSelect(proxyProtocol);
         }
+        if (proxyHost) {
+            proxyHost.value = config.host || '127.0.0.1';
+            proxyHost.setAttribute('aria-invalid', 'false');
+        }
+        if (proxyPort) {
+            proxyPort.value = String(config.port || 7890);
+            proxyPort.setAttribute('aria-invalid', 'false');
+        }
+        appTrafficShowLimitError(proxyError, '');
+        if (proxyBackdrop) proxyBackdrop.classList.add('active');
+        proxyWindow.classList.add('active');
+        NetwatchShared.lockModalScroll();
+        setTimeout(function () { if (proxyHost) proxyHost.focus(); }, 0);
+    };
+
+    tbody.addEventListener('click', async function (e) {
+        var action = e.target.closest('[data-action]');
+        if (!action) return;
+        e.stopPropagation();
+        var appID = action.dataset.appId || '';
+        var instanceID = action.dataset.instanceId || appID;
+        if (action.dataset.action === 'traffic-more') {
+            activeMenuAppID = activeMenuAppID === instanceID ? '' : instanceID;
+            updateTrafficMenus();
+        } else if (action.dataset.action === 'traffic-limit') {
+			openLimit(appForID(instanceID));
+		} else if (action.dataset.action === 'traffic-network') {
+            var item = appForID(instanceID);
+            if (!item) return;
+            action.disabled = true;
+            try {
+                await appTrafficSetInternetAccess(item, action.dataset.networkState === 'restore');
+                NetwatchShared.showToast(i18n('app_traffic_network_updated'), 'success');
+                activeMenuAppID = '';
+                updateTrafficMenus();
+                await load();
+			} catch (error) {
+                NetwatchShared.showToast(i18n('operation_failed') + ': ' + (error.message || ''), 'error');
+                action.disabled = false;
+			}
+        } else if (action.dataset.action === 'traffic-proxy') {
+            var proxyItem = appForID(instanceID);
+            if (!proxyItem) return;
+            if (action.dataset.proxyState === 'enable') {
+                openProxy(proxyItem);
+                return;
+            }
+            action.disabled = true;
+            try {
+                await netwatchPost('/api/v1/network/app-policy', {
+                    app_id: appID,
+                    instance_id: instanceID,
+                    proxy_enabled: false
+                });
+                NetwatchShared.showToast(i18n('app_proxy_updated'), 'success');
+                activeMenuAppID = '';
+                updateTrafficMenus();
+                await load();
+            } catch (error) {
+                NetwatchShared.showToast(i18n('operation_failed') + ': ' + (error.message || ''), 'error');
+                action.disabled = false;
+            }
+        }
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!activeMenuAppID || e.target.closest('.app-traffic-action-menu')) return;
+        activeMenuAppID = '';
+        updateTrafficMenus();
+    });
+
+    if (limitForm) limitForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (!activeLimitAppID) return;
+        var upload = appTrafficLimitInputValue(limitUpload);
+        var download = appTrafficLimitInputValue(limitDownload);
+        appTrafficSetLimitInputValidity(limitUpload);
+        appTrafficSetLimitInputValidity(limitDownload);
+        if (upload === null || download === null) {
+            appTrafficShowLimitError(limitError, i18n('app_traffic_limit_invalid'));
+            return;
+        }
+        appTrafficShowLimitError(limitError, '');
+        var submit = limitForm.querySelector('[type="submit"]');
+        if (submit) submit.disabled = true;
+        try {
+            var limitItem = appForID(activeLimitAppID);
+            if (!limitItem) throw new Error('application instance is no longer available');
+            await netwatchPost('/api/v1/network/app-policy', {
+                app_id: limitItem.app_id,
+                instance_id: appTrafficInstanceID(limitItem),
+                upload_kbps: Math.round(upload * 1000),
+                download_kbps: Math.round(download * 1000)
+            });
+            NetwatchShared.showToast(i18n('app_traffic_limit_saved'), 'success');
+            closeLimit();
+            await load();
+        } catch (error) {
+            NetwatchShared.showToast(i18n('operation_failed') + ': ' + (error.message || ''), 'error');
+        } finally {
+            if (submit) submit.disabled = false;
+        }
+    });
+    if (proxyForm) proxyForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (!activeProxyAppID) return;
+        var config = {
+            protocol: (proxyProtocol && proxyProtocol.value) || 'socks5',
+            host: String(proxyHost && proxyHost.value || '').trim(),
+            port: Number(proxyPort && proxyPort.value)
+        };
+        var hostValid = !!config.host;
+        var portValid = Number.isInteger(config.port) && config.port >= 1 && config.port <= 65535 && (!proxyPort || proxyPort.validity.valid);
+        if (proxyHost) proxyHost.setAttribute('aria-invalid', hostValid ? 'false' : 'true');
+        if (proxyPort) proxyPort.setAttribute('aria-invalid', portValid ? 'false' : 'true');
+        if (!hostValid || !portValid) {
+            appTrafficShowLimitError(proxyError, i18n('app_proxy_invalid'));
+            return;
+        }
+        appTrafficShowLimitError(proxyError, '');
+        var submit = proxyForm.querySelector('[type="submit"]');
+        if (submit) submit.disabled = true;
+        try {
+			var proxyItem = appForID(activeProxyAppID);
+			if (!proxyItem) throw new Error('application instance is no longer available');
+			await netwatchPost('/api/v1/network/app-policy', {
+				app_id: proxyItem.app_id,
+				instance_id: appTrafficInstanceID(proxyItem),
+				proxy_enabled: true,
+				proxy_settings: config
+            });
+            NetwatchShared.showToast(i18n('app_proxy_updated'), 'success');
+            closeProxy();
+            await load();
+        } catch (error) {
+            appTrafficShowLimitError(proxyError, error.message || i18n('operation_failed'));
+            NetwatchShared.showToast(i18n('operation_failed') + ': ' + (error.message || ''), 'error');
+        } finally {
+            if (submit) submit.disabled = false;
+        }
+    });
+    var closeLimitButton = document.getElementById('close-app-traffic-limit-window');
+    if (closeLimitButton) closeLimitButton.addEventListener('click', closeLimit);
+    if (limitBackdrop) limitBackdrop.addEventListener('click', closeLimit);
+    var closeProxyButton = document.getElementById('close-app-traffic-proxy-window');
+    if (closeProxyButton) closeProxyButton.addEventListener('click', closeProxy);
+    if (proxyBackdrop) proxyBackdrop.addEventListener('click', closeProxy);
+    [proxyHost, proxyPort].forEach(function (input) {
+        if (input) input.addEventListener('input', function () {
+            input.setAttribute('aria-invalid', 'false');
+            appTrafficShowLimitError(proxyError, '');
+        });
+    });
+    [limitUpload, limitDownload].forEach(function (input) {
+        if (input) input.addEventListener('input', function () {
+            if (appTrafficSetLimitInputValidity(input)) {
+                if (appTrafficLimitInputValue(limitUpload) !== null && appTrafficLimitInputValue(limitDownload) !== null) {
+                    appTrafficShowLimitError(limitError, '');
+                }
+                return;
+            }
+            appTrafficShowLimitError(limitError, i18n('app_traffic_limit_invalid'));
+        });
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        if (limitWindow && limitWindow.classList.contains('active')) closeLimit();
+        if (proxyWindow && proxyWindow.classList.contains('active')) closeProxy();
     });
 
     sortButtons.forEach(function (button) {
@@ -174,9 +552,192 @@ function initAppTraffic() {
         });
     });
     updateSortHeaders();
-    if (btn) btn.addEventListener('click', load);
+    if (btn) btn.addEventListener('click', function () { load(); });
+    window.__app.updateAppTrafficRealtime = function () {
+        if (state.appTrafficRealtimeTimer) {
+            clearInterval(state.appTrafficRealtimeTimer);
+            state.appTrafficRealtimeTimer = null;
+        }
+        var enabled = syncAppTrafficRealtimeColumn();
+        if (latestTrafficData) renderTraffic(latestTrafficData);
+        if (document.hidden || !enabled) return;
+        state.appTrafficRealtimeTimer = setInterval(function () { load({ silent: true }); }, 2000);
+    };
+    document.addEventListener('visibilitychange', function () {
+        window.__app.updateAppTrafficRealtime();
+        if (!document.hidden && state.settings.app_traffic_realtime_enabled !== false) load({ silent: true });
+    });
+    window.__app.updateAppTrafficRealtime();
     load();
 
+}
+
+function appTrafficNumber(value) {
+    return Number(value) || 0;
+}
+
+function appTrafficInstanceID(item) {
+    return String(item && (item.instance_id || item.app_id) || '').trim();
+}
+
+function appTrafficDisplayName(item) {
+    if (!item) return '';
+    var name = item.app_title || item.app_id || item.project || '';
+    var instanceLabel = item.multi_instance && (item.user_id || item.project);
+    if (instanceLabel) name += '（' + instanceLabel + '）';
+    return name;
+}
+
+function appTrafficInstanceCaption(item) {
+    if (!item) return '';
+    var instanceLabel = item.multi_instance && (item.user_id || item.project);
+    return instanceLabel ? item.app_id + ' · ' + instanceLabel : item.app_id;
+}
+
+function appTrafficPeriod(item, period) {
+    return appTrafficNumber(item[period + '_upload']) + appTrafficNumber(item[period + '_download']);
+}
+
+function appTrafficRate(item) {
+    return appTrafficNumber(item.upload_bps) + appTrafficNumber(item.download_bps);
+}
+
+function formatAppTrafficLimit(kbps) {
+    kbps = Math.max(0, Math.round(appTrafficNumber(kbps)));
+    var mbps = kbps / 1000;
+    return mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1).replace(/\.0$/, '');
+}
+
+function appTrafficCompactStatusLabel(key, zhFallback, enFallback) {
+    var value = i18n(key);
+    if (!value || value === key) {
+        var lang = String(document.documentElement && document.documentElement.lang || '').toLowerCase();
+        return lang.indexOf('en') === 0 ? enFallback : zhFallback;
+    }
+    return value;
+}
+
+function appTrafficControlStatusMarkup(item) {
+    var parts = [];
+    var limit = item && item.limit || {};
+    var uploadLimit = appTrafficNumber(limit.upload_kbps);
+    var downloadLimit = appTrafficNumber(limit.download_kbps);
+    var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+    var policy = item && item.network_policy || {};
+    if ((uploadLimit > 0 || downloadLimit > 0) && capabilities.upload_limit === true && capabilities.download_limit === true) {
+        var limitValues = [];
+        if (uploadLimit > 0) limitValues.push('↑ ' + formatAppTrafficLimit(uploadLimit));
+        if (downloadLimit > 0) limitValues.push('↓ ' + formatAppTrafficLimit(downloadLimit));
+        var limitStatusLabel = appTrafficCompactStatusLabel('app_traffic_limit_status', '限速', 'Limited');
+        var limitInSync = policy.limit_in_sync !== false;
+        var limitTitle = limitInSync ? i18n('app_traffic_limit') : (policy.diagnostic || i18n('app_traffic_limit'));
+        parts.push('<span class="app-control-status app-control-status-limit' + (limitInSync ? '' : ' app-control-status--drifted') + '" title="' + NetwatchShared.escapeHtml(limitTitle) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(limitStatusLabel) + '</span></span>' +
+            '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
+    }
+    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
+    if (blocked) {
+        var blockedStatusLabel = appTrafficCompactStatusLabel('app_traffic_internet_disabled_status', '禁用外网', 'Internet blocked');
+        parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(blockedStatusLabel) + '</span></span></span>');
+	}
+    var proxyEnabled = policy.desired && policy.desired.proxy_enabled === true;
+    if (proxyEnabled) {
+        var proxyPaused = policy.proxy_state === 'paused';
+        var proxyLabel = appTrafficCompactStatusLabel(proxyPaused ? 'app_proxy_paused_status' : 'app_proxy_status', proxyPaused ? '代理暂停' : '代理', proxyPaused ? 'Proxy paused' : 'Proxy');
+        parts.push('<span class="app-control-status app-control-status-proxy' + (policy.proxy_in_sync === false ? ' app-control-status--drifted' : '') + '" title="' + NetwatchShared.escapeHtml(proxyPaused ? i18n('app_proxy_paused') : i18n('app_proxy_enabled')) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(proxyLabel) + '</span></span></span>');
+    }
+    return parts.length ? '<div class="app-control-status-row">' + parts.join('') + '</div>' : '';
+}
+
+function appTrafficHasHostTarget(item) {
+    var modes = item && Array.isArray(item.network_modes) ? item.network_modes : [];
+    if (modes.some(function (mode) { return String(mode).toLowerCase() === 'host'; })) return true;
+    var targets = item && Array.isArray(item.network_targets) ? item.network_targets : [];
+    return targets.some(function (target) {
+        return target && (target.kind === 'cgroup' || target.network_mode === 'host');
+    });
+}
+
+function appTrafficHasLimit(item) {
+    var limit = item && item.limit || {};
+    return appTrafficNumber(limit.upload_kbps) > 0 || appTrafficNumber(limit.download_kbps) > 0;
+}
+
+function appTrafficMoreMenu(item, limitSupported, activeAppID) {
+    var appID = item && item.app_id;
+    if (!appID) return '';
+    var instanceID = appTrafficInstanceID(item);
+    var policy = item.network_policy || {};
+    var capabilities = policy.capabilities || {};
+    var limitAllowed = capabilities.upload_limit === true && capabilities.download_limit === true;
+    var internetAllowed = capabilities.internet_control === true;
+    var proxyAllowed = capabilities.proxy_control === true;
+    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
+    var proxyEnabled = policy.desired && policy.desired.proxy_enabled === true;
+    var hostTarget = appTrafficHasHostTarget(item);
+    var limited = appTrafficHasLimit(item);
+    var showLimit = limitSupported && limitAllowed && !blocked && !(hostTarget && proxyEnabled);
+    var showProxy = proxyAllowed && (!blocked || proxyEnabled) && (proxyEnabled || !hostTarget || !limited);
+    var open = activeAppID === instanceID;
+    var identityAttrs = ' data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-instance-id="' + NetwatchShared.escapeHtml(instanceID) + '"';
+    var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more"' + identityAttrs + ' aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
+    if (!limitAllowed && !internetAllowed && !proxyAllowed) return '';
+    if (!open) return '<div class="app-traffic-action-menu">' + menu + '</div>';
+    var panel = '<div class="app-traffic-more-panel" role="menu">';
+    // The experimental switch gates Host/Mixed policing; read-only accounting
+    // stays active regardless of that setting.
+	if (showLimit) {
+        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit"' + identityAttrs + '><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
+	}
+    if (showProxy) {
+        if (showLimit) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
+        panel += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy"' + identityAttrs + ' data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
+    }
+    if (internetAllowed) {
+        if (showLimit || showProxy) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
+        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network"' + identityAttrs + ' data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
+    }
+    return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
+}
+
+async function appTrafficSetInternetAccess(item, restore) {
+    var capabilities = item && item.network_policy && item.network_policy.capabilities || {};
+    if (!item || !item.app_id || capabilities.internet_control !== true) throw new Error('internet control is not allowed');
+    await netwatchPost('/api/v1/network/app-policy', {
+        app_id: item.app_id,
+        instance_id: appTrafficInstanceID(item),
+        internet_allowed: restore === true
+    });
+}
+
+function appTrafficDualValue(upload, download, rate) {
+    var format = rate ? function (v) { return window.__app.formatBitsPerSec(appTrafficNumber(v)); } : NetwatchShared.formatBytes;
+    return '<div class="app-traffic-direction"><span class="app-traffic-value">' + format(appTrafficNumber(upload)) + '</span><span class="app-traffic-dir up">↑</span></div>' +
+        '<div class="app-traffic-direction"><span class="app-traffic-value">' + format(appTrafficNumber(download)) + '</span><span class="app-traffic-dir down">↓</span></div>';
+}
+
+function appTrafficLimitInputValue(input) {
+    if (!input) return 0;
+    var raw = String(input.value || '').trim();
+    if (raw === '') return 0;
+    var value = Number(raw);
+    if (!Number.isFinite(value) || value < 0 || value > 10000 || !input.validity.valid) return null;
+    return value;
+}
+
+function appTrafficSetLimitInputValidity(input) {
+    if (!input) return true;
+    var valid = appTrafficLimitInputValue(input) !== null;
+    input.setAttribute('aria-invalid', valid ? 'false' : 'true');
+    return valid;
+}
+
+function appTrafficShowLimitError(el, message) {
+    if (!el) return;
+    el.textContent = message || '';
+    el.hidden = !message;
 }
 
 
@@ -483,4 +1044,7 @@ window.__app.initNICRealtime = initNICRealtime;
 window.__app.initTrace = initTrace;
 window.__app.updateNICRealtimeRefreshButton = updateNICRealtimeRefreshButton;
 window.__app.refreshAppTrafficSoon = refreshAppTrafficSoon;
+window.__app.appTrafficHasHostTarget = appTrafficHasHostTarget;
+window.__app.appTrafficHasLimit = appTrafficHasLimit;
+window.__app.appTrafficMoreMenu = appTrafficMoreMenu;
 })();

@@ -254,6 +254,10 @@ window.NetwatchShared = (function () {
         var promise = (async function () {
             var Gateway = window.lzcAPIGateway || (window.LazycatSDK && window.LazycatSDK.lzcAPIGateway);
             if (!Gateway) {
+                await loadLazycatSDK();
+                Gateway = window.lzcAPIGateway || (window.LazycatSDK && window.LazycatSDK.lzcAPIGateway);
+            }
+            if (!Gateway) {
                 throw new Error('Lazycat SDK not loaded');
             }
             return new Gateway(window.location.origin, false);
@@ -263,6 +267,24 @@ window.NetwatchShared = (function () {
             promise.catch(function () { state.lzcGatewayPromise = null; });
         }
         return promise;
+    }
+
+    function loadLazycatSDK() {
+        if (window.LazycatSDK || window.lzcAPIGateway) return Promise.resolve();
+        if (window.__netwatchLazycatSDKPromise) return window.__netwatchLazycatSDKPromise;
+        window.__netwatchLazycatSDKPromise = new Promise(function (resolve, reject) {
+            var script = document.createElement('script');
+            script.src = '/vendor/lazycat-sdk.js';
+            script.async = true;
+            script.onload = function () { resolve(); };
+            script.onerror = function () {
+                window.__netwatchLazycatSDKPromise = null;
+                script.remove();
+                reject(new Error('Lazycat SDK load failed'));
+            };
+            document.head.appendChild(script);
+        });
+        return window.__netwatchLazycatSDKPromise;
     }
 
     function getLazycatAppCommon() {
@@ -501,23 +523,33 @@ window.NetwatchShared = (function () {
     function initTheme(state, themeToggleEl) {
         var theme = localStorage.getItem('theme');
         if (!theme) {
-            theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            theme = 'light';
         }
         if (state) state.theme = theme;
         document.documentElement.setAttribute('data-theme', theme);
         var meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.content = theme === 'dark' ? '#0a0a0b' : '#f0f2f5';
+        if (meta) meta.content = theme === 'dark' ? '#202124' : '#F5F6F7';
         applyThemeToggleIcon(themeToggleEl, theme);
         if (themeToggleEl && !themeToggleEl.dataset.themeBound) {
             themeToggleEl.dataset.themeBound = '1';
             themeToggleEl.addEventListener('click', function () {
                 var newTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                var root = document.documentElement;
+                root.classList.remove('theme-transition');
+                void root.offsetWidth;
+                root.classList.add('theme-transition');
                 document.documentElement.setAttribute('data-theme', newTheme);
                 localStorage.setItem('theme', newTheme);
                 if (state) state.theme = newTheme;
                 var m = document.querySelector('meta[name="theme-color"]');
-                if (m) m.content = newTheme === 'dark' ? '#0a0a0b' : '#f0f2f5';
+                if (m) m.content = newTheme === 'dark' ? '#202124' : '#F5F6F7';
                 applyThemeToggleIcon(themeToggleEl, newTheme);
+                clearTimeout(state && state.themeTransitionTimer);
+                if (state) {
+                    state.themeTransitionTimer = setTimeout(function () {
+                        root.classList.remove('theme-transition');
+                    }, 280);
+                }
             });
         }
     }

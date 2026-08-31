@@ -2,7 +2,7 @@ window.__app = window.__app || {};
 
 (function () {
 var state = {
-    theme: localStorage.getItem('theme') || 'dark',
+    theme: localStorage.getItem('theme') || 'light',
     refreshInterval: 10,
     lastRefreshTime: Date.now(),
     timerInterval: null,
@@ -19,10 +19,12 @@ var state = {
     },
     settings: {
         refresh_interval_sec: 10,
-        broadband_domestic_only: true,
         nic_realtime_enabled: true,
         nic_realtime_interval_sec: 1,
         chart_time_label_interval: 0,
+        app_traffic_realtime_enabled: true,
+		host_network_experimental_enabled: false,
+		app_proxy: { protocol: 'socks5', host: '127.0.0.1', port: 7890 },
         per_app_sampling_interval: {},
         persistent_traffic_bridges: [],
         background_monitor_enabled: false,
@@ -50,6 +52,14 @@ var state = {
     activeWindow: null,
     runningTest: null,
     broadbandPoller: null,
+    broadbandMode: ['client', 'server', 'port-policy'].indexOf(localStorage.getItem('netwatch_broadband_mode_v2')) >= 0
+        ? localStorage.getItem('netwatch_broadband_mode_v2')
+        : 'server',
+    broadbandWorker: null,
+    broadbandPortPolicyPoller: null,
+    broadbandPortPolicyPollInFlight: false,
+    broadbandPortPolicyPollGeneration: 0,
+    broadbandNodes: [],
     transferAbortController: null,
     sse: null,
     initialized: false,
@@ -68,6 +78,7 @@ var state = {
         key: 'total',
         direction: 'desc'
     },
+    appTrafficRealtimeTimer: null,
     hostPortsSort: {
         key: 'port',
         direction: 'asc'
@@ -79,7 +90,6 @@ window.__app.state = state;
 
 var els = {
     themeToggle: document.getElementById('theme-toggle'),
-    refreshBtn: document.getElementById('refresh-btn'),
     overlay: document.getElementById('loading-overlay'),
     websiteRefreshBtn: document.getElementById('website-refresh-btn'),
     websiteStatus: document.getElementById('website-status'),
@@ -98,15 +108,20 @@ var els = {
     interfacesStatus: document.getElementById('interfaces-status'),
     nicRealtimeStatus: document.getElementById('nic-realtime-status'),
     backdrop: document.getElementById('window-backdrop'),
+    speedHistoryBackdrop: document.getElementById('speed-history-backdrop'),
     traceBackdrop: document.getElementById('trace-window-backdrop'),
     dnsDiagBackdrop: document.getElementById('dns-diag-window-backdrop'),
     openSettingsWindow: document.getElementById('open-settings-window'),
     openBroadbandWindow: document.getElementById('open-broadband-window'),
     openTransferWindow: document.getElementById('open-transfer-window'),
+    openBroadbandHistory: document.getElementById('open-broadband-history'),
+    openTransferHistory: document.getElementById('open-transfer-history'),
     openNetworkConfigWindow: document.getElementById('open-network-config-window'),
     closeSettingsWindow: document.getElementById('close-settings-window'),
     closeBroadbandWindow: document.getElementById('close-broadband-window'),
     closeTransferWindow: document.getElementById('close-transfer-window'),
+    closeBroadbandHistoryWindow: document.getElementById('close-broadband-history-window'),
+    closeTransferHistoryWindow: document.getElementById('close-transfer-history-window'),
     closeNetworkConfigWindow: document.getElementById('close-network-config-window'),
     closeTraceWindow: document.getElementById('close-trace-window'),
     openDNSDiagWindow: document.getElementById('open-dns-diag-window'),
@@ -114,6 +129,8 @@ var els = {
     settingsWindow: document.getElementById('settings-window'),
     broadbandWindow: document.getElementById('broadband-window'),
     transferWindow: document.getElementById('transfer-window'),
+    broadbandHistoryWindow: document.getElementById('broadband-history-window'),
+    transferHistoryWindow: document.getElementById('transfer-history-window'),
     networkConfigWindow: document.getElementById('network-config-window'),
     traceWindow: document.getElementById('trace-window'),
     dnsDiagWindow: document.getElementById('dns-diag-window'),
@@ -122,12 +139,12 @@ var els = {
     ipv6RenewWindow: document.getElementById('ipv6-renew-window'),
     ipv6RenewBackdrop: document.getElementById('ipv6-renew-window-backdrop'),
     saveSettings: document.getElementById('save-settings'),
-    settingBroadbandDomesticOnly: document.getElementById('setting-broadband-domestic-only'),
     settingNICRealtimeEnabled: document.getElementById('setting-nic-realtime-enabled'),
     settingNICRealtimeIntervalSec: document.getElementById('setting-nic-realtime-interval-sec'),
     settingBackgroundMonitorEnabled: document.getElementById('setting-background-monitor-enabled'),
     settingBackgroundMonitorIntervalSec: document.getElementById('setting-background-monitor-interval-sec'),
-    settingContainerControlEnabled: document.getElementById('setting-container-control-enabled'),
+	settingAppTrafficRealtimeEnabled: document.getElementById('setting-app-traffic-realtime-enabled'),
+	settingHostNetworkExperimentalEnabled: document.getElementById('setting-host-network-experimental-enabled'),
     settingNotificationsEnabled: document.getElementById('setting-notifications-enabled'),
     settingClientNotificationEnabled: document.getElementById('setting-client-notification-enabled'),
     settingNotifyAbnormalTraffic: document.getElementById('setting-notify-abnormal-traffic'),
@@ -163,10 +180,6 @@ var els = {
     broadbandUpload: document.getElementById('broadband-upload'),
     broadbandLatency: document.getElementById('broadband-latency'),
     broadbandJitter: document.getElementById('broadband-jitter'),
-    broadbandNodeName: document.getElementById('broadband-node-name'),
-    broadbandNodeProvider: document.getElementById('broadband-node-provider'),
-    broadbandNodeRegion: document.getElementById('broadband-node-region'),
-    broadbandSteps: document.getElementById('broadband-steps'),
     transferPrimaryMode: document.getElementById('transfer-primary-mode'),
     transferPrimaryCaption: document.getElementById('transfer-primary-caption'),
     transferDownload: document.getElementById('transfer-download'),
@@ -174,7 +187,28 @@ var els = {
     transferLatency: document.getElementById('transfer-latency'),
     transferJitter: document.getElementById('transfer-jitter'),
     broadbandHistory: document.getElementById('broadband-history'),
-    transferHistory: document.getElementById('transfer-history')
+    clearBroadbandHistory: document.getElementById('clear-broadband-history'),
+    broadbandModeClient: document.getElementById('broadband-mode-client'),
+    broadbandModeServer: document.getElementById('broadband-mode-server'),
+    broadbandModePortPolicy: document.getElementById('broadband-mode-port-policy'),
+    broadbandNodeSelect: document.getElementById('broadband-node-select'),
+    broadbandNodeRefresh: document.getElementById('broadband-node-refresh'),
+    broadbandNodeStatus: document.getElementById('broadband-node-status'),
+    broadbandPublicControls: document.getElementById('broadband-public-controls'),
+    broadbandPortPolicyLowPort: document.getElementById('broadband-port-policy-low-port'),
+    broadbandPortPolicyHighPort: document.getElementById('broadband-port-policy-high-port'),
+    broadbandStandardResults: document.getElementById('broadband-standard-results'),
+    broadbandPortPolicyResults: document.getElementById('broadband-port-policy-results'),
+    broadbandPortPolicyLowDownload: document.getElementById('broadband-port-policy-low-download'),
+    broadbandPortPolicyLowUpload: document.getElementById('broadband-port-policy-low-upload'),
+    broadbandPortPolicyLowLatency: document.getElementById('broadband-port-policy-low-latency'),
+    broadbandPortPolicyLowJitter: document.getElementById('broadband-port-policy-low-jitter'),
+    broadbandPortPolicyHighDownload: document.getElementById('broadband-port-policy-high-download'),
+    broadbandPortPolicyHighUpload: document.getElementById('broadband-port-policy-high-upload'),
+    broadbandPortPolicyHighLatency: document.getElementById('broadband-port-policy-high-latency'),
+    broadbandPortPolicyHighJitter: document.getElementById('broadband-port-policy-high-jitter'),
+    transferHistory: document.getElementById('transfer-history'),
+    clearTransferHistory: document.getElementById('clear-transfer-history')
 };
 window.__app.els = els;
 
@@ -203,9 +237,6 @@ var broadbandFailureStageMap = {
     timeout: i18n('timeout')
 };
 window.__app.broadbandFailureStageMap = broadbandFailureStageMap;
-
-var broadbandStepIcon = { ok: '\u2713', fail: '\u2717', running: '\u27F3', info: '\u2022' };
-window.__app.broadbandStepIcon = broadbandStepIcon;
 
 var inlineSiteIcons = {
     baidu: 'data:image/png;base64,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',
@@ -342,9 +373,9 @@ function setPrimaryStatus(modeEl, captionEl, mode, caption) {
     if (modeEl) {
         modeEl.textContent = mode;
         modeEl.classList.remove('active', 'done', 'error');
-        if (mode === 'Download' || mode === 'Upload' || mode === 'Ping') modeEl.classList.add('active');
+        if (mode === 'Download' || mode === 'Upload' || mode === 'Ping' || mode === 'Testing') modeEl.classList.add('active');
         else if (mode === 'Result') modeEl.classList.add('done');
-        else if (mode === 'Stopped') modeEl.classList.add('error');
+        else if (mode === 'Stopped' || mode === 'Error') modeEl.classList.add('error');
     }
     if (captionEl) captionEl.textContent = caption || '';
 }
@@ -531,11 +562,15 @@ function renderNetworkInfo(networkInfo) {
         } else {
             mainLabel = iface.label || ifaceFallbackLabel(iface.link_type) || iface.name || '\u2014\u2014\u2014';
         }
-        var subtitle = iface.name && iface.name !== mainLabel ? '<br><small style="color:var(--text-muted)">' + escapeHtml(iface.name) + '</small>' : '';
+        var subtitle = iface.name && iface.name !== mainLabel ? '<div class="iface-device-name">' + escapeHtml(iface.name) + '</div>' : '';
         var statusCell = formatDeviceStatus(iface.device_status);
+        var linkSpeed = formatInterfaceLinkSpeed(iface);
+        var speedTitle = iface.link_type === 'wifi' ? formatWiFiLinkSpeedTitle(iface) : i18n('link_speed_col');
+        var speedBadge = linkSpeed ? '<span class="iface-speed-badge" title="' + escapeHtml(speedTitle) + '">' + escapeHtml(linkSpeed) + '</span>' : '';
+        var interfaceCell = '<div class="iface-cell-value"><div class="iface-title-line"><span class="iface-primary">' + escapeHtml(mainLabel) + '</span>' + speedBadge + '</div>' + subtitle + '</div>';
         var ipv4List = (iface.ipv4 || []).filter(function (s) { return s; });
         var ipv6List = (iface.ipv6 || []).filter(function (s) { return !/^fe80:/i.test(s); });
-        return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + mainLabel + subtitle + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
+        return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + interfaceCell + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
     }).join('') || '<tr><td colspan="5" class="placeholder">' + i18n('no_target_nic') + '</td></tr>';
     NetwatchShared.setObservationStatus(els.interfacesStatus, {
         state: interfaces.length ? 'fresh' : 'empty',
@@ -547,31 +582,66 @@ function renderNetworkInfo(networkInfo) {
 }
 window.__app.renderNetworkInfo = renderNetworkInfo;
 
+function formatLinkSpeedMbps(value) {
+    var mbps = Number(value);
+    if (!Number.isFinite(mbps) || mbps <= 0) return '';
+    if (mbps < 1000) {
+        var roundedMbps = Math.round(mbps * 10) / 10;
+        return (Number.isInteger(roundedMbps) ? roundedMbps.toFixed(0) : roundedMbps.toFixed(1)) + ' Mbit/s';
+    }
+    var gbps = mbps / 1000;
+    return (Number.isInteger(gbps) ? gbps.toFixed(0) : gbps.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')) + ' Gbit/s';
+}
+window.__app.formatLinkSpeedMbps = formatLinkSpeedMbps;
+
+function formatInterfaceLinkSpeed(iface) {
+    iface = iface || {};
+    if (iface.link_type !== 'wifi') return formatLinkSpeedMbps(iface.link_speed_mbps);
+    return formatLinkSpeedMbps(iface.link_speed_tx_mbps) || formatLinkSpeedMbps(iface.link_speed_rx_mbps);
+}
+window.__app.formatInterfaceLinkSpeed = formatInterfaceLinkSpeed;
+
+function formatWiFiLinkSpeedTitle(iface) {
+    var details = [];
+    var rx = formatLinkSpeedMbps(iface && iface.link_speed_rx_mbps);
+    var tx = formatLinkSpeedMbps(iface && iface.link_speed_tx_mbps);
+    if (rx) details.push(i18n('wifi_link_speed_receive') + ' ' + rx);
+    if (tx) details.push(i18n('wifi_link_speed_transmit') + ' ' + tx);
+    return i18n('wifi_link_speed_title') + (details.length ? ': ' + details.join(', ') : '');
+}
+window.__app.formatWiFiLinkSpeedTitle = formatWiFiLinkSpeedTitle;
+
 function natLabel(type) {
     switch (type) {
-        case 'NAT1': return 'NAT1 - Full Cone';
+        case 'NAT1': return 'NAT1 - Public / Open';
         case 'NAT2': return 'NAT2 - Restricted Cone';
         case 'NAT3': return 'NAT3 - Port Restricted';
-        case 'NAT4': return 'NAT4 - Symmetric';
+		case 'NAT2_OR_NAT3': return 'NAT2 / NAT3 - Cone NAT';
+        case 'NAT4': return 'NAT4 - Symmetric-like';
         default: return i18n('unknown');
     }
 }
 
 var natExplain = {
-    NAT1: ['完全锥形', '极佳', '外部任何主机都可以通过映射的公网地址直接访问内网设备。客户端与微服直连场景最为友好。'],
+	NAT1: ['公网直连', '极佳', '本地 UDP 地址与公网映射一致，未观察到地址转换。'],
     NAT2: ['受限锥形', '良好', '外部主机必须先收到内网设备的请求后才能回复。安全性更高，客户端与微服直连仍可正常使用。'],
     NAT3: ['端口受限锥形', '一般', '不仅限制源 IP，还限制源端口。客户端与微服直连可能受到影响。'],
-    NAT4: ['对称型', '较差', '每个不同的目标地址和端口组合都会分配不同的映射。P2P 打洞极其困难，严重影响客户端与微服直连体验。']
+	NAT2_OR_NAT3: ['锥形 NAT', '待进一步区分', '不同 STUN 目标得到相同映射；普通 Binding 探测无法可靠区分 NAT2 与 NAT3。'],
+    NAT4: ['目标相关映射', '较差', '同一 UDP socket 面向不同目标时映射发生变化，符合对称型 NAT 特征。']
 };
 
 function renderNATInfo(nat) {
     nat = nat || {};
     if (els.natType) els.natType.textContent = natLabel(nat.type);
     var explain = natExplain[nat.type];
-    if (els.natMeta) els.natMeta.textContent = explain ? (explain[0] + ' / ' + explain[1]) : '';
-    if (els.natNote) els.natNote.textContent = explain ? explain[2] : '';
+	var meta = explain ? (explain[0] + ' / ' + explain[1]) : '';
+	if (nat.confidence) meta += (meta ? ' · ' : '') + String(nat.confidence).toUpperCase();
+    if (els.natMeta) els.natMeta.textContent = meta;
+	var note = nat.diagnostic || (explain ? explain[2] : '') || nat.note || '';
+	if (nat.proxy_affected && note.indexOf('代理') < 0) note += (note ? '；' : '') + '检测到代理 TUN，结果可能受分流规则影响';
+	if (els.natNote) els.natNote.textContent = note;
     NetwatchShared.setObservationStatus(els.natStatus, {
-        state: nat.type ? 'fresh' : (nat.error ? 'error' : 'empty'),
+		state: nat.generated_at ? 'fresh' : (nat.error ? 'error' : 'empty'),
         generatedAt: nat.generated_at,
         staleAfterSeconds: 900,
         error: nat.error
@@ -589,6 +659,7 @@ function updateWindowControls() {
     if (els.interfacesRefreshBtn) els.interfacesRefreshBtn.disabled = busy;
     els.runBroadbandTest.disabled = busy;
     els.runTransferTest.disabled = busy;
+    if (window.__app.updateBroadbandControls) window.__app.updateBroadbandControls();
 }
 window.__app.updateWindowControls = updateWindowControls;
 })();

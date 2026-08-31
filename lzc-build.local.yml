@@ -1,0 +1,31 @@
+buildscript: sh build.sh
+manifest: ./lzc-manifest.yml
+contentdir: ./dist
+pkgout: ./dist
+icon: ./lzc-icon.png
+compose_override:
+  services:
+    netwatch:
+      cap_add:
+        - NET_RAW
+        - NET_ADMIN
+        - SYS_ADMIN
+        - SYS_PTRACE
+        - SYS_RESOURCE
+        - BPF
+      pid: host
+      volumes:
+        - /sys:/host/sys:ro
+        - /proc:/host/proc:ro
+        - /sys/fs/bpf:/sys/fs/bpf
+        - /lzcsys/run/lzc-docker/docker.sock:/var/run/docker.sock:ro
+        - /lzcsys/data/system/pkgm/run:/lzcapp/run/pkgm:ro
+        - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+images:
+  netwatch:
+    builder: local
+    dockerfile: ./Dockerfile.local
+    context: .
+resource_exports:
+  - kind: skills
+    source: ./resources/skills

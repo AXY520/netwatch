@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +96,95 @@ func TestHandleLocalUploadRejectsOversizedBodies(t *testing.T) {
 	}
 }
 
+func TestHandleBroadbandStartRejectsInvalidPayload(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/broadband/server/start", strings.NewReader(`{"node_id":`))
+	rec := httptest.NewRecorder()
+
+	handler.handleBroadbandStart(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleBroadbandCatalogReturnsPublicNodes(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/speed/broadband/catalog", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleBroadbandCatalog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("node count = %d, want 2", len(got))
+	}
+	for i, node := range got {
+		if node["id"] != fmt.Sprintf("%d", i+1) || node["category"] != "cdn" {
+			t.Fatalf("node %d = %#v, want CDN node with id %d", i, node, i+1)
+		}
+	}
+}
+
+func TestHandleBroadbandClientResultRecordsHistory(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/broadband/client/result", strings.NewReader(`{"node_id":"1","node_name":"综合 CDN 1","node_category":"cdn","download_mbps":100,"upload_mbps":50,"latency_ms":10,"jitter_ms":2}`))
+	rec := httptest.NewRecorder()
+
+	handler.handleBroadbandClientResult(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got probe.BroadbandSpeedResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.TestMode != "client" || got.NodeID != "1" || got.Timestamp == "" {
+		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestHandleBroadbandClientResultRejectsInvalidPayload(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/broadband/client/result", strings.NewReader(`{"node_id":"1","download_mbps":-1}`))
+	rec := httptest.NewRecorder()
+
+	handler.handleBroadbandClientResult(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleBroadbandEndpointsRejectUnsupportedMethods(t *testing.T) {
+	handler := newTestHandler(t)
+	tests := []struct {
+		method  string
+		path    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{method: http.MethodPost, path: "/api/v1/speed/broadband/catalog", handler: handler.handleBroadbandCatalog},
+		{method: http.MethodGet, path: "/api/v1/speed/broadband/client/result", handler: handler.handleBroadbandClientResult},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			rec := httptest.NewRecorder()
+			tt.handler(rec, req)
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+			}
+		})
+	}
+}
+
 func TestHandleHealthReportsStartingUntilFirstProbe(t *testing.T) {
 	handler := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -135,6 +225,36 @@ func TestHandleNetworkMutationAuditRejectsUnsupportedMethods(t *testing.T) {
 	handler.handleNetworkMutationAudit(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandleNetworkConfigRestartRejectsUnsupportedMethods(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/config/restart", nil)
+	rec := httptest.NewRecorder()
+	handler.handleNetworkConfigRestart(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusMethodNotAllowed, rec.Body.String())
+	}
+}
+
+func TestHandleNetworkConfigRestartRejectsInvalidPayload(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/config/restart", strings.NewReader(`{"device":`))
+	rec := httptest.NewRecorder()
+	handler.handleNetworkConfigRestart(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleNetworkConfigRestartRequiresDevice(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/config/restart", strings.NewReader(`{"device":""}`))
+	rec := httptest.NewRecorder()
+	handler.handleNetworkConfigRestart(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
 
@@ -326,6 +446,20 @@ func TestHandleSpeedHistoryNoteRejectsLongNote(t *testing.T) {
 	handler.handleSpeedHistoryNote(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleSpeedHistoryClear(t *testing.T) {
+	handler := newTestHandler(t)
+	handler.service.RecordLocalTransferResult(probe.LocalTransferResult{DownloadMbps: 100, UploadMbps: 50})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/speed/history/clear", strings.NewReader(`{"kind":"local"}`))
+	rec := httptest.NewRecorder()
+	handler.handleSpeedHistoryClear(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if history := handler.service.GetLocalTransferHistory(); len(history) != 0 {
+		t.Fatalf("history = %+v, want empty", history)
 	}
 }
 

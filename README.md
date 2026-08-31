@@ -6,14 +6,15 @@ Netwatch 是面向懒猫微服的主机网络观测应用，用于查看网站�
 
 - 国内网站连通性：默认探测 `Baidu`、`Bilibili`
 - 国外网站连通性：默认探测 `GitHub`、`YouTube`
-- 本机网络信息：接口、地址、默认路由、DNS 等
+- 本机网络信息：接口、协商速率、地址、默认路由、DNS 等
 - 主机网络配置：通过懒猫 SDK 修改网卡 IP、网桥和 DNS，并支持超时自动回滚
 - 出口信息：公网 IPv4/IPv6、国内出口、地区识别
-- NAT 类型检测：基于 STUN 的手动探测
+- NAT 类型检测：复用同一 UDP socket 进行多 STUN 映射对比，不可达时返回未知而不冒充对称型 NAT
+- 代理环境判断：识别已知 Mihomo/Clash 等 TUN 网卡与进程代理环境变量，并提示 NAT 结果是否可能受代理影响
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
-- 应用流量：在懒猫环境中按 `lzc-br-*` 网桥展示应用流量
-- 宽带测速：基于 speedtest 节点执行下载/上传测速
-- 本机传输测速：浏览器到服务端的下载/上传/延迟测试
+- 应用网络控制：按应用聚合 Bridge/Host 流量，并支持限速、禁用外网和独立 HTTP/SOCKS5 代理
+- 宽带测速：分别测量用户设备直连公网、服务器出口直连公网的下载/上传/延迟
+- 传输测速：基于 LibreSpeed 测量浏览器到本项目服务端的下载/上传/延迟
 - 路由追踪：基于 `mtr` 的异步 trace 任务
 - 时序与历史：保存测速历史和网卡速率时序
 - 可选告警：出口 IP 或 NAT 变化时向 webhook 发送通知
@@ -49,6 +50,9 @@ application:
 ```
 
 `deploy.sh` 用于本地构建 LPK 并安装到默认懒猫微服，依赖 `lzc-cli` 以及 `build.sh` 所需的 Linux 工具。
+
+自动构建、GitHub Release 和懒猫商店发布流程见
+[LPK 自动构建与发布](docs/automated-lpk-release.md)。
 
 ## API
 
@@ -87,7 +91,7 @@ application:
 - `GET /api/v1/network/egress-lookups`：出口查询缓存或触发查询
 - `POST /api/v1/network/egress-lookups`：清除公网 IP 缓存并刷新出口查询
 - `GET /api/v1/network/config/devices`：读取可配置网卡
-- `POST /api/v1/network/config/apply`：应用网卡 IPv4 配置
+- `POST /api/v1/network/config/apply`：应用网卡 IPv4 / MAC 配置
 - `POST /api/v1/network/config/confirm`：确认网卡配置
 - `POST /api/v1/network/config/rollback`：回滚网卡配置
 - `GET /api/v1/network/dns`：读取指定网卡的 DNS 配置
@@ -112,10 +116,11 @@ application:
 测速：
 
 - `GET /api/v1/speed/config`：测速配置
-- `POST /api/v1/speed/broadband/start`：启动异步宽带测速任务
-- `GET /api/v1/speed/broadband/task`：读取宽带测速任务状态
-- `POST /api/v1/speed/broadband/cancel`：取消宽带测速任务
-- `POST /api/v1/speed/broadband/run`：同步执行宽带测速
+- `GET /api/v1/speed/broadband/catalog`：读取两个公共 CDN 测速节点目录
+- `POST /api/v1/speed/broadband/server/start`：启动服务器出口到公网的异步测速，可传 `{"node_id":"1"}`
+- `GET /api/v1/speed/broadband/server/task`：读取服务器出口测速任务状态
+- `POST /api/v1/speed/broadband/server/cancel`：取消服务器出口测速
+- `POST /api/v1/speed/broadband/client/result`：保存用户设备直连公网的测速结果
 - `GET /api/v1/speed/broadband/history`：宽带测速历史
 - `GET /api/v1/speed/local/history`：本机传输测速历史
 - `POST /api/v1/speed/local/result`：记录本机传输测速结果
@@ -130,16 +135,18 @@ application:
 - `GET /api/v1/diagnostics/trace/task`：读取 trace 任务状态
 - `POST /api/v1/diagnostics/dns`：查询 A、AAAA 或 CNAME，可对比系统 DNS 与指定服务器
 - `GET /api/v1/timeseries?limit=300`：读取时序点
-- `GET /api/v1/network/app-traffic`：读取懒猫应用网桥流量
-- `GET /api/v1/network/app-traffic/history?bridge=lzc-br-xxx&limit=300`：读取指定网桥历史
-- `GET /api/v1/network/app-traffic/live?bridge=lzc-br-xxx`：立即采样指定网桥并返回当前计数与历史
-- `GET /api/v1/network/app-traffic/top?range=1h&limit=5`：读取区间流量排行
+- `GET /api/v1/network/app-traffic`：读取原始网桥计数和按应用 ID 聚合的实时、今日、本月、累计流量
+- `GET /api/v1/network/app-traffic/history?app_id=cloud.lazycat.app.example`：读取指定应用的分钟采样历史
+- `POST /api/v1/network/app-traffic/limit`：设置应用上传/下载上限，Body 为 `{"app_id":"...","upload_kbps":1024,"download_kbps":4096}`，使用 `0` 取消对应方向限速
+- `POST /api/v1/network/app-policy`：按应用原子更新限速、外网和代理策略
+- `GET/POST /api/v1/network/app-proxy/settings`：读取或更新新应用弹窗使用的默认代理
 
 ### 应用流量语义
 
-应用流量来自宿主网络命名空间中的 Linux 网桥 sysfs 计数器，数据源标记为
-`linux_bridge_sysfs`，计数视角标记为 `host_bridge`。为兼容旧客户端，API 继续返回
-原始 `rx_bytes`、`tx_bytes`，同时提供语义化字段：
+Bridge 流量来自宿主网络命名空间中的 Linux 网桥 sysfs 计数器，数据源标记为
+`linux_bridge_sysfs`，计数视角标记为 `host_bridge`。Host 流量通过按容器 cgroup 附着的
+`cgroup_skb` eBPF 统计；Mixed 应用分别采样两类来源后按 `app_id` 聚合。为兼容旧客户端，
+API 继续返回原始 `rx_bytes`、`tx_bytes`，同时提供语义化字段：
 
 ```json
 {
@@ -154,9 +161,13 @@ application:
 
 在宿主 bridge 视角下，RX 是应用容器发往宿主网桥的流量，对应应用上传；TX 是宿主
 网桥发往应用容器的流量，对应应用下载。该统计可能包含应用内部或局域网流量，不等同于
-运营商公网账单。使用 `network_mode: host` 的应用服务绕过独立应用网桥，无法通过此方式
-完整统计。历史点出现服务重启或计数器归零时会标记 `discontinuity`，调用方不得跨断点
-计算速率。
+运营商公网账单。应用级累计值按稳定 `app_id` 持久化；单个网桥或 cgroup 计数器归零时，
+NetWatch 只重建该来源的基线，不会重复计入旧字节数。
+
+纯 Bridge 限速使用网桥 TBF/police；实验开关开启后，Host/Mixed 使用默认物理出口上的
+TC/eBPF 分类和 policing，Mixed 共享一份应用预算。禁用外网和代理规则按 Bridge 网桥或 Host
+应用父 cgroup 展开。详细实现、环境要求和拓扑边界见
+[应用流量与网络控制实现说明](docs/app-traffic-controls.html)。
 
 `/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
 `netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、
@@ -176,7 +187,6 @@ application:
 - `PUBLIC_IPV6_ENDPOINT`：公网 IPv6 查询端点
 - `DATA_DIR`：持久化数据目录，默认 `/app/data`
 - `BROADBAND_TEST_SEC`：宽带测速时长，默认 `15`
-- `BROADBAND_DOMESTIC_ONLY`：宽带测速优先国内节点，默认 `true`
 - `LOCAL_TRANSFER_TEST_SEC`：本机传输测速时长，默认 `10`
 - `LOCAL_TRANSFER_PAYLOAD_MB`：本机传输测速固定负载大小，默认 `32`
 - `IPV6_HIGH_PORT_PROBE_HOST`：IPv6 高端口探测地址
@@ -195,7 +205,6 @@ application:
   "nat_timeout_sec": 2,
   "data_dir": "/app/data",
   "broadband_test_sec": 15,
-  "broadband_domestic_only": true,
   "local_transfer_test_sec": 10,
   "local_transfer_payload_mb": 32
 }
@@ -209,7 +218,7 @@ application:
 - `broadband_history.json`：宽带测速历史
 - `local_transfer_history.json`：本机传输测速历史
 - `timeseries.json`：摘要时序数据，最多保留 2000 点
-- `app_traffic_history.json`：应用网桥流量历史
+- `app_traffic_history.json`：按应用 ID 的流量基线、分钟采样、日/月累计与限速配置
 
 ## 认证与访问控制
 
@@ -219,7 +228,6 @@ application:
 
 ## 部署风险
 
-- `docker-compose.yml` 使用 host 网络，用于读取宿主网络视角；这也意味着服务端口直接暴露在宿主网络上。
 - LPK 配置需要 `NET_RAW`/`NET_ADMIN`，用于路由追踪、NAT/连通性探测等能力；不要把这个容器当作低权限沙箱。
 - 应用流量识别会挂载 Docker socket 和懒猫包元数据，只建议在可信主机上运行。
 - 本机传输测速上传接口限制单次请求体最大 512 MiB，并限制同时进行的测速流数量；仍可能占用带宽和 CPU。
@@ -228,7 +236,8 @@ application:
 
 - 前端打开页面时会触发首轮探测
 - 主界面“快速刷新”只刷新网站延迟、出口 IP、出口地区和本机网络信息
-- NAT 检测独立运行，支持单独手动刷新
+- NAT 检测独立运行，支持单独手动刷新；普通 STUN Binding 无法区分 NAT2/NAT3 时会明确显示组合结果
+- 手机端的应用流量和 LAN 设备列表使用卡片布局，不需要横向滚动
 - 宽带测速与网页到本机传输测速采用悬浮二级窗口，且同一时间只允许打开一个
 - 网卡 IP 与网桥变更需要在 3 分钟内确认，DNS 变更需要在 60 秒内确认，否则自动回滚
 - 测速界面会显示实时阶段和进度，关闭窗口会立即停止测速

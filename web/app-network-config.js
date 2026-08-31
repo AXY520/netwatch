@@ -33,8 +33,18 @@ function networkConfigEls() {
         address: document.getElementById('network-config-address'),
         gateway: document.getElementById('network-config-gateway'),
         dns: document.getElementById('network-config-dns'),
+        macCurrent: document.getElementById('network-mac-current'),
+        macOriginal: document.getElementById('network-mac-original'),
+        mac: document.getElementById('network-config-mac'),
+        macApply: document.getElementById('network-mac-apply-btn'),
+        macRestore: document.getElementById('network-mac-restore-btn'),
+        macConfirm: document.getElementById('network-mac-confirm-btn'),
+        macRollback: document.getElementById('network-mac-rollback-btn'),
+        macStatus: document.getElementById('network-mac-status'),
+        macOutput: document.getElementById('network-mac-output'),
         preflight: document.getElementById('network-config-preflight-btn'),
         apply: document.getElementById('network-config-apply-btn'),
+        restart: document.getElementById('network-config-restart-btn'),
         confirm: document.getElementById('network-config-confirm-btn'),
         rollback: document.getElementById('network-config-rollback-btn'),
         status: document.getElementById('network-config-status'),
@@ -49,14 +59,16 @@ function setNetworkConfigFormEnabled(enabled) {
     // is-empty greys CREATE forms only (CSS). Confirm/rollback/dissolve stay usable
     // when the only uplink NIC is enslaved into a pending bridge.
     if (body) body.classList.toggle('is-empty', !enabled);
-    [e.device, e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
+    [e.device, e.method, e.mac, e.address, e.gateway, e.dns, e.preflight, e.apply, e.restart, e.macApply, e.macRestore].forEach(function (el) {
         if (el) el.disabled = !enabled;
     });
     if (enabled) {
         updateNetworkConfigMethodState();
+        updateNetworkMACApplyState();
     } else {
         if (e.apply) e.apply.disabled = true;
         if (e.preflight) e.preflight.disabled = true;
+        if (e.restart) e.restart.disabled = true;
         // Never hide confirm/rollback just because the device list is empty.
         // After bridge create the uplink NIC is enslaved and dropdown can be empty,
         // but pending confirm must remain usable after reconnect.
@@ -81,14 +93,17 @@ function setNetworkConfigLocked(locked) {
     var e = networkConfigEls();
     // A pending transaction blocks further mutations, but users must still be
     // able to inspect another NIC from the shared selector.
-    [e.method, e.address, e.gateway, e.dns, e.preflight, e.apply].forEach(function (el) {
+    [e.method, e.mac, e.address, e.gateway, e.dns, e.preflight, e.apply, e.restart, e.macApply, e.macRestore].forEach(function (el) {
         if (el) el.disabled = !!locked;
     });
     if (e.device) e.device.disabled = false;
-    [e.preflight, e.apply].forEach(function (el) {
+    [e.preflight, e.apply, e.macApply, e.macRestore].forEach(function (el) {
         if (el) el.hidden = !!locked;
     });
-    if (!locked) updateNetworkConfigMethodState();
+    if (!locked) {
+        updateNetworkConfigMethodState();
+        updateNetworkMACApplyState();
+    }
     [e.device, e.method].forEach(function (select) {
         if (select && window.syncCustomSelect) window.syncCustomSelect(select);
     });
@@ -96,7 +111,7 @@ function setNetworkConfigLocked(locked) {
 
 function clearNetworkConfigHighlights() {
     var e = networkConfigEls();
-    [e.method, e.address, e.gateway, e.dns].forEach(function (el) {
+    [e.method, e.mac, e.address, e.gateway, e.dns].forEach(function (el) {
         if (el) el.classList.remove('changed-field');
     });
 }
@@ -106,7 +121,7 @@ function markNetworkConfigChange(el, before, after) {
     el.classList.toggle('changed-field', String(before || '') !== String(after || ''));
 }
 
-// IP, bridge and DNS operations share one host-network transaction domain on
+// IP/MAC, bridge and DNS operations share one host-network transaction domain on
 // the backend. Mirror that ownership here so the shared NIC selector has one
 // deterministic source of truth instead of three independent lock checks.
 var networkMutationCoordinator = (function () {
@@ -170,14 +185,22 @@ function applyPendingNetworkConfigToForm(pending) {
             e.device.value = pin;
         }
     }
-    if (e.method) e.method.value = pending.method || 'manual';
-    if (e.address) e.address.value = pending.address || '';
-    if (e.gateway) e.gateway.value = pending.gateway || '';
-    if (e.dns) e.dns.value = pending.dns || '';
-    markNetworkConfigChange(e.method, pending.prev_method, pending.method);
-    markNetworkConfigChange(e.address, pending.prev_address, pending.address);
-    markNetworkConfigChange(e.gateway, pending.prev_gateway, pending.gateway);
-    markNetworkConfigChange(e.dns, pending.prev_dns, pending.dns);
+    if (pending.mac_only) {
+        var dev = selectedNetworkConfigDevice();
+        if (e.macCurrent) e.macCurrent.value = pending.mac_address || pending.prev_mac_address || '';
+        if (e.macOriginal) e.macOriginal.value = (dev && dev.permanent_mac_address) || '';
+        if (e.mac) e.mac.value = pending.mac_address || '';
+        markNetworkConfigChange(e.mac, pending.prev_mac_address, pending.mac_address);
+    } else {
+        if (e.method) e.method.value = pending.method || 'manual';
+        if (e.address) e.address.value = pending.address || '';
+        if (e.gateway) e.gateway.value = pending.gateway || '';
+        if (e.dns) e.dns.value = pending.dns || '';
+        markNetworkConfigChange(e.method, pending.prev_method, pending.method);
+        markNetworkConfigChange(e.address, pending.prev_address, pending.address);
+        markNetworkConfigChange(e.gateway, pending.prev_gateway, pending.gateway);
+        markNetworkConfigChange(e.dns, pending.prev_dns, pending.dns);
+    }
     if (window.syncCustomSelect && e.device) window.syncCustomSelect(e.device);
     if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
 }
@@ -194,6 +217,8 @@ function renderNetworkConfigPending(pending, openWindow) {
         setNetworkConfigLocked(false);
         if (e.confirm) e.confirm.hidden = true;
         if (e.rollback) e.rollback.hidden = true;
+        if (e.macConfirm) e.macConfirm.hidden = true;
+        if (e.macRollback) e.macRollback.hidden = true;
         return;
     }
     state.networkConfigPendingData = pending;
@@ -201,23 +226,38 @@ function renderNetworkConfigPending(pending, openWindow) {
     state.networkConfigRollbackUntil = Date.now() + Math.max(0, pending.remaining_sec || 0) * 1000;
     applyPendingNetworkConfigToForm(pending);
     setNetworkConfigLocked(true);
+    var macOnly = !!pending.mac_only;
     if (e.confirm) {
-        e.confirm.hidden = false;
+        e.confirm.hidden = macOnly;
         e.confirm.disabled = false;
         e.confirm.removeAttribute('disabled');
     }
     if (e.rollback) {
-        e.rollback.hidden = false;
+        e.rollback.hidden = macOnly;
         e.rollback.disabled = false;
         e.rollback.removeAttribute('disabled');
     }
+    if (e.macConfirm) {
+        e.macConfirm.hidden = !macOnly;
+        e.macConfirm.disabled = false;
+        e.macConfirm.removeAttribute('disabled');
+    }
+    if (e.macRollback) {
+        e.macRollback.hidden = !macOnly;
+        e.macRollback.disabled = false;
+        e.macRollback.removeAttribute('disabled');
+    }
     if (openWindow && window.__app.openWindow) {
         window.__app.openWindow('network-config');
+        setTimeout(function () {
+            if (window.__app.switchNetworkConfigTab) window.__app.switchNetworkConfigTab(macOnly ? 'mac' : 'ip');
+        }, 30);
     }
     var tick = function () {
         var left = Math.max(0, Math.ceil(((state.networkConfigRollbackUntil || 0) - Date.now()) / 1000));
-        if (e.status) {
-            e.status.textContent = i18n('network_config_pending_active') + ': ' + (pending.device || '') + ' / ' + left + 's';
+        var status = macOnly ? e.macStatus : e.status;
+        if (status) {
+            status.textContent = i18n('network_config_pending_active') + ': ' + (pending.device || '') + ' / ' + left + 's';
         }
         if (left <= 0) {
             stopNetworkConfigCountdown();
@@ -244,49 +284,52 @@ function fillNetworkConfigForm(dev) {
     if (e.address) e.address.value = (dev.ipv4 || '').split(',')[0] || '';
     if (e.gateway) e.gateway.value = dev.gateway || '';
     if (e.dns) e.dns.value = dev.dns || '';
-    state.networkConfigBaseline = {
-        method: e.method ? e.method.value : '',
-        address: e.address ? e.address.value : '',
-        gateway: e.gateway ? e.gateway.value : '',
-        dns: e.dns ? e.dns.value : ''
-    };
+    state.networkConfigBaseline = networkConfigSnapshot();
     updateNetworkConfigMethodState();
     if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
 }
 
+function normalizeNetworkConfigDNS(value) {
+    return String(value || '').split(/[\s,]+/).map(function (item) {
+        return item.trim();
+    }).filter(Boolean).join(',');
+}
+
+function networkConfigSnapshot() {
+    var e = networkConfigEls();
+    var method = e.method && e.method.value === 'manual' ? 'manual' : 'auto';
+    var snapshot = {
+        device: e.device ? String(e.device.value || '').trim() : '',
+        method: method,
+        address: '',
+        gateway: '',
+        dns: ''
+    };
+    if (method === 'manual') {
+        snapshot.address = e.address ? String(e.address.value || '').trim() : '';
+        snapshot.gateway = e.gateway ? String(e.gateway.value || '').trim() : '';
+        snapshot.dns = e.dns ? normalizeNetworkConfigDNS(e.dns.value) : '';
+    }
+    return snapshot;
+}
+
+function networkConfigHasChanges() {
+    var baseline = state.networkConfigBaseline;
+    if (!baseline) return false;
+    var current = networkConfigSnapshot();
+    return ['device', 'method', 'address', 'gateway', 'dns'].some(function (key) {
+        return String(current[key] || '') !== String(baseline[key] || '');
+    });
+}
+
 function updateNetworkConfigApplyState() {
     var e = networkConfigEls();
-    if (!e.apply) return;
-    if (networkMutationCoordinator.active()) {
-        e.apply.disabled = true;
-        renderNetworkConfigPreview();
-        return;
-    }
-    var baseline = state.networkConfigBaseline;
-    if (!baseline) {
-        e.apply.disabled = true;
-        renderNetworkConfigPreview();
-        return;
-    }
-    var method = e.method ? String(e.method.value || '') : '';
-    var baseMethod = String(baseline.method || '');
-    var methodChanged = method !== baseMethod;
-    var changed;
-    if (method === 'auto') {
-        // Switching to auto is itself a valid change (manual fields are ignored).
-        changed = methodChanged;
-    } else {
-        // Manual: method flip OR any of address/gateway/dns differs from baseline.
-        var addressChanged = String(e.address ? e.address.value : '') !== String(baseline.address || '');
-        var gatewayChanged = String(e.gateway ? e.gateway.value : '') !== String(baseline.gateway || '');
-        var dnsChanged = String(e.dns ? e.dns.value : '') !== String(baseline.dns || '');
-        changed = methodChanged || addressChanged || gatewayChanged || dnsChanged;
-    }
-    e.apply.disabled = !changed;
-    // Keep preflight always clickable on the IP panel (auto path shows a note).
-    if (e.preflight && !(state.networkConfigPendingData && state.networkConfigPendingData.pending)) {
-        e.preflight.disabled = false;
-    }
+    var locked = !!networkMutationCoordinator.active();
+    var changed = networkConfigHasChanges();
+    var hasDevice = !!(e.device && String(e.device.value || '').trim());
+    if (e.apply) e.apply.disabled = locked || !changed || !!state.networkConfigApplying;
+    if (e.preflight) e.preflight.disabled = locked || !changed || !!state.networkConfigPreflightRunning || !!state.networkConfigApplying;
+    if (e.restart) e.restart.disabled = locked || !hasDevice || changed || !!state.networkConfigRestarting || !!state.networkConfigApplying;
     renderNetworkConfigPreview();
 }
 
@@ -320,9 +363,10 @@ function updateNetworkConfigMethodState() {
     updateNetworkConfigApplyState();
 }
 
-async function loadNetworkConfigDevices() {
+async function loadNetworkConfigDevices(preferredDevice) {
     var e = networkConfigEls();
     if (!e.device) return;
+    preferredDevice = String(preferredDevice || e.device.value || '').trim();
     e.device.innerHTML = '';
     e.device.disabled = true;
     if (e.apply) e.apply.disabled = true;
@@ -386,7 +430,7 @@ async function loadNetworkConfigDevices() {
         }
         // Fill options for current tab (bridge = ethernet only).
         if (typeof window.__app.renderNetworkConfigDeviceOptions === 'function') {
-            window.__app.renderNetworkConfigDeviceOptions();
+            window.__app.renderNetworkConfigDeviceOptions({ preferredDevice: preferredDevice });
         }
         if (typeof window.__app.loadHostBridges === 'function') {
             window.__app.loadHostBridges();
@@ -397,6 +441,7 @@ async function loadNetworkConfigDevices() {
         }
         if (window.syncCustomSelect && e.method) window.syncCustomSelect(e.method);
         updateNetworkConfigApplyState();
+        updateNetworkMACApplyState();
         if (e.status) e.status.textContent = i18n('network_config_ready');
     } catch (err) {
         setNetworkConfigFormEnabled(false);
@@ -424,7 +469,8 @@ async function applyNetworkConfig() {
         cancelText: i18n('close_btn') || '取消',
         danger: true
     }))) return;
-    if (e.apply) e.apply.disabled = true;
+    state.networkConfigApplying = true;
+    updateNetworkConfigApplyState();
     if (e.status) e.status.textContent = i18n('network_config_applying');
     if (e.output) e.output.hidden = true;
     try {
@@ -453,8 +499,108 @@ async function applyNetworkConfig() {
             e.output.hidden = !failedOutput;
         }
     } finally {
-        if (e.apply) e.apply.disabled = !!(state.networkConfigPendingData && state.networkConfigPendingData.pending);
+        state.networkConfigApplying = false;
+        updateNetworkConfigApplyState();
     }
+}
+
+function selectedNetworkConfigDevice() {
+    var e = networkConfigEls();
+    var device = e.device ? String(e.device.value || '').trim() : '';
+    var devices = (e.device && e.device.__allDevices) || [];
+    return devices.find(function (item) { return item && item.device === device; }) || null;
+}
+
+function fillNetworkMACForm(dev) {
+    var e = networkConfigEls();
+    if (!dev) return;
+    var current = String(dev.mac_address || '').toLowerCase();
+    var original = String(dev.permanent_mac_address || '').toLowerCase();
+    if (e.macCurrent) e.macCurrent.value = current;
+    if (e.macOriginal) e.macOriginal.value = original;
+    if (e.macStatus) e.macStatus.textContent = original ? '' : i18n('network_mac_original_unavailable');
+    if (e.mac) {
+        e.mac.value = current;
+        e.mac.classList.remove('changed-field');
+    }
+    state.networkMACBaseline = current;
+    updateNetworkMACApplyState();
+}
+
+function updateNetworkMACApplyState() {
+    var e = networkConfigEls();
+    var locked = !!networkMutationCoordinator.active() || !!state.networkConfigApplying;
+    var value = e.mac ? String(e.mac.value || '').trim().toLowerCase() : '';
+    var current = String(state.networkMACBaseline || '').toLowerCase();
+    var original = e.macOriginal ? String(e.macOriginal.value || '').trim().toLowerCase() : '';
+    if (e.mac) {
+        e.mac.disabled = locked;
+        e.mac.classList.toggle('changed-field', !!value && value !== current);
+    }
+    if (e.macApply) e.macApply.disabled = locked || !value || value === current;
+    if (e.macRestore) e.macRestore.disabled = locked || !original || original === current;
+}
+
+function setNetworkMACOutput(text) {
+    var e = networkConfigEls();
+    if (!e.macOutput) return;
+    e.macOutput.textContent = text || '';
+    e.macOutput.hidden = !text;
+}
+
+async function applyNetworkMAC(targetMAC, restoring) {
+    var e = networkConfigEls();
+    var device = e.device ? String(e.device.value || '').trim() : '';
+    var mac = String(targetMAC || (e.mac && e.mac.value) || '').trim().toLowerCase();
+    if (!device || !mac) {
+        if (e.macStatus) e.macStatus.textContent = i18n('network_config_mac_invalid');
+        return;
+    }
+    var message = restoring
+        ? i18n('network_mac_restore_confirm').replace('{mac}', mac)
+        : i18n('network_mac_apply_confirm');
+    if (!(await NetwatchShared.confirmDialog({
+        title: i18n('network_config_tab_mac') || 'MAC',
+        message: message,
+        okText: restoring ? i18n('network_mac_restore') : i18n('network_mac_apply'),
+        cancelText: i18n('close_btn') || '取消',
+        danger: true
+    }))) return;
+    state.networkConfigApplying = true;
+    updateNetworkConfigApplyState();
+    updateNetworkMACApplyState();
+    if (e.macStatus) e.macStatus.textContent = i18n('network_mac_applying');
+    setNetworkMACOutput('');
+    try {
+        var result = await netwatchPost('/api/v1/network/config/apply', {
+            device: device,
+            mac_address: mac,
+            mac_only: true
+        });
+        if (!result.ok) throw new Error(result.error || 'apply failed');
+        state.networkConfigRollbackID = result.rollback_id;
+        await loadNetworkConfigPending(false);
+        setNetworkMACOutput(appendNetworkMutationVerification(result.output || '', result.verification));
+    } catch (err) {
+        if (e.macStatus) e.macStatus.textContent = i18n('network_config_failed') + ': ' + err.message;
+        if (err && err.payload) {
+            setNetworkMACOutput(appendNetworkMutationVerification(err.payload.output || '', err.payload.verification));
+        }
+    } finally {
+        state.networkConfigApplying = false;
+        updateNetworkConfigApplyState();
+        updateNetworkMACApplyState();
+    }
+}
+
+function restoreOriginalNetworkMAC() {
+    var e = networkConfigEls();
+    var original = e.macOriginal ? String(e.macOriginal.value || '').trim() : '';
+    if (!original) {
+        if (e.macStatus) e.macStatus.textContent = i18n('network_mac_original_unavailable');
+        return;
+    }
+    return applyNetworkMAC(original, true);
 }
 
 async function checkNetworkConfigIP() {
@@ -472,7 +618,8 @@ async function checkNetworkConfigIP() {
         if (e.status) e.status.textContent = i18n('network_config_ip_invalid');
         return;
     }
-    if (e.preflight) e.preflight.disabled = true;
+    state.networkConfigPreflightRunning = true;
+    updateNetworkConfigApplyState();
     if (e.status) e.status.textContent = i18n('network_config_checking_ip') + ': ' + ipOnly;
     try {
         var result = await netwatchPost('/api/v1/network/config/check-ip', payload);
@@ -481,7 +628,8 @@ async function checkNetworkConfigIP() {
     } catch (err) {
         if (e.status) e.status.textContent = i18n('network_config_failed') + ': ' + err.message;
     } finally {
-        if (e.preflight) e.preflight.disabled = false;
+        state.networkConfigPreflightRunning = false;
+        updateNetworkConfigApplyState();
     }
 }
 
@@ -498,8 +646,13 @@ async function preflightNetworkConfig() {
 async function finishNetworkConfig(kind) {
     var e = networkConfigEls();
     var id = state.networkConfigRollbackID || '';
+    var macOnly = !!(state.networkConfigPendingData && state.networkConfigPendingData.mac_only);
+    var status = macOnly ? e.macStatus : e.status;
+    var targetDevice = state.networkConfigPendingData && state.networkConfigPendingData.device
+        ? String(state.networkConfigPendingData.device).trim()
+        : (e.device ? String(e.device.value || '').trim() : '');
     if (!id) {
-        if (e.status) e.status.textContent = i18n('network_config_no_pending');
+        if (status) status.textContent = i18n('network_config_no_pending');
         return;
     }
     var url = kind === 'confirm' ? '/api/v1/network/config/confirm' : '/api/v1/network/config/rollback';
@@ -514,10 +667,88 @@ async function finishNetworkConfig(kind) {
         setNetworkConfigLocked(false);
         if (e.confirm) e.confirm.hidden = true;
         if (e.rollback) e.rollback.hidden = true;
-        if (e.status) e.status.textContent = kind === 'confirm' ? i18n('network_config_confirmed') : i18n('network_config_rolled_back');
+        if (e.macConfirm) e.macConfirm.hidden = true;
+        if (e.macRollback) e.macRollback.hidden = true;
+        await loadNetworkConfigDevices(targetDevice);
+        if (status) status.textContent = kind === 'confirm' ? i18n('network_config_confirmed') : i18n('network_config_rolled_back');
         setTimeout(function () { if (window.__app.loadSummary) window.__app.loadSummary(false, true); }, 1200);
     } catch (err) {
+        if (status) status.textContent = i18n('network_config_failed') + ': ' + err.message;
+    }
+}
+
+function waitForNetworkConfigDevice(device) {
+    var attempts = 12;
+    return new Promise(function (resolve) {
+        function check() {
+            netwatchGet('/api/v1/network/config/devices').then(function (data) {
+                var devices = data && Array.isArray(data.devices) ? data.devices : [];
+                if (devices.some(function (item) { return item && item.device === device; })) {
+                    resolve(true);
+                    return;
+                }
+                retry();
+            }).catch(retry);
+        }
+        function retry() {
+            attempts -= 1;
+            if (attempts <= 0) {
+                resolve(false);
+                return;
+            }
+            setTimeout(check, 1500);
+        }
+        setTimeout(check, 1500);
+    });
+}
+
+async function restartNetworkConfigDevice() {
+    var e = networkConfigEls();
+    var device = e.device ? String(e.device.value || '').trim() : '';
+    if (!device || networkConfigHasChanges() || networkMutationCoordinator.active() || state.networkConfigRestarting) return;
+    if (!(await NetwatchShared.confirmDialog({
+        title: i18n('network_config_restart') || '重启网卡',
+        message: i18n('network_config_restart_confirm'),
+        okText: i18n('network_config_restart') || '重启网卡',
+        cancelText: i18n('close_btn') || '取消',
+        danger: true
+    }))) return;
+
+    state.networkConfigRestarting = true;
+    updateNetworkConfigApplyState();
+    if (e.status) e.status.textContent = i18n('network_config_restarting');
+    if (e.output) e.output.hidden = true;
+    var interruptedError = null;
+    try {
+        var result;
+        try {
+            result = await netwatchPost('/api/v1/network/config/restart', { device: device });
+            if (!result.ok) throw new Error(result.error || 'restart failed');
+        } catch (err) {
+            if (err && (err.status || err.payload)) throw err;
+            interruptedError = err;
+        }
+
+        if (e.status) e.status.textContent = i18n('network_config_restart_waiting');
+        var recovered = await waitForNetworkConfigDevice(device);
+        if (!recovered) throw interruptedError || new Error(i18n('network_config_restart_unreachable'));
+        await loadNetworkConfigDevices(device);
+        try { await refreshNetworkDetailCards(); } catch (_) {}
+        if (window.__app.loadSummary) window.__app.loadSummary(false, true);
+        if (e.status) e.status.textContent = i18n('network_config_restarted');
+        if (e.output && result && result.output) {
+            e.output.textContent = result.output;
+            e.output.hidden = false;
+        }
+    } catch (err) {
         if (e.status) e.status.textContent = i18n('network_config_failed') + ': ' + err.message;
+        if (e.output && err && err.payload && err.payload.output) {
+            e.output.textContent = err.payload.output;
+            e.output.hidden = false;
+        }
+    } finally {
+        state.networkConfigRestarting = false;
+        updateNetworkConfigApplyState();
     }
 }
 
@@ -533,14 +764,20 @@ window.__app.loadNetworkConfigDevices = loadNetworkConfigDevices;
 window.__app.loadNetworkConfigPending = loadNetworkConfigPending;
 window.__app.updateNetworkConfigMethodState = updateNetworkConfigMethodState;
 window.__app.updateNetworkConfigApplyState = updateNetworkConfigApplyState;
+window.__app.updateNetworkMACApplyState = updateNetworkMACApplyState;
+window.__app.networkConfigHasChanges = networkConfigHasChanges;
 window.__app.checkNetworkConfigIP = checkNetworkConfigIP;
 window.__app.preflightNetworkConfig = preflightNetworkConfig;
 window.__app.applyNetworkConfig = applyNetworkConfig;
+window.__app.applyNetworkMAC = applyNetworkMAC;
+window.__app.restoreOriginalNetworkMAC = restoreOriginalNetworkMAC;
+window.__app.restartNetworkConfigDevice = restartNetworkConfigDevice;
 window.__app.confirmNetworkConfig = confirmNetworkConfig;
 window.__app.rollbackNetworkConfig = rollbackNetworkConfig;
 window.__app.networkMutationCoordinator = networkMutationCoordinator;
 window.__app.ensureNetworkConfigOption = ensureNetworkConfigOption;
 window.__app.fillNetworkConfigForm = fillNetworkConfigForm;
+window.__app.fillNetworkMACForm = fillNetworkMACForm;
 window.__app.applyPendingNetworkConfigToForm = applyPendingNetworkConfigToForm;
 window.__app.pinnedNetworkConfigDevice = pinnedNetworkConfigDevice;
 })();

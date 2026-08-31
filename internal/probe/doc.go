@@ -24,8 +24,8 @@
 //	lan_store.go        — lan_devices.json persistence
 //	lan_identity.go     — hostname reverse lookup + OUI vendor
 //
-//	broadband_*.go      — broadband speedtest execution / node pick
-//	task_*.go           — async broadband / trace task runtime
+//	broadband_*.go      — public broadband node catalog / server test engine
+//	task_*.go           — async server broadband / trace task runtime
 //	trace.go            — mtr-based path diagnostics
 //
 //	apptraffic*.go      — lazycat bridge traffic

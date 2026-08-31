@@ -16,9 +16,10 @@ import (
 type networkMutationKind string
 
 const (
-	networkMutationIP     networkMutationKind = "ip"
-	networkMutationBridge networkMutationKind = "bridge"
-	networkMutationDNS    networkMutationKind = "dns"
+	networkMutationIP      networkMutationKind = "ip"
+	networkMutationBridge  networkMutationKind = "bridge"
+	networkMutationDNS     networkMutationKind = "dns"
+	networkMutationRestart networkMutationKind = "restart"
 )
 
 type networkMutationStatus string
@@ -56,9 +57,10 @@ func networkMutationBusyMessage(active *networkMutation) string {
 		return "已有待处理的网络变更，请先确认或回滚"
 	}
 	label := map[networkMutationKind]string{
-		networkMutationIP:     "网卡配置",
-		networkMutationBridge: "网桥",
-		networkMutationDNS:    "DNS",
+		networkMutationIP:      "网卡配置",
+		networkMutationBridge:  "网桥",
+		networkMutationDNS:     "DNS",
+		networkMutationRestart: "网卡重启",
 	}[active.Kind]
 	if label == "" {
 		label = "网络"
