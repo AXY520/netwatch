@@ -58,6 +58,27 @@ func TestClearSpeedHistoryPersistsEmptyLists(t *testing.T) {
 	}
 }
 
+func TestLoadHistoryBackfillsLegacyBroadbandMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "broadband_history.json")
+	if err := os.WriteFile(path, []byte(`[{"timestamp":"2026-08-05 12:00:00","download_mbps":100}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{cfg: Config{DataDir: dir}}
+	service.loadHistory()
+	history := service.GetBroadbandHistory()
+	if len(history) != 1 || history[0].TestMode != "server" || history[0].ID == "" {
+		t.Fatalf("legacy broadband history = %+v", history)
+	}
+
+	var persisted []BroadbandSpeedResult
+	readSpeedHistory(t, path, &persisted)
+	if len(persisted) != 1 || persisted[0].TestMode != "server" || persisted[0].ID == "" {
+		t.Fatalf("persisted broadband history = %+v", persisted)
+	}
+}
+
 func readSpeedHistory(t *testing.T, path string, target any) {
 	t.Helper()
 	body, err := os.ReadFile(path)

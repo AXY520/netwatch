@@ -17,9 +17,39 @@ function initTheme() {
     NetwatchShared.initTheme(state, els.themeToggle);
 }
 
+function closeSpeedHistory(restoreFocus) {
+    if (restoreFocus === undefined) restoreFocus = true;
+    if (els.broadbandHistoryWindow) els.broadbandHistoryWindow.classList.remove('active');
+    if (els.transferHistoryWindow) els.transferHistoryWindow.classList.remove('active');
+    if (els.speedHistoryBackdrop) els.speedHistoryBackdrop.classList.remove('active');
+    state.activeSpeedHistory = null;
+    var trigger = state.speedHistoryTrigger;
+    state.speedHistoryTrigger = null;
+    if (restoreFocus && trigger && typeof trigger.focus === 'function') {
+        try { trigger.focus(); } catch (_) {}
+    }
+}
+
+function openSpeedHistory(kind) {
+    var broadband = kind === 'broadband';
+    var parentWindow = broadband ? els.broadbandWindow : els.transferWindow;
+    var historyWindow = broadband ? els.broadbandHistoryWindow : els.transferHistoryWindow;
+    if (!parentWindow || !parentWindow.classList.contains('active') || !historyWindow) return;
+    if (window.closeCustomSelects) window.closeCustomSelects();
+    closeSpeedHistory(false);
+    state.speedHistoryTrigger = document.activeElement;
+    state.activeSpeedHistory = kind;
+    historyWindow.classList.add('active');
+    if (els.speedHistoryBackdrop) els.speedHistoryBackdrop.classList.add('active');
+    if (window.__app.loadSpeedHistory) window.__app.loadSpeedHistory();
+    var closeButton = broadband ? els.closeBroadbandHistoryWindow : els.closeTransferHistoryWindow;
+    if (closeButton) setTimeout(function () { closeButton.focus(); }, 0);
+}
+
 function openWindow(name) {
     if (state.runningTest && state.runningTest !== name) return;
     if (window.closeCustomSelects) window.closeCustomSelects();
+    closeSpeedHistory(false);
 
     els.settingsWindow.classList.remove('active');
     els.broadbandWindow.classList.remove('active');
@@ -57,9 +87,12 @@ function openWindow(name) {
 }
 
 window.__app.openWindow = openWindow;
+window.__app.openSpeedHistory = openSpeedHistory;
+window.__app.closeSpeedHistory = closeSpeedHistory;
 
 async function closeCurrentWindow() {
     if (window.closeCustomSelects) window.closeCustomSelects();
+    closeSpeedHistory(false);
     var closingNetworkConfig = !!(els.networkConfigWindow && els.networkConfigWindow.classList.contains('active'));
     if ((state.runningTest === 'broadband' && els.broadbandWindow.classList.contains('active')) ||
         (state.runningTest === 'transfer' && els.transferWindow.classList.contains('active'))) {
@@ -132,12 +165,13 @@ function bindControls() {
 
     var A = window.__app;
 
-    els.refreshBtn.addEventListener('click', function () { A.debounce('refresh', function () { if (A.runFastRefresh) A.runFastRefresh(true); }); });
     els.websiteRefreshBtn.addEventListener('click', function () { A.debounce('website', function () { if (A.runWebsiteRefresh) A.runWebsiteRefresh(); }, 80); });
     if (els.natRefreshBtn) els.natRefreshBtn.addEventListener('click', function () { A.debounce('nat', function () { if (A.runNATRefresh) A.runNATRefresh(); }); });
     els.openSettingsWindow.addEventListener('click', function () { openWindow('settings'); });
     els.openBroadbandWindow.addEventListener('click', function () { openWindow('broadband'); });
     els.openTransferWindow.addEventListener('click', function () { openWindow('transfer'); });
+    if (els.openBroadbandHistory) els.openBroadbandHistory.addEventListener('click', function () { openSpeedHistory('broadband'); });
+    if (els.openTransferHistory) els.openTransferHistory.addEventListener('click', function () { openSpeedHistory('transfer'); });
     if (els.openNetworkConfigWindow) els.openNetworkConfigWindow.addEventListener('click', function () { openWindow('network-config'); });
     if (els.interfacesRefreshBtn) els.interfacesRefreshBtn.addEventListener('click', function () {
         if (els.interfacesRefreshBtn.disabled) return;
@@ -161,6 +195,8 @@ function bindControls() {
     els.closeSettingsWindow.addEventListener('click', closeCurrentWindow);
     els.closeBroadbandWindow.addEventListener('click', closeCurrentWindow);
     els.closeTransferWindow.addEventListener('click', closeCurrentWindow);
+    if (els.closeBroadbandHistoryWindow) els.closeBroadbandHistoryWindow.addEventListener('click', function () { closeSpeedHistory(true); });
+    if (els.closeTransferHistoryWindow) els.closeTransferHistoryWindow.addEventListener('click', function () { closeSpeedHistory(true); });
     if (els.closeNetworkConfigWindow) els.closeNetworkConfigWindow.addEventListener('click', closeCurrentWindow);
     if (els.closeNotificationSettings) els.closeNotificationSettings.addEventListener('click', closeCurrentWindow);
     if (els.openNotificationSettings) els.openNotificationSettings.addEventListener('click', function () { openWindow('notification-settings'); });
@@ -189,12 +225,19 @@ function bindControls() {
     }
 
     els.backdrop.addEventListener('click', closeCurrentWindow);
+    if (els.speedHistoryBackdrop) els.speedHistoryBackdrop.addEventListener('click', function () { closeSpeedHistory(true); });
     if (els.closeTraceWindow) els.closeTraceWindow.addEventListener('click', closeTraceWindow);
     if (els.traceBackdrop) els.traceBackdrop.addEventListener('click', closeTraceWindow);
     if (els.openDNSDiagWindow) els.openDNSDiagWindow.addEventListener('click', openDNSDiagWindow);
     if (els.closeDNSDiagWindow) els.closeDNSDiagWindow.addEventListener('click', closeDNSDiagWindow);
     if (els.dnsDiagBackdrop) els.dnsDiagBackdrop.addEventListener('click', closeDNSDiagWindow);
     document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && state.activeSpeedHistory) {
+            event.preventDefault();
+            event.stopPropagation();
+            closeSpeedHistory(true);
+            return;
+        }
         if (event.key === 'Escape' && els.dnsDiagWindow && els.dnsDiagWindow.classList.contains('active')) {
             closeDNSDiagWindow();
         }
@@ -243,6 +286,16 @@ function bindControls() {
     });
     var networkConfigApplyBtn = document.getElementById('network-config-apply-btn');
     if (networkConfigApplyBtn) networkConfigApplyBtn.addEventListener('click', function () { if (A.applyNetworkConfig) A.applyNetworkConfig(); });
+    var networkMACInput = document.getElementById('network-config-mac');
+    if (networkMACInput) networkMACInput.addEventListener('input', function () { if (A.updateNetworkMACApplyState) A.updateNetworkMACApplyState(); });
+    var networkMACApplyBtn = document.getElementById('network-mac-apply-btn');
+    if (networkMACApplyBtn) networkMACApplyBtn.addEventListener('click', function () { if (A.applyNetworkMAC) A.applyNetworkMAC(); });
+    var networkMACRestoreBtn = document.getElementById('network-mac-restore-btn');
+    if (networkMACRestoreBtn) networkMACRestoreBtn.addEventListener('click', function () { if (A.restoreOriginalNetworkMAC) A.restoreOriginalNetworkMAC(); });
+    var networkMACConfirmBtn = document.getElementById('network-mac-confirm-btn');
+    if (networkMACConfirmBtn) networkMACConfirmBtn.addEventListener('click', function () { if (A.confirmNetworkConfig) A.confirmNetworkConfig(); });
+    var networkMACRollbackBtn = document.getElementById('network-mac-rollback-btn');
+    if (networkMACRollbackBtn) networkMACRollbackBtn.addEventListener('click', function () { if (A.rollbackNetworkConfig) A.rollbackNetworkConfig(); });
     var networkConfigRestartBtn = document.getElementById('network-config-restart-btn');
     if (networkConfigRestartBtn) networkConfigRestartBtn.addEventListener('click', function () { if (A.restartNetworkConfigDevice) A.restartNetworkConfigDevice(); });
     var networkConfigConfirmBtn = document.getElementById('network-config-confirm-btn');
@@ -255,6 +308,7 @@ function bindControls() {
     els.runBroadbandTest.addEventListener('click', function () { if (A.startBroadbandTest) A.startBroadbandTest(); });
     if (els.broadbandModeClient) els.broadbandModeClient.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('client'); });
     if (els.broadbandModeServer) els.broadbandModeServer.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('server'); });
+    if (els.broadbandModePortPolicy) els.broadbandModePortPolicy.addEventListener('click', function () { if (A.setBroadbandMode) A.setBroadbandMode('port-policy'); });
     if (els.broadbandNodeRefresh) els.broadbandNodeRefresh.addEventListener('click', function () { if (A.loadBroadbandNodes) A.loadBroadbandNodes(); });
     if (els.clearBroadbandHistory) els.clearBroadbandHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('broadband'); });
     els.runTransferTest.addEventListener('click', function () { if (A.runTransferTest) A.runTransferTest(); });
@@ -267,6 +321,9 @@ function bindControls() {
             state.settings.nic_realtime_enabled = isEnabled;
             if (els.settingNICRealtimeIntervalSec) {
                 els.settingNICRealtimeIntervalSec.disabled = !isEnabled;
+                // The visible control is a custom-select wrapper; sync its
+                // disabled state immediately instead of waiting for a reload.
+                if (window.syncCustomSelect) window.syncCustomSelect(els.settingNICRealtimeIntervalSec);
             }
         });
     }
@@ -275,6 +332,12 @@ function bindControls() {
         els.settingAppTrafficRealtimeEnabled.addEventListener('change', function () {
             state.settings.app_traffic_realtime_enabled = !!els.settingAppTrafficRealtimeEnabled.checked;
             if (A.updateAppTrafficRealtime) A.updateAppTrafficRealtime();
+        });
+    }
+
+    if (els.settingHostNetworkExperimentalEnabled) {
+        els.settingHostNetworkExperimentalEnabled.addEventListener('change', function () {
+            state.settings.host_network_experimental_enabled = !!els.settingHostNetworkExperimentalEnabled.checked;
         });
     }
 
@@ -559,7 +622,6 @@ function initWithRetry(maxRetries) {
         if (appTrafficWasInitialized && window.__app.refreshAppTraffic) {
             window.__app.refreshAppTraffic();
         }
-        if (window.__app.loadSummary) return window.__app.loadSummary(false, true);
     }).then(function () {
         if (!state.summary || !state.summary.ready) {
             if (maxRetries > 0) {
@@ -596,11 +658,13 @@ function boot() {
 
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) {
-            if (window.__app.loadSummary) window.__app.loadSummary(false, true);
+            // Refresh the view from the server's current snapshot without
+            // starting a new website/network probe when returning to the tab.
+            if (window.__app.loadSummary) window.__app.loadSummary(false, false);
             // Re-check pending after tab focus / network recovery.
             if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(true);
             if (window.__app.loadHostBridgePending) window.__app.loadHostBridgePending(true);
-        if (window.__app.loadHostDNSPending) window.__app.loadHostDNSPending(true);
+            if (window.__app.loadHostDNSPending) window.__app.loadHostDNSPending(true);
         }
     });
 }

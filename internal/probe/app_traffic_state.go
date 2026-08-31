@@ -61,27 +61,36 @@ type legacyAppTrafficPoint struct {
 // positive counter deltas. This keeps the lifetime total monotonic when a
 // bridge is recreated or its kernel counters reset.
 type AppTrafficUsage struct {
-	AppID          string                  `json:"app_id"`
-	AppTitle       string                  `json:"app_title,omitempty"`
-	Project        string                  `json:"project,omitempty"`
-	Icon           string                  `json:"icon,omitempty"`
-	StatusText     string                  `json:"status_text,omitempty"`
-	CreatedAt      int64                   `json:"created_at,omitempty"`
-	Bridges        []string                `json:"bridges,omitempty"`
-	ContainerCount int                     `json:"container_count,omitempty"`
-	RunningCount   int                     `json:"running_count,omitempty"`
-	UploadBPS      float64                 `json:"upload_bps"`
-	DownloadBPS    float64                 `json:"download_bps"`
-	TodayUpload    uint64                  `json:"today_upload"`
-	TodayDownload  uint64                  `json:"today_download"`
-	MonthUpload    uint64                  `json:"month_upload"`
-	MonthDownload  uint64                  `json:"month_download"`
-	TotalUpload    uint64                  `json:"total_upload"`
-	TotalDownload  uint64                  `json:"total_download"`
-	Limit          AppTrafficLimit         `json:"limit"`
-	SampledAt      string                  `json:"sampled_at,omitempty"`
-	FirstSampledAt string                  `json:"first_sampled_at,omitempty"`
-	Daily          []AppTrafficDailyRecord `json:"daily,omitempty"`
+	AppID                  string                  `json:"app_id"`
+	InstanceID             string                  `json:"instance_id,omitempty"`
+	UserID                 string                  `json:"user_id,omitempty"`
+	MultiInstance          bool                    `json:"multi_instance,omitempty"`
+	AppTitle               string                  `json:"app_title,omitempty"`
+	Project                string                  `json:"project,omitempty"`
+	Icon                   string                  `json:"icon,omitempty"`
+	StatusText             string                  `json:"status_text,omitempty"`
+	CreatedAt              int64                   `json:"created_at,omitempty"`
+	Bridges                []string                `json:"bridges,omitempty"`
+	ContainerCount         int                     `json:"container_count,omitempty"`
+	RunningCount           int                     `json:"running_count,omitempty"`
+	UploadBPS              float64                 `json:"upload_bps"`
+	DownloadBPS            float64                 `json:"download_bps"`
+	TodayUpload            uint64                  `json:"today_upload"`
+	TodayDownload          uint64                  `json:"today_download"`
+	MonthUpload            uint64                  `json:"month_upload"`
+	MonthDownload          uint64                  `json:"month_download"`
+	TotalUpload            uint64                  `json:"total_upload"`
+	TotalDownload          uint64                  `json:"total_download"`
+	Limit                  AppTrafficLimit         `json:"limit"`
+	SampledAt              string                  `json:"sampled_at,omitempty"`
+	FirstSampledAt         string                  `json:"first_sampled_at,omitempty"`
+	Daily                  []AppTrafficDailyRecord `json:"daily,omitempty"`
+	NetworkModes           []string                `json:"network_modes,omitempty"`
+	NetworkTargets         []AppNetworkTarget      `json:"network_targets,omitempty"`
+	NetworkTopology        string                  `json:"network_topology,omitempty"`
+	TrafficLimitAllowed    bool                    `json:"traffic_limit_allowed"`
+	InternetControlAllowed bool                    `json:"internet_control_allowed"`
+	NetworkPolicy          AppNetworkPolicyStatus  `json:"network_policy"`
 }
 
 type AppTrafficOverview struct {
@@ -97,13 +106,30 @@ type appTrafficBridgeBaseline struct {
 	DownloadBytes uint64 `json:"download_bytes"`
 }
 
+// appTrafficBaselineKey keeps independent kernel counters independent. Bridge
+// counters are naturally keyed by interface; Host counters must be keyed by
+// cgroup path because one application can own several Host containers.
+func appTrafficBaselineKey(item AppBridgeStats) string {
+	if item.NetworkMode == "host" || strings.HasPrefix(strings.TrimSpace(item.Bridge), hostAppTargetPrefix) {
+		if cgroup := strings.TrimSpace(item.CgroupPath); cgroup != "" {
+			return "host-cgroup:" + cgroup
+		}
+		return "host-target:" + strings.TrimSpace(item.Bridge)
+	}
+	// Preserve the legacy on-disk key for Bridge counters so upgrading does
+	// not seed a second baseline and double-count the first post-upgrade delta.
+	return strings.TrimSpace(item.Bridge)
+}
+
 type appTrafficStoredUsage struct {
 	AppTrafficUsage
 	Samples []AppTrafficSample `json:"samples,omitempty"`
 }
 
 type appTrafficPersistedState struct {
-	Apps          map[string]appTrafficStoredUsage    `json:"apps"`
+	Apps map[string]appTrafficStoredUsage `json:"apps"`
+	// Baselines is keyed by bridge for Bridge counters and by stable cgroup
+	// path for Host counters. Keep the JSON field name for on-disk compatibility.
 	Baselines     map[string]appTrafficBridgeBaseline `json:"baselines"`
 	Limits        map[string]AppTrafficLimit          `json:"limits"`
 	LegacyBridges map[string][]legacyAppTrafficPoint  `json:"legacy_bridges,omitempty"`
@@ -200,14 +226,16 @@ func (s *appTrafficState) migrateLegacyBridgesLocked(items []AppBridgeStats, now
 		return
 	}
 	bridgeApps := make(map[string]string, len(items))
+	instanceMetadata := make(map[string]AppBridgeStats, len(items))
 	for _, item := range items {
 		bridge := strings.TrimSpace(item.Bridge)
-		appID := strings.TrimSpace(item.AppID)
-		if bridge == "" || appID == "" || isNetwatchTrafficItem(item) {
+		policyID := appTrafficPolicyID(item)
+		if bridge == "" || policyID == "" || isNetwatchTrafficItem(item) {
 			continue
 		}
 		if _, exists := s.legacyBridges[bridge]; exists {
-			bridgeApps[bridge] = appID
+			bridgeApps[bridge] = policyID
+			instanceMetadata[policyID] = item
 		}
 	}
 	if len(bridgeApps) == 0 {
@@ -243,9 +271,13 @@ func (s *appTrafficState) migrateLegacyBridgesLocked(items []AppBridgeStats, now
 		migrated = append(migrated, bridge)
 	}
 
-	for appID, byTimestamp := range perAppDeltas {
-		entry := s.apps[appID]
-		entry.AppID = appID
+	for policyID, byTimestamp := range perAppDeltas {
+		entry := s.apps[policyID]
+		metadata := instanceMetadata[policyID]
+		entry.AppID = preferAppTrafficValue(strings.TrimSpace(metadata.AppID), baseAppID(policyID))
+		entry.InstanceID = policyID
+		entry.UserID = strings.TrimSpace(metadata.UserID)
+		entry.MultiInstance = metadata.MultiInstance
 		for _, timestamp := range sortedTrafficTimestamps(byTimestamp) {
 			delta := byTimestamp[timestamp]
 			if sampledAt, err := time.ParseInLocation(time.DateTime, timestamp, time.Local); err == nil {
@@ -254,7 +286,7 @@ func (s *appTrafficState) migrateLegacyBridgesLocked(items []AppBridgeStats, now
 			}
 			entry.FirstSampledAt = earlierTrafficTimestamp(entry.FirstSampledAt, timestamp)
 		}
-		rawSamples := perAppSamples[appID]
+		rawSamples := perAppSamples[policyID]
 		legacySamples := make([]AppTrafficSample, 0, len(rawSamples))
 		for _, timestamp := range sortedTrafficAbsolutes(rawSamples) {
 			total := rawSamples[timestamp]
@@ -281,7 +313,7 @@ func (s *appTrafficState) migrateLegacyBridgesLocked(items []AppBridgeStats, now
 			entry.TotalDownload = download
 		}
 		entry.Samples = trimAppTrafficSamples(entry.Samples)
-		s.apps[appID] = entry
+		s.apps[policyID] = entry
 	}
 	for _, bridge := range migrated {
 		delete(s.legacyBridges, bridge)
@@ -424,29 +456,34 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 		if bridge == "" {
 			continue
 		}
-		// Metadata enrichment can briefly fail while the bridge itself remains
-		// alive. Keep its baseline in that case, otherwise the next successful
-		// lookup would silently discard all bytes from the gap.
-		seen[bridge] = true
+		// Metadata enrichment can briefly fail while the underlying bridge or
+		// cgroup counter remains alive. Keep its baseline in that case, otherwise
+		// the next successful lookup would silently discard bytes from the gap.
+		baselineKey := appTrafficBaselineKey(item)
+		seen[baselineKey] = true
 		appID := strings.TrimSpace(item.AppID)
+		policyID := appTrafficPolicyID(item)
 		if appID == "" || isNetwatchTrafficItem(item) {
 			continue
 		}
-		baseline, known := s.baselines[bridge]
-		if !known || baseline.AppID != appID || item.UploadBytes < baseline.UploadBytes || item.DownloadBytes < baseline.DownloadBytes {
+		baseline, known := s.baselines[baselineKey]
+		if !known || baseline.AppID != policyID || item.UploadBytes < baseline.UploadBytes || item.DownloadBytes < baseline.DownloadBytes {
 			// A new bridge or a reset counter establishes a baseline. Counting its
 			// pre-existing bytes would attribute traffic from before observation.
-			s.baselines[bridge] = appTrafficBridgeBaseline{AppID: appID, UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes}
+			s.baselines[baselineKey] = appTrafficBridgeBaseline{AppID: policyID, UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes}
 		} else {
-			delta := changes[appID]
+			delta := changes[policyID]
 			delta.upload += item.UploadBytes - baseline.UploadBytes
 			delta.download += item.DownloadBytes - baseline.DownloadBytes
-			changes[appID] = delta
-			s.baselines[bridge] = appTrafficBridgeBaseline{AppID: appID, UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes}
+			changes[policyID] = delta
+			s.baselines[baselineKey] = appTrafficBridgeBaseline{AppID: policyID, UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes}
 		}
 
-		entry := observed[appID]
+		entry := observed[policyID]
 		entry.AppID = appID
+		entry.InstanceID = policyID
+		entry.UserID = preferAppTrafficValue(item.UserID, entry.UserID)
+		entry.MultiInstance = item.MultiInstance || entry.MultiInstance
 		entry.AppTitle = preferAppTrafficValue(item.AppTitle, entry.AppTitle)
 		entry.Project = preferAppTrafficValue(item.Project, entry.Project)
 		entry.Icon = preferAppTrafficValue(item.Icon, entry.Icon)
@@ -456,31 +493,42 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 		entry.TotalUpload += item.UploadBytes
 		entry.TotalDownload += item.DownloadBytes
 		entry.Bridges = append(entry.Bridges, bridge)
-		observed[appID] = entry
+		if target, ok := appNetworkTargetFromStats(item); ok {
+			entry.NetworkTargets = appendUniqueAppNetworkTarget(entry.NetworkTargets, target)
+		}
+		if item.NetworkMode != "" {
+			entry.NetworkModes = appendUniqueTrafficValue(entry.NetworkModes, item.NetworkMode)
+		}
+		observed[policyID] = entry
 	}
-	for bridge := range s.baselines {
-		if !seen[bridge] {
-			delete(s.baselines, bridge)
+	for counterKey := range s.baselines {
+		if !seen[counterKey] {
+			delete(s.baselines, counterKey)
 		}
 	}
 
 	today := now.Format(time.DateOnly)
 	month := now.Format("2006-01")
-	for appID, current := range observed {
-		entry := s.apps[appID]
-		hadHistory := entry.AppID != ""
-		entry.AppID = appID
+	for policyID, current := range observed {
+		entry := s.apps[policyID]
+		hadHistory := entry.InstanceID != "" || entry.AppID != ""
+		entry.AppID = current.AppID
+		entry.InstanceID = policyID
+		entry.UserID = preferAppTrafficValue(current.UserID, entry.UserID)
+		entry.MultiInstance = current.MultiInstance || entry.MultiInstance
 		entry.AppTitle = preferAppTrafficValue(current.AppTitle, entry.AppTitle)
 		entry.Project = preferAppTrafficValue(current.Project, entry.Project)
 		entry.Icon = preferAppTrafficValue(current.Icon, entry.Icon)
 		mergeAppTrafficStart(&entry.AppTrafficUsage, current.StatusText, current.CreatedAt)
 		entry.ContainerCount = current.ContainerCount
 		entry.RunningCount = current.RunningCount
+		entry.NetworkModes = append([]string(nil), current.NetworkModes...)
+		entry.NetworkTargets = append([]AppNetworkTarget(nil), current.NetworkTargets...)
 		if !hadHistory {
 			entry.TotalUpload = current.TotalUpload
 			entry.TotalDownload = current.TotalDownload
 		}
-		change := changes[appID]
+		change := changes[policyID]
 		entry.TotalUpload += change.upload
 		entry.TotalDownload += change.download
 		if dailyUpload := trafficDailySum(entry.Daily, "upload"); entry.TotalUpload < dailyUpload {
@@ -494,16 +542,16 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 			entry.FirstSampledAt = now.Format(time.DateTime)
 		}
 		entry.SampledAt = now.Format(time.DateTime)
-		s.apps[appID] = entry
+		s.apps[policyID] = entry
 	}
-	for appID, entry := range s.apps {
-		if _, isObserved := observed[appID]; !isObserved {
+	for policyID, entry := range s.apps {
+		if _, isObserved := observed[policyID]; !isObserved {
 			entry.UploadBPS = 0
 			entry.DownloadBPS = 0
-			s.apps[appID] = entry
+			s.apps[policyID] = entry
 			continue
 		}
-		change := changes[appID]
+		change := changes[policyID]
 		if elapsed > 0 {
 			entry.UploadBPS = float64(change.upload) / elapsed
 			entry.DownloadBPS = float64(change.download) / elapsed
@@ -518,7 +566,7 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 			entry.Samples = append(entry.Samples, AppTrafficSample{Timestamp: now.Format(time.DateTime), UploadTotal: entry.TotalUpload, DownloadTotal: entry.TotalDownload})
 			entry.Samples = trimAppTrafficSamples(entry.Samples)
 		}
-		s.apps[appID] = entry
+		s.apps[policyID] = entry
 	}
 	s.lastSample = now
 	if now.Sub(s.lastPersist) >= appTrafficPersistInterval {
@@ -532,15 +580,16 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 // conversion immediately removes the impossible "today > total" display
 // without inventing traffic outside the data already on disk.
 func normalizePersistedAppTrafficTotals(apps map[string]appTrafficStoredUsage) {
-	for appID, entry := range apps {
-		entry.AppID = preferAppTrafficValue(entry.AppID, appID)
+	for policyID, entry := range apps {
+		entry.AppID = preferAppTrafficValue(entry.AppID, baseAppID(policyID))
+		entry.InstanceID = preferAppTrafficValue(entry.InstanceID, policyID)
 		if upload := trafficDailySum(entry.Daily, "upload"); entry.TotalUpload < upload {
 			entry.TotalUpload = upload
 		}
 		if download := trafficDailySum(entry.Daily, "download"); entry.TotalDownload < download {
 			entry.TotalDownload = download
 		}
-		apps[appID] = entry
+		apps[policyID] = entry
 	}
 }
 
@@ -652,23 +701,114 @@ func dedupeSortedStrings(in []string) []string {
 }
 
 func (s *appTrafficState) overview(limitSupported bool) AppTrafficOverview {
+	return s.overviewForActiveApps(limitSupported, nil)
+}
+
+// overviewForActiveApps returns the persisted application history while
+// optionally limiting the visible list to applications that are present in
+// the current runtime snapshot. History stays on disk so a stopped app can
+// resume with its previous totals when it is started again, but inactive
+// applications do not remain as zero-rate rows in the live dashboard.
+func (s *appTrafficState) overviewForActiveApps(limitSupported bool, activeAppIDs map[string]bool) AppTrafficOverview {
+	return s.overviewForActiveAppsWithControls(limitSupported, activeAppIDs, true)
+}
+
+func (s *appTrafficState) overviewForActiveAppsWithControls(limitSupported bool, activeAppIDs map[string]bool, hostControlsEnabled bool) AppTrafficOverview {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	apps := make([]AppTrafficUsage, 0, len(s.apps))
-	for appID, entry := range s.apps {
+	for policyID, entry := range s.apps {
 		if entry.AppID == "" {
-			entry.AppID = appID
+			entry.AppID = baseAppID(policyID)
 		}
-		entry.Limit = s.limits[appID]
+		if entry.InstanceID == "" {
+			entry.InstanceID = policyID
+		}
+		if activeAppIDs != nil && !activeAppIDs[policyID] {
+			continue
+		}
+		entry.Limit = s.limits[policyID]
 		entry.Samples = nil
 		entry.Daily = append([]AppTrafficDailyRecord(nil), entry.Daily...)
 		entry.Bridges = append([]string(nil), entry.Bridges...)
+		entry.NetworkModes = append([]string(nil), entry.NetworkModes...)
+		entry.NetworkTargets = append([]AppNetworkTarget(nil), entry.NetworkTargets...)
+		entry.NetworkTopology, entry.TrafficLimitAllowed, entry.InternetControlAllowed = appTrafficControlCapabilitiesWithControls(
+			entry.AppTrafficUsage, limitSupported, hostControlsEnabled,
+		)
 		apps = append(apps, entry.AppTrafficUsage)
 	}
 	sort.Slice(apps, func(i, j int) bool {
 		return apps[i].TotalUpload+apps[i].TotalDownload > apps[j].TotalUpload+apps[j].TotalDownload
 	})
 	return AppTrafficOverview{GeneratedAt: time.Now().Format(time.DateTime), Apps: apps, LimitSupport: limitSupported}
+}
+
+func appTrafficControlCapabilities(entry AppTrafficUsage, limitSupported bool) (topology string, limitAllowed bool, internetAllowed bool) {
+	return appTrafficControlCapabilitiesWithControls(entry, limitSupported, true)
+}
+
+func appTrafficControlCapabilitiesWithControls(entry AppTrafficUsage, limitSupported bool, hostControlsEnabled bool) (topology string, limitAllowed bool, internetAllowed bool) {
+	hasBridge := false
+	hasHost := false
+	for _, target := range entry.NetworkTargets {
+		switch target.Kind {
+		case AppNetworkTargetBridge:
+			hasBridge = true
+		case AppNetworkTargetCgroup:
+			hasHost = true
+		}
+	}
+	// Records written before AppNetworkTarget was introduced only have the
+	// legacy bridge strings. Use them as a read-time compatibility fallback.
+	if len(entry.NetworkTargets) == 0 {
+		for _, mode := range entry.NetworkModes {
+			switch mode {
+			case "bridge":
+				hasBridge = true
+			case "host":
+				hasHost = true
+			}
+		}
+		for _, target := range entry.Bridges {
+			if strings.HasPrefix(target, lzcBridgePrefix) {
+				hasBridge = true
+			}
+			if strings.HasPrefix(target, hostAppTargetPrefix) {
+				hasHost = true
+			}
+		}
+	}
+	switch {
+	case hasBridge && hasHost:
+		topology = "mixed"
+	case hasHost:
+		topology = "host"
+	case hasBridge:
+		topology = "bridge"
+	default:
+		topology = "unknown"
+	}
+	if isWhitelistedApp(entry.AppID, entry.AppTitle) {
+		return topology, false, false
+	}
+	if hasHost && !hostControlsEnabled {
+		return topology, false, false
+	}
+	// Pure Bridge uses per-bridge TBF/police. Host and Mixed applications use
+	// the shared physical-device TC classifier when experimental controls are on.
+	limitAllowed = limitSupported && (hasBridge || hasHost)
+	internetAllowed = hasBridge || hasHost
+	return topology, limitAllowed, internetAllowed
+}
+
+func appendUniqueTrafficValue(values []string, candidate string) []string {
+	for _, value := range values {
+		if value == candidate {
+			return values
+		}
+	}
+	return append(values, candidate)
 }
 
 func (s *appTrafficState) history(appID string) []AppTrafficSample {
@@ -709,6 +849,40 @@ func (s *appTrafficState) limitsSnapshot() map[string]AppTrafficLimit {
 		out[appID] = limit
 	}
 	return out
+}
+
+func (s *appTrafficState) migrateLegacyLimits(instances map[string][]string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := make(map[string]AppTrafficLimit, len(s.limits))
+	for policyID, limit := range s.limits {
+		candidate[policyID] = limit
+	}
+	changed := false
+	for appID, instanceIDs := range instances {
+		legacy, ok := candidate[appID]
+		if !ok {
+			continue
+		}
+		for _, instanceID := range instanceIDs {
+			if _, exists := candidate[instanceID]; !exists {
+				candidate[instanceID] = legacy
+			}
+		}
+		delete(candidate, appID)
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	persisted := appTrafficPersistedState{Apps: s.apps, Baselines: s.baselines, Limits: candidate, LegacyBridges: s.legacyBridges}
+	now := time.Now()
+	if err := writeJSONFile(s.path, persisted, true); err != nil {
+		return false, err
+	}
+	s.limits = candidate
+	s.lastPersist = now
+	return true, nil
 }
 
 func (s *appTrafficState) flush() {

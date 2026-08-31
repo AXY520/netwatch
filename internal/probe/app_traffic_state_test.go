@@ -12,6 +12,111 @@ func trafficBridge(appID, bridge string, upload, download uint64) AppBridgeStats
 	return AppBridgeStats{AppID: appID, AppTitle: "测试应用", Bridge: bridge, UploadBytes: upload, DownloadBytes: download, ContainerCount: 1, RunningCount: 1}
 }
 
+func trafficHostCgroup(appID, cgroup string, upload, download uint64) AppBridgeStats {
+	return AppBridgeStats{
+		AppID: appID, AppTitle: "Host 测试应用", Bridge: hostAppTarget(appID),
+		NetworkMode: "host", CgroupPath: cgroup, UploadBytes: upload,
+		DownloadBytes: download, ContainerCount: 1, RunningCount: 1,
+	}
+}
+
+func TestAppTrafficStateUsesIndependentHostCgroupBaselines(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	start := time.Date(2026, 8, 28, 9, 0, 0, 0, time.Local)
+	appID := "cloud.lazycat.app.host-multi"
+
+	state.sample([]AppBridgeStats{
+		trafficHostCgroup(appID, "system.slice/app-a.scope", 100, 200),
+		trafficHostCgroup(appID, "system.slice/app-b.scope", 300, 500),
+	}, start)
+	// Container A restarted and its cgroup counter reset. Container B kept
+	// running and advanced; its delta must not be discarded with A's reset.
+	state.sample([]AppBridgeStats{
+		trafficHostCgroup(appID, "system.slice/app-a.scope", 10, 20),
+		trafficHostCgroup(appID, "system.slice/app-b.scope", 360, 580),
+	}, start.Add(2*time.Second))
+
+	app := state.overview(true).Apps[0]
+	if app.TotalUpload != 460 || app.TotalDownload != 780 {
+		t.Fatalf("host totals = upload %d download %d, want 460/780", app.TotalUpload, app.TotalDownload)
+	}
+	if app.TodayUpload != 60 || app.TodayDownload != 80 {
+		t.Fatalf("host period totals = upload %d download %d, want 60/80", app.TodayUpload, app.TodayDownload)
+	}
+	if app.UploadBPS != 30 || app.DownloadBPS != 40 {
+		t.Fatalf("host rates = upload %v download %v, want 30/40", app.UploadBPS, app.DownloadBPS)
+	}
+	if len(state.baselines) != 2 {
+		t.Fatalf("baselines = %#v, want one baseline per cgroup", state.baselines)
+	}
+	if app.ContainerCount != 2 || app.RunningCount != 2 {
+		t.Fatalf("container counts = %d/%d, want 2/2", app.ContainerCount, app.RunningCount)
+	}
+}
+
+func TestAppTrafficBaselineKeyKeepsHostCgroupStableAcrossAppMetadataGaps(t *testing.T) {
+	first := trafficHostCgroup("cloud.lazycat.app.host", "system.slice/app.scope", 100, 200)
+	missing := first
+	missing.AppID = ""
+	if got := appTrafficBaselineKey(first); got != appTrafficBaselineKey(missing) {
+		t.Fatalf("host baseline key changed across metadata gap: %q vs %q", appTrafficBaselineKey(first), appTrafficBaselineKey(missing))
+	}
+}
+
+func TestAppTrafficBaselineKeyPreservesBridgePersistenceFormat(t *testing.T) {
+	item := trafficBridge("cloud.lazycat.app.bridge", "lzc-br-legacy", 1, 2)
+	if got := appTrafficBaselineKey(item); got != "lzc-br-legacy" {
+		t.Fatalf("bridge baseline key=%q, want legacy bridge key", got)
+	}
+}
+
+func TestAppTrafficStatePersistsIndependentHostCgroupBaselines(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 8, 28, 10, 0, 0, 0, time.Local)
+	appID := "cloud.lazycat.app.host-persist"
+	state := newAppTrafficState(dir)
+	state.sample([]AppBridgeStats{
+		trafficHostCgroup(appID, "system.slice/one.scope", 100, 200),
+		trafficHostCgroup(appID, "system.slice/two.scope", 300, 400),
+	}, start)
+	state.flush()
+
+	reloaded := newAppTrafficState(dir)
+	reloaded.sample([]AppBridgeStats{
+		trafficHostCgroup(appID, "system.slice/one.scope", 130, 250),
+		trafficHostCgroup(appID, "system.slice/two.scope", 370, 490),
+	}, start.Add(2*time.Second))
+	app := reloaded.overview(true).Apps[0]
+	if app.TotalUpload != 500 || app.TotalDownload != 740 {
+		t.Fatalf("persisted host totals = %d/%d, want 500/740", app.TotalUpload, app.TotalDownload)
+	}
+	if app.TodayUpload != 100 || app.TodayDownload != 140 {
+		t.Fatalf("persisted host period totals = %d/%d, want 100/140", app.TodayUpload, app.TodayDownload)
+	}
+}
+
+func TestAppTrafficStateAggregatesBridgeAndHostDeltasIndependently(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	start := time.Date(2026, 8, 28, 11, 0, 0, 0, time.Local)
+	appID := "cloud.lazycat.app.mixed"
+	state.sample([]AppBridgeStats{
+		trafficBridge(appID, "lzc-br-mixed", 1000, 2000),
+		trafficHostCgroup(appID, "system.slice/mixed.scope", 100, 200),
+	}, start)
+	state.sample([]AppBridgeStats{
+		trafficBridge(appID, "lzc-br-mixed", 1060, 2080),
+		trafficHostCgroup(appID, "system.slice/mixed.scope", 130, 250),
+	}, start.Add(2*time.Second))
+
+	app := state.overview(true).Apps[0]
+	if app.TodayUpload != 90 || app.TodayDownload != 130 {
+		t.Fatalf("mixed deltas = %d/%d, want 90/130", app.TodayUpload, app.TodayDownload)
+	}
+	if len(state.baselines) != 2 {
+		t.Fatalf("mixed baselines=%#v", state.baselines)
+	}
+}
+
 func TestAppTrafficStateAccumulatesLifetimeTotalsAndKeepsBaselines(t *testing.T) {
 	state := newAppTrafficState(t.TempDir())
 	start := time.Date(2026, 8, 21, 9, 0, 0, 0, time.Local)
@@ -89,6 +194,31 @@ func TestAppTrafficStateKeepsBaselineDuringMetadataGap(t *testing.T) {
 	}
 	if app.TodayUpload != 180 || app.TodayDownload != 180 {
 		t.Fatalf("metadata gap lost period traffic: upload=%d download=%d", app.TodayUpload, app.TodayDownload)
+	}
+}
+
+func TestAppTrafficOverviewFiltersInactiveAppsWithoutDroppingHistory(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	start := time.Date(2026, 8, 21, 9, 0, 0, 0, time.Local)
+	activeID := "cloud.lazycat.app.active"
+	stoppedID := "cloud.lazycat.app.stopped"
+
+	state.sample([]AppBridgeStats{
+		trafficBridge(activeID, "lzc-br-active", 100, 200),
+		trafficBridge(stoppedID, "lzc-br-stopped", 300, 400),
+	}, start)
+	state.sample([]AppBridgeStats{
+		trafficBridge(activeID, "lzc-br-active", 160, 260),
+		{AppID: stoppedID, AppTitle: "已停止应用", Bridge: "lzc-br-stopped", ContainerCount: 1, RunningCount: 0, UploadBytes: 300, DownloadBytes: 400},
+	}, start.Add(2*time.Second))
+
+	allHistory := state.overview(true).Apps
+	if len(allHistory) != 2 {
+		t.Fatalf("persisted history apps = %d, want 2", len(allHistory))
+	}
+	visible := state.overviewForActiveApps(true, map[string]bool{activeID: true}).Apps
+	if len(visible) != 1 || visible[0].AppID != activeID {
+		t.Fatalf("visible apps = %#v, want only %q", visible, activeID)
 	}
 }
 

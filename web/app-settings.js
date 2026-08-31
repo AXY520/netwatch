@@ -17,6 +17,9 @@ function applySettingsToForm() {
     if (els.settingAppTrafficRealtimeEnabled) {
         els.settingAppTrafficRealtimeEnabled.checked = state.settings.app_traffic_realtime_enabled !== false;
     }
+	if (els.settingHostNetworkExperimentalEnabled) {
+		els.settingHostNetworkExperimentalEnabled.checked = state.settings.host_network_experimental_enabled === true;
+	}
     if (els.settingBackgroundMonitorEnabled) {
         els.settingBackgroundMonitorEnabled.checked = !!state.settings.background_monitor_enabled;
     }
@@ -126,6 +129,8 @@ async function loadSettings() {
             nic_realtime_enabled: settingsData.nic_realtime_enabled !== false,
             nic_realtime_interval_sec: settingsData.nic_realtime_interval_sec || 1,
             app_traffic_realtime_enabled: settingsData.app_traffic_realtime_enabled !== false,
+			host_network_experimental_enabled: settingsData.host_network_experimental_enabled === true,
+			app_proxy: settingsData.app_proxy || { protocol: 'socks5', host: '127.0.0.1', port: 7890 },
             chart_time_label_interval: settingsData.chart_time_label_interval || 0,
             dashboard_collapsed_sections: settingsData.dashboard_collapsed_sections || [],
             background_monitor_enabled: !!settingsData.background_monitor_enabled,
@@ -162,7 +167,6 @@ async function loadSettings() {
         };
         applySettingsToForm();
         if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
-        loadLazycatDevices();
     } catch (error) {
         console.error(error);
     }
@@ -174,6 +178,7 @@ async function saveSettings() {
         nic_realtime_enabled: !!(els.settingNICRealtimeEnabled && els.settingNICRealtimeEnabled.checked),
         nic_realtime_interval_sec: parseInt((els.settingNICRealtimeIntervalSec && els.settingNICRealtimeIntervalSec.value) || '1', 10) || 1,
         app_traffic_realtime_enabled: !!(els.settingAppTrafficRealtimeEnabled && els.settingAppTrafficRealtimeEnabled.checked),
+        host_network_experimental_enabled: !!(els.settingHostNetworkExperimentalEnabled && els.settingHostNetworkExperimentalEnabled.checked),
         chart_time_label_interval: state.settings.chart_time_label_interval,
         background_monitor_enabled: !!(els.settingBackgroundMonitorEnabled && els.settingBackgroundMonitorEnabled.checked),
         background_monitor_interval_sec: parseInt((els.settingBackgroundMonitorIntervalSec && els.settingBackgroundMonitorIntervalSec.value) || '60', 10) || 60,
@@ -208,6 +213,7 @@ async function saveSettings() {
         notification_device_ids: state.settings.notification_device_ids || []
     };
 
+
     try {
         var saved;
         if (window.NetwatchAPI) {
@@ -237,9 +243,9 @@ async function saveSettings() {
         if (window.__app.refreshAppTraffic) window.__app.refreshAppTraffic();
         if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
         NetwatchShared.showToast(i18n('save_settings_success'), 'success');
-    } catch (error) {
-        console.error(error);
-        NetwatchShared.showToast(i18n('save_settings_fail'), 'error');
+	} catch (error) {
+		console.error(error);
+		NetwatchShared.showToast(i18n('save_settings_fail') + ': ' + (error.message || ''), 'error');
     }
 }
 

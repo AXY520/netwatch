@@ -194,21 +194,41 @@ func (s *Service) startAppLifecycleObserver() {
 
 func (s *Service) observeAppTraffic() {
 	items := CollectAppTraffic().Bridges
+	if err := s.migrateLegacyAppInstancePolicies(items); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
+	}
 	if s.appTraffic != nil {
 		s.appTraffic.sample(items, time.Now())
 		s.reconcileAppTrafficLimits(items)
 	}
+	blockedApps := s.containers.snapshotBlockedApps()
+	_, proxyApps, proxyConfigs := s.settings.appProxyState()
+	_ = s.reconcileAppProxyControls(s.LifecycleContext(), items, proxyApps, proxyConfigs, blockedApps)
+	_ = s.reconcileAppInternetControls(s.LifecycleContext(), items, blockedApps)
 }
 
 func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
+	experimentalHost := s.settings.hostNetworkExperimental()
 	snapshot := CollectAppTraffic()
 	if s.appTraffic == nil {
 		return snapshot
 	}
+	if err := s.migrateLegacyAppInstancePolicies(snapshot.Bridges); err != nil {
+		logger.Warn("migrate multi-instance application policy: %v", err)
+	}
 	s.appTraffic.sample(snapshot.Bridges, time.Now())
 	s.reconcileAppTrafficLimits(snapshot.Bridges)
-	overview := s.appTraffic.overview(trafficControlAvailable())
+	overview := s.appTraffic.overviewForActiveAppsWithControls(
+		trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges), experimentalHost,
+	)
 	snapshot.Apps = overview.Apps
+	blocked := s.containers.snapshotBlocked()
+	for index := range snapshot.Apps {
+		app := &snapshot.Apps[index]
+		app.NetworkPolicy = s.appNetworkPolicyStatus(*app, blocked)
+		app.TrafficLimitAllowed = app.NetworkPolicy.Capabilities.UploadLimit && app.NetworkPolicy.Capabilities.DownloadLimit
+		app.InternetControlAllowed = app.NetworkPolicy.Capabilities.InternetControl
+	}
 	snapshot.LimitSupport = overview.LimitSupport
 	if snapshot.Note == "" && overview.Note != "" {
 		snapshot.Note = overview.Note
@@ -216,11 +236,40 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 	return snapshot
 }
 
+// activeAppTrafficIDs identifies applications that currently have at least
+// one running container. An empty result intentionally hides persisted
+// history when current runtime metadata cannot identify a live application;
+// showing old rows in that case would make deleted apps look active.
+func activeAppTrafficIDs(items []AppBridgeStats) map[string]bool {
+	active := make(map[string]bool)
+	for _, item := range items {
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" {
+			continue
+		}
+		if item.RunningCount > 0 {
+			active[policyID] = true
+		}
+	}
+	return active
+}
+
 func (s *Service) AppTrafficHistory(appID string) []AppTrafficSample {
 	if s.appTraffic == nil {
 		return []AppTrafficSample{}
 	}
 	return s.appTraffic.history(strings.TrimSpace(appID))
+}
+
+func (s *Service) AppInstanceTrafficHistory(appID, instanceID string) ([]AppTrafficSample, error) {
+	if s.appTraffic == nil {
+		return []AppTrafficSample{}, nil
+	}
+	policyID, err := resolveAppInstancePolicyID(CollectAppTraffic().Bridges, appID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.appTraffic.history(policyID), nil
 }
 
 func watchDockerLifecycleEvents(ctx context.Context, changes chan<- struct{}) {

@@ -124,6 +124,10 @@ type MutableSettings struct {
 	// Traffic chart settings
 	ChartTimeLabelInterval    int  `json:"chart_time_label_interval"`
 	AppTrafficRealtimeEnabled bool `json:"app_traffic_realtime_enabled"`
+	// HostNetworkExperimentalEnabled gates internet control and policing for
+	// applications containing Host-network containers. Read-only accounting
+	// remains enabled because it does not alter host networking.
+	HostNetworkExperimentalEnabled bool `json:"host_network_experimental_enabled"`
 
 	// Collapsed dashboard panels, persisted server-side for all clients.
 	DashboardCollapsedSections []string `json:"dashboard_collapsed_sections,omitempty"`
@@ -131,8 +135,19 @@ type MutableSettings struct {
 	// Notification device selection
 	NotificationDeviceIDs []string `json:"notification_device_ids,omitempty"` // device IDs that should receive client notifications; empty = all
 
-	// Container network block state (bridge → mode)
-	BlockedBridges map[string]string `json:"blocked_bridges,omitempty"` // bridge name → "internet" | "all"
+	// Application network policy. BlockedApps is authoritative; BlockedBridges
+	// remains a read-time migration source for releases that persisted target IDs.
+	BlockedApps     map[string]string           `json:"blocked_apps,omitempty"`      // instance_id → "internet"; app_id is the single-instance compatibility key
+	BlockedBridges  map[string]string           `json:"blocked_bridges,omitempty"`   // legacy target → "internet" | "all"
+	AppProxy        AppProxySettings            `json:"app_proxy"`                   // default for new app proxy settings
+	ProxyApps       map[string]bool             `json:"proxy_apps,omitempty"`        // instance_id → proxy enabled
+	AppProxyConfigs map[string]AppProxySettings `json:"app_proxy_configs,omitempty"` // instance_id → saved upstream
+}
+
+type AppProxySettings struct {
+	Protocol string `json:"protocol"` // "socks5" | "http"
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
 }
 
 // ContainerRuntimeInfo is the frontend-facing container info.
@@ -143,14 +158,19 @@ type ContainerRuntimeInfo struct {
 	State string `json:"state"`
 }
 
-// AppContainerGroup groups containers by app (bridge).
+// AppContainerGroup groups containers by app and exposes the network targets
+// that can be controlled for that app (bridge and, when enabled, host cgroup).
 type AppContainerGroup struct {
-	Bridge     string                 `json:"bridge"`
-	AppID      string                 `json:"app_id,omitempty"`
-	AppTitle   string                 `json:"app_title,omitempty"`
-	Project    string                 `json:"project,omitempty"`
-	BlockMode  string                 `json:"block_mode"` // "" | "internet" | "all"
-	Containers []ContainerRuntimeInfo `json:"containers"`
+	Bridge         string                 `json:"bridge"`
+	ControlTargets []string               `json:"control_targets,omitempty"`
+	AppID          string                 `json:"app_id,omitempty"`
+	InstanceID     string                 `json:"instance_id,omitempty"`
+	UserID         string                 `json:"user_id,omitempty"`
+	MultiInstance  bool                   `json:"multi_instance,omitempty"`
+	AppTitle       string                 `json:"app_title,omitempty"`
+	Project        string                 `json:"project,omitempty"`
+	BlockMode      string                 `json:"block_mode"` // "" | "internet" | "all"
+	Containers     []ContainerRuntimeInfo `json:"containers"`
 }
 
 // AppContainersResponse is the top-level response for GET /api/v1/containers.
@@ -212,14 +232,16 @@ type AppNetworkDetail struct {
 }
 
 type NetworkConfigDevice struct {
-	Device     string `json:"device"`
-	Type       string `json:"type"`
-	State      string `json:"state"`
-	Connection string `json:"connection,omitempty"`
-	IPv4Method string `json:"ipv4_method,omitempty"`
-	IPv4       string `json:"ipv4,omitempty"`
-	Gateway    string `json:"gateway,omitempty"`
-	DNS        string `json:"dns,omitempty"`
+	Device              string `json:"device"`
+	Type                string `json:"type"`
+	State               string `json:"state"`
+	Connection          string `json:"connection,omitempty"`
+	IPv4Method          string `json:"ipv4_method,omitempty"`
+	IPv4                string `json:"ipv4,omitempty"`
+	Gateway             string `json:"gateway,omitempty"`
+	DNS                 string `json:"dns,omitempty"`
+	MACAddress          string `json:"mac_address,omitempty"`
+	PermanentMACAddress string `json:"permanent_mac_address,omitempty"`
 }
 
 type NetworkConfigDevicesResponse struct {
@@ -229,11 +251,13 @@ type NetworkConfigDevicesResponse struct {
 }
 
 type NetworkConfigApplyRequest struct {
-	Device  string `json:"device"`
-	Method  string `json:"method"`
-	Address string `json:"address"`
-	Gateway string `json:"gateway"`
-	DNS     string `json:"dns"`
+	Device     string `json:"device"`
+	Method     string `json:"method"`
+	Address    string `json:"address"`
+	Gateway    string `json:"gateway"`
+	DNS        string `json:"dns"`
+	MACAddress string `json:"mac_address,omitempty"`
+	MACOnly    bool   `json:"mac_only,omitempty"`
 }
 
 type NetworkConfigRestartRequest struct {
@@ -279,20 +303,23 @@ type NetworkConfigConfirmResult struct {
 }
 
 type NetworkConfigPendingResult struct {
-	Pending       bool   `json:"pending"`
-	ID            string `json:"id,omitempty"`
-	Device        string `json:"device,omitempty"`
-	Connection    string `json:"connection,omitempty"`
-	Method        string `json:"method,omitempty"`
-	Address       string `json:"address,omitempty"`
-	Gateway       string `json:"gateway,omitempty"`
-	DNS           string `json:"dns,omitempty"`
-	PrevMethod    string `json:"prev_method,omitempty"`
-	PrevAddress   string `json:"prev_address,omitempty"`
-	PrevGateway   string `json:"prev_gateway,omitempty"`
-	PrevDNS       string `json:"prev_dns,omitempty"`
-	RollbackUntil string `json:"rollback_until,omitempty"`
-	RemainingSec  int    `json:"remaining_sec,omitempty"`
+	Pending        bool   `json:"pending"`
+	ID             string `json:"id,omitempty"`
+	Device         string `json:"device,omitempty"`
+	Connection     string `json:"connection,omitempty"`
+	Method         string `json:"method,omitempty"`
+	Address        string `json:"address,omitempty"`
+	Gateway        string `json:"gateway,omitempty"`
+	DNS            string `json:"dns,omitempty"`
+	MACAddress     string `json:"mac_address,omitempty"`
+	MACOnly        bool   `json:"mac_only,omitempty"`
+	PrevMethod     string `json:"prev_method,omitempty"`
+	PrevAddress    string `json:"prev_address,omitempty"`
+	PrevGateway    string `json:"prev_gateway,omitempty"`
+	PrevDNS        string `json:"prev_dns,omitempty"`
+	PrevMACAddress string `json:"prev_mac_address,omitempty"`
+	RollbackUntil  string `json:"rollback_until,omitempty"`
+	RemainingSec   int    `json:"remaining_sec,omitempty"`
 }
 
 // Host bridge (VM internet / L2 bridge) types.
@@ -758,6 +785,36 @@ type BroadbandTaskStatus struct {
 	UpdatedAt       string               `json:"updated_at"`
 	Result          BroadbandSpeedResult `json:"result"`
 	Steps           []BroadbandTaskStep  `json:"steps,omitempty"`
+}
+
+type BroadbandPortPolicyTargetResult struct {
+	ID           string  `json:"id"`
+	Label        string  `json:"label"`
+	Host         string  `json:"host"`
+	Port         int     `json:"port"`
+	Protocol     string  `json:"protocol"`
+	LatencyMS    int64   `json:"latency_ms,omitempty"`
+	JitterMS     int64   `json:"jitter_ms,omitempty"`
+	DownloadMbps float64 `json:"download_mbps,omitempty"`
+	UploadMbps   float64 `json:"upload_mbps,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	OK           bool    `json:"ok,omitempty"`
+}
+
+type BroadbandPortPolicyTaskStatus struct {
+	ID              string                            `json:"id,omitempty"`
+	Stage           string                            `json:"stage"`
+	ProgressPercent int                               `json:"progress_percent"`
+	Running         bool                              `json:"running"`
+	Finished        bool                              `json:"finished"`
+	Canceled        bool                              `json:"canceled"`
+	Message         string                            `json:"message,omitempty"`
+	UpdatedAt       string                            `json:"updated_at"`
+	Provider        string                            `json:"provider,omitempty"`
+	Host            string                            `json:"host,omitempty"`
+	Protocol        string                            `json:"protocol,omitempty"`
+	Targets         []BroadbandPortPolicyTargetResult `json:"targets,omitempty"`
+	Error           string                            `json:"error,omitempty"`
 }
 
 // BroadbandTaskStep 记录测速过程中的一步操作,供前端实时展示后端正在做什么。

@@ -5,15 +5,6 @@ import (
 	"path/filepath"
 )
 
-func firstExistingDir(paths ...string) string {
-	for _, p := range paths {
-		if st, err := os.Stat(p); err == nil && st.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
 func firstExistingFile(paths ...string) string {
 	for _, p := range paths {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
@@ -42,8 +33,4 @@ func systemCgroupV2Root() string {
 		}
 	}
 	return ""
-}
-
-func systemBPFRoot() string {
-	return firstExistingDir("/host/sys/fs/bpf", "/sys/fs/bpf")
 }

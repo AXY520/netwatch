@@ -41,6 +41,9 @@ func (h *Handler) registerSpeedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/speed/broadband/server/task", h.handleBroadbandTask)
 	mux.HandleFunc("/api/v1/speed/broadband/server/cancel", h.handleBroadbandCancel)
 	mux.HandleFunc("/api/v1/speed/broadband/client/result", h.handleBroadbandClientResult)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/start", h.handleBroadbandPortPolicyStart)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/task", h.handleBroadbandPortPolicyTask)
+	mux.HandleFunc("/api/v1/speed/broadband/port-policy/cancel", h.handleBroadbandPortPolicyCancel)
 	mux.HandleFunc("/api/v1/speed/broadband/history", h.handleBroadbandHistory)
 	mux.HandleFunc("/api/v1/speed/local/history", h.handleLocalHistory)
 	mux.HandleFunc("/api/v1/speed/history/note", h.handleSpeedHistoryNote)
@@ -64,6 +67,8 @@ func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
 	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
 	mux.HandleFunc("/api/v1/network/app-traffic/limit", h.handleAppTrafficLimit)
+	mux.HandleFunc("/api/v1/network/app-policy", h.handleAppNetworkPolicy)
+	mux.HandleFunc("/api/v1/network/app-proxy/settings", h.handleAppProxySettings)
 }
 
 func (h *Handler) registerNetworkControlRoutes(mux *http.ServeMux) {

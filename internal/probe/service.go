@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"netwatch/internal/dockerlzc"
 	"netwatch/internal/logger"
 )
 
@@ -63,14 +64,17 @@ type Service struct {
 	lanDeviceSubsMu sync.Mutex
 
 	// domain subsystems
-	settings          *settingsStore
-	lan               *lanHub
-	notify            *notifyHub
-	containers        *containerControlState
-	appTraffic        *appTrafficState
-	appTrafficLimiter *appTrafficLimiter
-	network           *networkMutationState
-	tasks             *taskRuntime
+	settings              *settingsStore
+	lan                   *lanHub
+	notify                *notifyHub
+	containers            *containerControlState
+	appTraffic            *appTrafficState
+	appTrafficLimiter     *appTrafficLimiter
+	appNetworkController  *appNetworkController
+	appInternetController *appInternetController
+	appProxyController    *appProxyController
+	network               *networkMutationState
+	tasks                 *taskRuntime
 
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
@@ -103,11 +107,19 @@ func NewService(cfg Config) *Service {
 		tasks:                 newTaskRuntime(),
 	}
 	s.egressCond = sync.NewCond(&s.egressMu)
+	s.appNetworkController = newAppNetworkController(s, s.appTrafficLimiter)
+	s.appInternetController = newAppInternetController()
+	s.appProxyController = newAppProxyController()
 	s.nicStats.onSampled = s.broadcastNICRealtime
 	s.closeCtx, s.closeCancel = context.WithCancel(context.Background())
 	s.loadHistory()
 	if hasSaved {
 		s.applyMutableSettings(saved, false)
+	}
+	// Host network controls are opt-in. Clean rules persisted by an older
+	// enabled session before any worker or request can observe them.
+	if !s.settings.hostNetworkExperimental() {
+		s.clearHostNetworkExperimentalState(true)
 	}
 	s.nicStats.start(s.nicStop, s.nicDone)
 	s.startAppLifecycleObserver()
@@ -157,9 +169,6 @@ func (s *Service) Close() {
 		if s.tasks != nil {
 			s.tasks.cancelAll()
 		}
-		if s.appTraffic != nil {
-			s.appTraffic.flush()
-		}
 		s.closeCancel()
 		close(s.nicStop)
 		close(s.appLifecycleStop)
@@ -169,6 +178,18 @@ func (s *Service) Close() {
 		<-s.appLifecycleDone
 		<-s.backgroundMonitorDone
 		<-s.lanInterfaceDone
+		if s.appTraffic != nil {
+			s.appTraffic.flush()
+		}
+		if s.appTrafficLimiter != nil && s.appTrafficLimiter.host != nil {
+			if err := s.appTrafficLimiter.host.close(); err != nil {
+				logger.Warn("close Host/Mixed traffic limiter: %v", err)
+			}
+		}
+		if s.appProxyController != nil {
+			s.appProxyController.close()
+		}
+		resetHostCgroupBPF()
 	})
 }
 
@@ -205,6 +226,7 @@ func (s *Service) GetMutableSettings() MutableSettings {
 		DomesticSites:          append([]SiteTarget(nil), s.cfg.DomesticSites...),
 		GlobalSites:            append([]SiteTarget(nil), s.cfg.GlobalSites...),
 		AlertWebhookURL:        s.alertWebhookURL,
+		BlockedApps:            s.containers.snapshotBlockedApps(),
 		BlockedBridges:         s.containers.snapshotBlocked(),
 	}
 	s.mu.RUnlock()
@@ -234,10 +256,26 @@ func (s *Service) applyMutableSettings(in MutableSettings, persist bool) {
 	if in.BlockedBridges != nil {
 		s.containers.replaceBlocked(in.BlockedBridges)
 	}
+	if in.BlockedApps != nil {
+		s.containers.replaceBlockedApps(in.BlockedApps)
+	}
 	dataDir := s.cfg.DataDir
 	s.mu.Unlock()
 
+	previousHostExperimental := s.settings.hostNetworkExperimental()
+	if persist {
+		// Proxy changes need firewall reconciliation and rollback, so the generic
+		// settings endpoint cannot mutate them behind the dedicated controller.
+		in.AppProxy, in.ProxyApps, in.AppProxyConfigs = s.settings.appProxyState()
+	}
 	s.settings.apply(in)
+	if previousHostExperimental != in.HostNetworkExperimentalEnabled {
+		InvalidateAppTrafficMetadataCache()
+		dockerlzc.InvalidateBridgeMapCache()
+	}
+	if persist && !in.HostNetworkExperimentalEnabled {
+		s.clearHostNetworkExperimentalState(false)
+	}
 	s.lan.applyPolicy(in)
 	s.notify.applyFromSettings(in)
 	s.nicStats.configure(in.NICRealtimeEnabled, in.NICRealtimeIntervalSec)
