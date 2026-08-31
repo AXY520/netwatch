@@ -562,11 +562,15 @@ function renderNetworkInfo(networkInfo) {
         } else {
             mainLabel = iface.label || ifaceFallbackLabel(iface.link_type) || iface.name || '\u2014\u2014\u2014';
         }
-        var subtitle = iface.name && iface.name !== mainLabel ? '<br><small style="color:var(--text-muted)">' + escapeHtml(iface.name) + '</small>' : '';
+        var subtitle = iface.name && iface.name !== mainLabel ? '<div class="iface-device-name">' + escapeHtml(iface.name) + '</div>' : '';
         var statusCell = formatDeviceStatus(iface.device_status);
+        var linkSpeed = formatInterfaceLinkSpeed(iface);
+        var speedTitle = iface.link_type === 'wifi' ? formatWiFiLinkSpeedTitle(iface) : i18n('link_speed_col');
+        var speedBadge = linkSpeed ? '<span class="iface-speed-badge" title="' + escapeHtml(speedTitle) + '">' + escapeHtml(linkSpeed) + '</span>' : '';
+        var interfaceCell = '<div class="iface-cell-value"><div class="iface-title-line"><span class="iface-primary">' + escapeHtml(mainLabel) + '</span>' + speedBadge + '</div>' + subtitle + '</div>';
         var ipv4List = (iface.ipv4 || []).filter(function (s) { return s; });
         var ipv6List = (iface.ipv6 || []).filter(function (s) { return !/^fe80:/i.test(s); });
-        return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + mainLabel + subtitle + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
+        return '<tr><td class="col-iface" data-label="' + i18n('iface_col') + '">' + interfaceCell + '</td><td class="col-status" data-label="' + i18n('status_col') + '">' + statusCell + '</td><td class="col-ipv4" data-label="' + i18n('ipv4_col') + '">' + (ipv4List.length ? ipv4List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-ipv6" data-label="' + i18n('ipv6_col') + '">' + (ipv6List.length ? ipv6List.map(escapeHtml).join('<br>') : '\u2014\u2014\u2014') + '</td><td class="col-mac" data-label="MAC"><small>' + (escapeHtml(iface.hardware_addr) || '\u2014\u2014\u2014') + '</small></td></tr>';
     }).join('') || '<tr><td colspan="5" class="placeholder">' + i18n('no_target_nic') + '</td></tr>';
     NetwatchShared.setObservationStatus(els.interfacesStatus, {
         state: interfaces.length ? 'fresh' : 'empty',
@@ -578,31 +582,66 @@ function renderNetworkInfo(networkInfo) {
 }
 window.__app.renderNetworkInfo = renderNetworkInfo;
 
+function formatLinkSpeedMbps(value) {
+    var mbps = Number(value);
+    if (!Number.isFinite(mbps) || mbps <= 0) return '';
+    if (mbps < 1000) {
+        var roundedMbps = Math.round(mbps * 10) / 10;
+        return (Number.isInteger(roundedMbps) ? roundedMbps.toFixed(0) : roundedMbps.toFixed(1)) + ' Mbit/s';
+    }
+    var gbps = mbps / 1000;
+    return (Number.isInteger(gbps) ? gbps.toFixed(0) : gbps.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')) + ' Gbit/s';
+}
+window.__app.formatLinkSpeedMbps = formatLinkSpeedMbps;
+
+function formatInterfaceLinkSpeed(iface) {
+    iface = iface || {};
+    if (iface.link_type !== 'wifi') return formatLinkSpeedMbps(iface.link_speed_mbps);
+    return formatLinkSpeedMbps(iface.link_speed_tx_mbps) || formatLinkSpeedMbps(iface.link_speed_rx_mbps);
+}
+window.__app.formatInterfaceLinkSpeed = formatInterfaceLinkSpeed;
+
+function formatWiFiLinkSpeedTitle(iface) {
+    var details = [];
+    var rx = formatLinkSpeedMbps(iface && iface.link_speed_rx_mbps);
+    var tx = formatLinkSpeedMbps(iface && iface.link_speed_tx_mbps);
+    if (rx) details.push(i18n('wifi_link_speed_receive') + ' ' + rx);
+    if (tx) details.push(i18n('wifi_link_speed_transmit') + ' ' + tx);
+    return i18n('wifi_link_speed_title') + (details.length ? ': ' + details.join(', ') : '');
+}
+window.__app.formatWiFiLinkSpeedTitle = formatWiFiLinkSpeedTitle;
+
 function natLabel(type) {
     switch (type) {
-        case 'NAT1': return 'NAT1 - Full Cone';
+        case 'NAT1': return 'NAT1 - Public / Open';
         case 'NAT2': return 'NAT2 - Restricted Cone';
         case 'NAT3': return 'NAT3 - Port Restricted';
-        case 'NAT4': return 'NAT4 - Symmetric';
+		case 'NAT2_OR_NAT3': return 'NAT2 / NAT3 - Cone NAT';
+        case 'NAT4': return 'NAT4 - Symmetric-like';
         default: return i18n('unknown');
     }
 }
 
 var natExplain = {
-    NAT1: ['完全锥形', '极佳', '外部任何主机都可以通过映射的公网地址直接访问内网设备。客户端与微服直连场景最为友好。'],
+	NAT1: ['公网直连', '极佳', '本地 UDP 地址与公网映射一致，未观察到地址转换。'],
     NAT2: ['受限锥形', '良好', '外部主机必须先收到内网设备的请求后才能回复。安全性更高，客户端与微服直连仍可正常使用。'],
     NAT3: ['端口受限锥形', '一般', '不仅限制源 IP，还限制源端口。客户端与微服直连可能受到影响。'],
-    NAT4: ['对称型', '较差', '每个不同的目标地址和端口组合都会分配不同的映射。P2P 打洞极其困难，严重影响客户端与微服直连体验。']
+	NAT2_OR_NAT3: ['锥形 NAT', '待进一步区分', '不同 STUN 目标得到相同映射；普通 Binding 探测无法可靠区分 NAT2 与 NAT3。'],
+    NAT4: ['目标相关映射', '较差', '同一 UDP socket 面向不同目标时映射发生变化，符合对称型 NAT 特征。']
 };
 
 function renderNATInfo(nat) {
     nat = nat || {};
     if (els.natType) els.natType.textContent = natLabel(nat.type);
     var explain = natExplain[nat.type];
-    if (els.natMeta) els.natMeta.textContent = explain ? (explain[0] + ' / ' + explain[1]) : '';
-    if (els.natNote) els.natNote.textContent = explain ? explain[2] : '';
+	var meta = explain ? (explain[0] + ' / ' + explain[1]) : '';
+	if (nat.confidence) meta += (meta ? ' · ' : '') + String(nat.confidence).toUpperCase();
+    if (els.natMeta) els.natMeta.textContent = meta;
+	var note = nat.diagnostic || (explain ? explain[2] : '') || nat.note || '';
+	if (nat.proxy_affected && note.indexOf('代理') < 0) note += (note ? '；' : '') + '检测到代理 TUN，结果可能受分流规则影响';
+	if (els.natNote) els.natNote.textContent = note;
     NetwatchShared.setObservationStatus(els.natStatus, {
-        state: nat.type ? 'fresh' : (nat.error ? 'error' : 'empty'),
+		state: nat.generated_at ? 'fresh' : (nat.error ? 'error' : 'empty'),
         generatedAt: nat.generated_at,
         staleAfterSeconds: 900,
         error: nat.error

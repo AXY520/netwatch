@@ -159,7 +159,7 @@ function initAppTraffic() {
         row.innerHTML = '<td class="col-app"><div class="app-cell"><div class="app-cell-info"></div></div></td>' +
             '<td class="col-status"></td>' +
             (showRealtime ? '<td class="col-rate"></td>' : '') +
-            '<td class="col-period"></td><td class="col-period"></td><td class="col-total"></td><td class="col-actions"></td>';
+            '<td class="col-period col-today"></td><td class="col-period col-month"></td><td class="col-total"></td><td class="col-actions"></td>';
         return row;
     };
     var updateTrafficRow = function (row, item, showRealtime, data, index) {
@@ -167,13 +167,21 @@ function initAppTraffic() {
         row.dataset.instanceId = appTrafficInstanceID(item);
         row.dataset.appRowKey = trafficRowKey(item, index);
         updateTrafficAppCell(row.querySelector('.col-app'), item);
-        setTrafficCellHTML(row.querySelector('.col-status'), appTrafficControlStatusMarkup(item));
+        var statusCell = row.querySelector('.col-status');
+        statusCell.dataset.label = i18n('status_col');
+        setTrafficCellHTML(statusCell, appTrafficControlStatusMarkup(item));
         var rateCell = row.querySelector('.col-rate');
-        if (showRealtime) setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
+        if (showRealtime) {
+            rateCell.dataset.label = i18n('app_traffic_realtime');
+            setTrafficCellHTML(rateCell, appTrafficDualValue(item.upload_bps, item.download_bps, true));
+        }
         var periods = row.querySelectorAll('.col-period');
+        periods[0].dataset.label = i18n('app_traffic_today');
+        periods[1].dataset.label = i18n('app_traffic_month');
         setTrafficCellHTML(periods[0], appTrafficDualValue(item.today_upload, item.today_download, false));
         setTrafficCellHTML(periods[1], appTrafficDualValue(item.month_upload, item.month_download, false));
         var total = row.querySelector('.col-total');
+        total.dataset.label = i18n('total');
         setTrafficCellHTML(total, appTrafficDualValue(item.total_upload, item.total_download, false));
         var actions = row.querySelector('.col-actions');
         setTrafficCellHTML(actions, appTrafficMoreMenu(item, data.limit_support, activeMenuAppID));

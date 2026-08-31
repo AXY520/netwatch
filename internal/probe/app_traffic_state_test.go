@@ -246,14 +246,16 @@ func TestAppTrafficStateMigratesLegacyBridgeHistoryWhenAppIDIsKnown(t *testing.T
 	dir := t.TempDir()
 	bridge := "lzc-br-legacy"
 	appID := "cloud.lazycat.app.example"
+	current := time.Now()
+	boundary := time.Date(current.Year(), current.Month(), current.Day()+1, 0, 0, 0, 0, time.Local)
 	points := map[string][]legacyAppTrafficPoint{
 		bridge: {
-			{Timestamp: "2026-08-20 23:59:00", RxBytes: 100, TxBytes: 200},
-			{Timestamp: "2026-08-20 23:59:30", RxBytes: 160, TxBytes: 260},
-			{Timestamp: "2026-08-21 00:00:30", RxBytes: 200, TxBytes: 340},
+			{Timestamp: boundary.Add(-time.Minute).Format(time.DateTime), RxBytes: 100, TxBytes: 200},
+			{Timestamp: boundary.Add(-30 * time.Second).Format(time.DateTime), RxBytes: 160, TxBytes: 260},
+			{Timestamp: boundary.Add(30 * time.Second).Format(time.DateTime), RxBytes: 200, TxBytes: 340},
 			// A reset must not turn the old absolute counter into new traffic.
-			{Timestamp: "2026-08-21 00:01:00", RxBytes: 10, TxBytes: 20, Discontinuity: true},
-			{Timestamp: "2026-08-21 00:02:00", RxBytes: 40, TxBytes: 70},
+			{Timestamp: boundary.Add(time.Minute).Format(time.DateTime), RxBytes: 10, TxBytes: 20, Discontinuity: true},
+			{Timestamp: boundary.Add(2 * time.Minute).Format(time.DateTime), RxBytes: 40, TxBytes: 70},
 		},
 	}
 	body, err := json.Marshal(points)
@@ -268,7 +270,7 @@ func TestAppTrafficStateMigratesLegacyBridgeHistoryWhenAppIDIsKnown(t *testing.T
 	if len(state.legacyBridges) != 1 {
 		t.Fatalf("legacy bridges = %#v", state.legacyBridges)
 	}
-	now := time.Date(2026, 8, 21, 0, 3, 0, 0, time.Local)
+	now := boundary.Add(3 * time.Minute)
 	state.sample([]AppBridgeStats{trafficBridge(appID, bridge, 50, 80)}, now)
 
 	app := state.overview(true).Apps[0]
@@ -434,5 +436,118 @@ func TestAppTrafficStatePreservesUnresolvedLegacyBridgeHistory(t *testing.T) {
 	got := reloaded.legacyBridges["lzc-br-unresolved"]
 	if len(got) != len(points["lzc-br-unresolved"]) {
 		t.Fatalf("unresolved legacy history was lost: %#v", reloaded.legacyBridges)
+	}
+}
+
+func TestCompactAppTrafficSamplesKeepsRecentMinutesAndArchivesTheRest(t *testing.T) {
+	now := time.Date(2026, 8, 31, 20, 0, 0, 0, time.Local)
+	samples := make([]AppTrafficSample, 0, 26*60+1)
+	for minute := -26 * 60; minute <= 0; minute++ {
+		total := uint64(minute + 26*60 + 1)
+		samples = append(samples, AppTrafficSample{
+			Timestamp:     now.Add(time.Duration(minute) * time.Minute).Format(time.DateTime),
+			UploadTotal:   total,
+			DownloadTotal: total * 2,
+		})
+	}
+
+	compacted := compactAppTrafficSamples(samples, now)
+	if len(compacted) < 380 || len(compacted) > appTrafficCompactedCapacity {
+		t.Fatalf("compacted samples = %d, want roughly 24h tiered history", len(compacted))
+	}
+	if cap(compacted) > appTrafficCompactedCapacity {
+		t.Fatalf("compacted capacity = %d, want <= %d", cap(compacted), appTrafficCompactedCapacity)
+	}
+
+	horizonStart := now.Add(-appTrafficHistoryHorizon)
+	recentStart := now.Add(-appTrafficRecentWindow)
+	archiveBuckets := map[int64]bool{}
+	recentCount := 0
+	for _, sample := range compacted {
+		sampledAt, err := time.ParseInLocation(time.DateTime, sample.Timestamp, time.Local)
+		if err != nil {
+			t.Fatalf("invalid compacted timestamp %q: %v", sample.Timestamp, err)
+		}
+		if sampledAt.Before(horizonStart) {
+			t.Fatalf("sample older than horizon retained: %s", sample.Timestamp)
+		}
+		if !sampledAt.Before(recentStart) {
+			recentCount++
+			continue
+		}
+		bucket := sampledAt.Unix() / int64(appTrafficArchiveResolution/time.Second)
+		if archiveBuckets[bucket] {
+			t.Fatalf("archive bucket %d retained more than once", bucket)
+		}
+		archiveBuckets[bucket] = true
+	}
+	if recentCount != 2*60+1 {
+		t.Fatalf("recent minute samples = %d, want %d", recentCount, 2*60+1)
+	}
+	last := compacted[len(compacted)-1]
+	wantLast := samples[len(samples)-1]
+	if last != wantLast {
+		t.Fatalf("history tail = %#v, want %#v", last, wantLast)
+	}
+}
+
+func TestAppTrafficStateCompactsPersistedHistoryWithoutLosingTotals(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().Truncate(time.Second)
+	appID := "cloud.lazycat.app.large-history"
+	samples := make([]AppTrafficSample, 0, 26*60+1)
+	for minute := -26 * 60; minute <= 0; minute++ {
+		total := uint64(minute + 26*60 + 1)
+		samples = append(samples, AppTrafficSample{
+			Timestamp:     now.Add(time.Duration(minute) * time.Minute).Format(time.DateTime),
+			UploadTotal:   total,
+			DownloadTotal: total * 2,
+		})
+	}
+	persisted := appTrafficPersistedState{
+		Apps: map[string]appTrafficStoredUsage{
+			appID: {
+				AppTrafficUsage: AppTrafficUsage{AppID: appID, TotalUpload: 9_000, TotalDownload: 18_000},
+				Samples:         samples,
+			},
+			"cloud.lazycat.app.stale": {
+				AppTrafficUsage: AppTrafficUsage{AppID: "cloud.lazycat.app.stale", TotalUpload: 123, TotalDownload: 456},
+				Samples: []AppTrafficSample{{
+					Timestamp: now.Add(-30 * 24 * time.Hour).Format(time.DateTime), UploadTotal: 123, DownloadTotal: 456,
+				}},
+			},
+		},
+		Baselines: map[string]appTrafficBridgeBaseline{},
+		Limits:    map[string]AppTrafficLimit{},
+	}
+	pretty, err := json.MarshalIndent(persisted, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "app_traffic_history.json")
+	if err := os.WriteFile(path, pretty, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state := newAppTrafficState(dir)
+	entry := state.apps[appID]
+	if len(entry.Samples) > appTrafficCompactedCapacity {
+		t.Fatalf("loaded samples = %d, want <= %d", len(entry.Samples), appTrafficCompactedCapacity)
+	}
+	if entry.TotalUpload != 9_000 || entry.TotalDownload != 18_000 {
+		t.Fatalf("lifetime totals changed during compaction: %d/%d", entry.TotalUpload, entry.TotalDownload)
+	}
+	stale := state.apps["cloud.lazycat.app.stale"]
+	if len(stale.Samples) != 0 || stale.TotalUpload != 123 || stale.TotalDownload != 456 {
+		t.Fatalf("stale app compaction lost totals: %#v", stale)
+	}
+
+	state.flush()
+	compactBody, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compactBody)*2 >= len(pretty) {
+		t.Fatalf("persisted history was not compacted enough: before=%d after=%d", len(pretty), len(compactBody))
 	}
 }

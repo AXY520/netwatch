@@ -1,8 +1,11 @@
 package probe
 
 import (
+	"math"
 	"net"
 	"testing"
+
+	"netwatch/internal/lzcsdk"
 )
 
 func TestInferLinkType(t *testing.T) {
@@ -112,9 +115,63 @@ func TestNicDisplayRank(t *testing.T) {
 	}
 }
 
-
 func TestEffectiveOperStateProxyTun(t *testing.T) {
 	// Without sysfs, unknown stays unknown; function must not panic.
 	_ = effectiveOperState("Meta")
 	_ = ifaceAdminUp("Meta")
+}
+
+func TestParseLinkSpeedMbps(t *testing.T) {
+	tests := map[string]float64{
+		"100\n":      100,
+		"1000\n":     1000,
+		"2500":       2500,
+		"433.3":      433.3,
+		"-1\n":       0,
+		"4294967295": 0,
+		"unknown":    0,
+		"":           0,
+	}
+	for raw, want := range tests {
+		if got := parseLinkSpeedMbps(raw); math.Abs(got-want) > 0.001 {
+			t.Errorf("parseLinkSpeedMbps(%q) = %g, want %g", raw, got, want)
+		}
+	}
+}
+
+func TestApplySDKToInterfaceIgnoresAmbiguousWiFiLinkSpeed(t *testing.T) {
+	info := InterfaceInfo{
+		Name:     "testwifi0",
+		LinkType: "wifi",
+		Present:  true,
+		IPv4:     []string{"192.0.2.10/24"},
+	}
+	status := lzcsdk.NetStatus{
+		WirelessStatus: "connected",
+		LinkSpeedBps:   433_300_000,
+		Wifi:           lzcsdk.WifiInfo{Connected: true, SSID: "test"},
+	}
+	got := applySDKToInterface(info, status, true)
+	if got.LinkSpeedMbps != 0 {
+		t.Fatalf("wifi link speed = %g Mbps, want SDK machine-wide speed ignored", got.LinkSpeedMbps)
+	}
+}
+
+func TestApplySDKToInterfaceKeepsKernelLinkSpeed(t *testing.T) {
+	info := InterfaceInfo{
+		Name:          "testwifi0",
+		LinkType:      "wifi",
+		Present:       true,
+		IPv4:          []string{"192.0.2.10/24"},
+		LinkSpeedMbps: 866.7,
+	}
+	status := lzcsdk.NetStatus{
+		WirelessStatus: "connected",
+		LinkSpeedBps:   433_300_000,
+		Wifi:           lzcsdk.WifiInfo{Connected: true},
+	}
+	got := applySDKToInterface(info, status, true)
+	if math.Abs(got.LinkSpeedMbps-866.7) > 0.001 {
+		t.Fatalf("wifi link speed = %g Mbps, want existing 866.7", got.LinkSpeedMbps)
+	}
 }
