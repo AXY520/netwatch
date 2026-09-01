@@ -167,6 +167,8 @@ NetWatch 只重建该来源的基线，不会重复计入旧字节数。
 TC/eBPF 分类和 policing，Mixed 共享一份应用预算。禁用外网和代理规则按 Bridge 网桥或 Host
 应用父 cgroup 展开。详细实现、环境要求和拓扑边界见
 [应用流量与网络控制实现说明](docs/app-traffic-controls.html)。
+限制网速、禁用外网和设置代理的专项数据路径与事务原理见
+[应用网络控制技术原理](docs/app-network-controls-principles.html)。
 
 `/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
 `netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、

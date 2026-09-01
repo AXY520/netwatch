@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Netwatch 应用限速、禁用外网与代理技术原理</title>
+  <style>
+    :root {
+      --page: #f3f6fa;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #5f6b7c;
+      --line: #dce3ec;
+      --brand: #1456d9;
+      --brand-soft: #eaf1ff;
+      --green: #087a55;
+      --green-soft: #e9f8f2;
+      --orange: #9a5b08;
+      --orange-soft: #fff6df;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --code: #111827;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font: 15px/1.72 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    code { padding: 1px 5px; border-radius: 5px; background: #eef2f7; font-size: .92em; }
+    pre {
+      margin: 14px 0;
+      padding: 16px 18px;
+      overflow: auto;
+      border-radius: 10px;
+      background: var(--code);
+      color: #e5e7eb;
+      font-size: 13px;
+      line-height: 1.58;
+    }
+
+    .page { width: min(1180px, calc(100% - 36px)); margin: 28px auto 64px; }
+    .hero {
+      padding: 40px;
+      overflow: hidden;
+      border: 1px solid #cfd9e8;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #fff 0%, #f6f9ff 56%, #e8f0ff 100%);
+      box-shadow: 0 12px 32px rgba(20, 39, 76, .08);
+    }
+    .eyebrow { color: var(--brand); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1, h2, h3 { line-height: 1.35; }
+    h1 { max-width: 860px; margin: 8px 0 12px; font-size: clamp(28px, 4vw, 42px); }
+    h2 { margin: 0 0 18px; padding-bottom: 11px; border-bottom: 1px solid var(--line); font-size: 23px; }
+    h3 { margin: 26px 0 10px; font-size: 18px; }
+    p { margin: 10px 0; }
+    .lead { max-width: 920px; color: var(--muted); font-size: 17px; }
+    .meta { margin-top: 20px; color: var(--muted); font-size: 13px; }
+
+    .toc, section {
+      margin-top: 20px;
+      padding: 28px 32px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 4px 16px rgba(16, 35, 64, .04);
+    }
+    .toc { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 16px; }
+    .toc a { padding: 10px 12px; border-radius: 8px; background: #f6f8fb; color: #344054; font-size: 14px; }
+    .toc a:hover { background: var(--brand-soft); color: var(--brand); text-decoration: none; }
+
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0; }
+    .card { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfe; }
+    .card strong { display: block; margin-bottom: 6px; color: var(--brand); font-size: 16px; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; margin: 18px 0; }
+    .flow > div { position: relative; min-height: 92px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfd; }
+    .flow > div:not(:last-child)::after { content: "→"; position: absolute; top: 32px; right: -9px; z-index: 1; color: var(--brand); font-weight: 700; }
+    .flow b { display: block; margin-bottom: 5px; color: var(--brand); }
+
+    table { width: 100%; margin: 16px 0; border-collapse: collapse; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f7f9fc; color: #344054; font-weight: 650; }
+    tbody tr:hover { background: #fbfcff; }
+    ul, ol { margin: 8px 0 14px 22px; padding: 0; }
+    li { margin: 5px 0; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 12px; white-space: nowrap; }
+    .note { margin: 16px 0; padding: 13px 16px; border-left: 4px solid var(--brand); border-radius: 6px; background: var(--brand-soft); }
+    .note.ok { border-left-color: var(--green); background: var(--green-soft); }
+    .note.warn { border-left-color: #e29a22; background: var(--orange-soft); }
+    .note.danger { border-left-color: var(--red); background: var(--red-soft); }
+    .small { color: var(--muted); font-size: 13px; }
+    footer { margin-top: 28px; color: var(--muted); text-align: center; font-size: 13px; }
+
+    @media (max-width: 900px) {
+      .toc { grid-template-columns: repeat(2, 1fr); }
+      .cards { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .flow > div:not(:last-child)::after { display: none; }
+    }
+    @media (max-width: 620px) {
+      .page { width: calc(100% - 18px); margin-top: 9px; }
+      .hero, section { padding: 21px 18px; border-radius: 11px; }
+      .toc { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      h2 { font-size: 20px; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <header class="hero">
+    <div class="eyebrow">Netwatch 0.10.1 · Architecture Note</div>
+    <h1>应用限速、禁用外网与设置代理的技术原理</h1>
+    <p class="lead">这三项功能共用一套“应用身份 → 内核控制目标 → 原子策略”控制面，但会根据 Bridge、Host 或 Mixed 网络拓扑选择不同的 Linux 数据面。本文说明数据包实际经过哪些 hook、状态如何提交，以及失败时如何回滚和自愈。</p>
+    <p class="meta">更新日期：2026-09-01 · 以 <code>main</code> 分支 Netwatch 0.10.1 实现为准</p>
+  </header>
+
+  <nav class="toc" aria-label="文档目录">
+    <a href="#model">1. 统一控制模型</a>
+    <a href="#limit">2. 限制网速</a>
+    <a href="#block">3. 禁用外网</a>
+    <a href="#proxy">4. 设置代理</a>
+    <a href="#transaction">5. 事务与互斥</a>
+    <a href="#lifecycle">6. 自愈与清理</a>
+    <a href="#instances">7. 多实例隔离</a>
+    <a href="#boundaries">8. 边界与排障</a>
+  </nav>
+
+  <section id="model">
+    <h2>一、统一控制模型</h2>
+    <div class="flow">
+      <div><b>发现</b>Docker socket 与懒猫包元数据找到应用、容器和网络模式。</div>
+      <div><b>定位实例</b><code>app_id</code> 表示应用，<code>instance_id</code> 表示具体用户实例。</div>
+      <div><b>生成目标</b>Bridge 绑定 <code>lzc-br-*</code>，Host 绑定应用父 cgroup。</div>
+      <div><b>能力预检</b>检查 tc、iptables、cgroup v2、eBPF 和实验开关。</div>
+      <div><b>提交策略</b>执行内核操作，全部成功后才保存期望状态。</div>
+    </div>
+
+    <p>核心抽象是 <code>AppNetworkTarget</code> 和 <code>AppNetworkPolicy</code>。前者回答“这个应用应该在哪个内核位置被识别”，后者只表达“上传/下载上限、是否允许外网、是否启用代理”。这样 API 和前端不需要理解 tc 句柄、cgroup 路径或 iptables chain。</p>
+
+    <table>
+      <thead><tr><th>拓扑</th><th>识别点</th><th>限速</th><th>禁用外网</th><th>代理</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill">Bridge</span></td><td><code>lzc-br-*</code> 网桥</td><td>网桥 TBF + police</td><td><code>filter/FORWARD</code></td><td><code>nat/PREROUTING</code></td></tr>
+        <tr><td><span class="pill">Host</span></td><td>应用父 cgroup</td><td>cgroup socket tag + 物理出口 TC/eBPF</td><td><code>filter/OUTPUT + xt_cgroup</code></td><td><code>nat/OUTPUT + xt_cgroup</code></td></tr>
+        <tr><td><span class="pill">Mixed</span></td><td>网桥 + 父 cgroup</td><td>两类流量共享一份应用预算</td><td>两类目标分别生成规则</td><td>两类目标指向同一应用适配器</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <strong>宿主执行边界：</strong>Netwatch 自身是 scratch 镜像，不依赖容器内的 tc/iptables。Bridge tc 和防火墙命令通过 <code>nsenter</code> 进入 PID 1 的 mount/network/root；涉及 <code>xt_cgroup --path</code> 时还必须加入宿主 cgroup namespace。Netwatch 以 host network 运行，Host/Mixed 的 netlink 和 TC eBPF 直接作用在宿主网络命名空间。
+    </div>
+  </section>
+
+  <section id="limit">
+    <h2>二、限制网速</h2>
+    <h3>2.1 Bridge：在应用网桥上整形与 policing</h3>
+    <div class="cards">
+      <div class="card"><strong>下载</strong>网桥向容器发包，所以在网桥 root 使用 <code>tbf</code>。Netwatch 保留句柄 <code>194:</code>，设置 rate、约 100ms burst 和 50ms latency。</div>
+      <div class="card"><strong>上传</strong>容器发出的包进入网桥 ingress，在 <code>clsact</code> 上用 <code>matchall + act_police</code>，超限包直接丢弃。</div>
+      <div class="card"><strong>局域网例外</strong>上传方向先用 flower pass 放行 RFC1918、IPv6 ULA 和 link-local，之后才进入公网 police。</div>
+    </div>
+    <pre>download: tc qdisc replace dev lzc-br-* root handle 194: tbf rate ... burst ... latency 50ms
+upload:   tc filter add dev lzc-br-* ingress pref 49152 matchall \
+          action police rate ... burst &gt;=128KiB mtu 65535 conform-exceed drop/pipe \
+          action gact pass</pre>
+    <p>上传 police 后面的 <code>gact pass</code> 不只是放行动作，它的 action statistics 还用来统计真正通过限速器的字节。这避免把被 police 丢弃的发送尝试误显示为实际上传。为兼容 GSO 大包，burst 至少 128 KiB，MTU 为 65535。</p>
+    <div class="note warn"><strong>保护其他网络组件：</strong>下载 TBF 需要占用 root qdisc。如果已经存在不属于 Netwatch 的 root qdisc，系统会拒绝限速，不会直接覆盖。</div>
+
+    <h3>2.2 Host/Mixed：先识别应用，再在物理出口限速</h3>
+    <ol>
+      <li>在应用父 slice 附着 <code>cgroup/sock_create</code>，把应用 tag 写入 socket-local-storage。容器主进程树与 <code>lzc-docker exec</code> 树都会覆盖。</li>
+      <li>在 IPv4/IPv6 默认路由的物理设备添加 <code>clsact</code>，保留原有 root qdisc。</li>
+      <li>TC ingress eBPF 通过 socket lookup 识别 Host 下载，通过反向 flow map 识别 Mixed 中 Bridge 的下载，然后在每应用 token bucket 中扣减字节。</li>
+      <li>TC egress eBPF 通过 socket tag 或 Bridge ifindex 识别上传，只在 <code>skb-&gt;mark</code> 的 <code>0x0fff0000</code> 保留位写入应用 slot。</li>
+      <li>后续 <code>fw + act_police</code> 根据 mark 执行上传 policing，通过包继续并清掉保留 mark，超限包丢弃。</li>
+    </ol>
+    <p>Mixed 应用不会再为 Bridge 目标安装第二套 TBF/police。Host 与 Bridge 都进入同一应用 generation、同一下载 bucket 和同一上传 police，因此用户设置的是应用总预算，不是“每容器各一份”。</p>
+    <div class="note"><strong>本质是 policing：</strong>Host/Mixed 的上传和下载都会丢弃超额包。TCP 通过重传和拥塞控制逐步收敛到目标速率；UDP 超限包不会缓冲，而是直接丢失。</div>
+  </section>
+
+  <section id="block">
+    <h2>三、禁用外网</h2>
+    <p>“禁用外网”不是删除容器默认路由，而是在宿主防火墙中实现“私网返回原链、其他目的地丢弃”。因此应用仍可以访问同机、局域网和懒猫内部服务，但无法访问公网。</p>
+    <table>
+      <thead><tr><th>目标</th><th>iptables hook</th><th>匹配条件</th><th>放行范围</th><th>最终动作</th></tr></thead>
+      <tbody>
+        <tr><td>Bridge</td><td><code>filter/FORWARD</code></td><td><code>-i lzc-br-*</code></td><td>RFC1918；IPv6 ULA/link-local</td><td><code>DROP</code></td></tr>
+        <tr><td>Host</td><td><code>filter/OUTPUT</code></td><td><code>-m cgroup --path ...</code></td><td>再加 loopback 和 IPv4 link-local</td><td><code>DROP</code></td></tr>
+      </tbody>
+    </table>
+    <pre>Bridge: -i lzc-br-* -d 192.168.0.0/16 -j RETURN
+        -i lzc-br-*                     -j DROP
+
+Host:   -m cgroup --path &lt;app-slice&gt; -d 192.168.0.0/16 -j RETURN
+        -m cgroup --path &lt;app-slice&gt;                      -j DROP</pre>
+    <h3>3.1 为什么使用 A/B 双缓冲 chain</h3>
+    <p>IPv4 和 IPv6 各自维护 <code>NETWATCH-FWD-A/B</code> 与 <code>NETWATCH-OUT-A/B</code>。更新时先完整写入非活动 chain，再把 <code>FORWARD/OUTPUT</code> 顶部跳转切到新 chain，最后清理旧 chain。这个过程避免在逐条更新时短暂放行公网，也为 IPv6 失败时恢复 IPv4 旧策略提供了回滚点。</p>
+    <h3>3.2 两棵 cgroup 树</h3>
+    <p>懒猫容器主进程通常位于 <code>system.slice/runc-lzc-os.scope/lzcapp.slice/...</code>，而 <code>lzc-docker exec</code> 创建的进程可能位于顶层 <code>lzcapp.slice/...</code>。Netwatch 会检查第二棵父 slice 是否实际存在，存在时同时生成规则，防止 exec shell 绕过应用策略。</p>
+    <div class="note warn"><strong>cgroup namespace 不能省：</strong><code>xt_cgroup --path</code> 相对命令调用者的 cgroup namespace 解析。所以防火墙命令使用 <code>nsenter -t 1 -m -n -C -r</code>。如果不加 <code>-C</code>，nftables 兼容后端可能报 <code>RULE_APPEND failed (Invalid argument)</code>。</div>
+  </section>
+
+  <section id="proxy">
+    <h2>四、设置代理</h2>
+    <p>代理功能并不是向应用容器注入 <code>HTTP_PROXY</code> 环境变量。这种方式只对主动读取环境变量的程序有效，无法覆盖整个应用。Netwatch 使用透明重定向：在内核中按应用截获公网流量，再由本地适配器转换为用户配置的 HTTP 或 SOCKS5 上游协议。</p>
+    <div class="flow">
+      <div><b>应用发起连接</b>目标仍是原始公网 IP 和端口。</div>
+      <div><b>NAT 匹配</b>Bridge 按入口网桥，Host 按父 cgroup 匹配。</div>
+      <div><b>REDIRECT</b>TCP，以及 SOCKS5 的 UDP，被送到该应用的动态本地端口。</div>
+      <div><b>恢复原目的地</b>TCP 读 <code>SO_ORIGINAL_DST</code>，UDP 读 ancillary data/必要时查 conntrack。</div>
+      <div><b>上游转换</b>执行 HTTP CONNECT、SOCKS5 CONNECT 或 SOCKS5 UDP ASSOCIATE。</div>
+    </div>
+
+    <h3>4.1 透明重定向规则</h3>
+    <table>
+      <thead><tr><th>目标</th><th>NAT hook</th><th>filter hook</th><th>匹配</th></tr></thead>
+      <tbody>
+        <tr><td>Bridge</td><td><code>PREROUTING</code></td><td><code>FORWARD</code></td><td><code>-i lzc-br-*</code></td></tr>
+        <tr><td>Host</td><td><code>OUTPUT</code></td><td><code>OUTPUT</code></td><td><code>-m cgroup --path ...</code></td></tr>
+      </tbody>
+    </table>
+    <p>私网目的地先 <code>RETURN</code>，保持直连。TCP 被 REDIRECT 后，filter chain 对仍留在公网的未支持协议执行 <code>DROP</code>，以“失败关闭”避免流量绕过代理。代理同样使用 NAT/filter A/B chain 完整切换。</p>
+
+    <h3>4.2 每应用独立适配器</h3>
+    <ul>
+      <li>每个 <code>instance_id</code> 保存自己的协议、IP 和端口，并使用独立的 <code>appProxyAdapter</code> 与动态内部端口。</li>
+      <li>HTTP 上游使用 <code>CONNECT host:port</code> 建立 TCP 隧道；SOCKS5 使用无认证 CONNECT，UDP 使用 UDP ASSOCIATE。</li>
+      <li>对于 nftables 兼容层无法在 UDP ancillary data 中返回原始目的地的情况，适配器最多查询 4 次 <code>nf_conntrack</code>，每次间隔 3ms，从 original/reply tuple 恢复地址。</li>
+      <li>UDP 回包使用 <code>IP_PKTINFO/IPV6_PKTINFO</code> 选择反向 NAT 期望的源地址，使应用看到的仍是原始目的端。</li>
+      <li>如果用户填写的代理 IP 是宿主机自身地址，Netwatch 先连 <code>127.0.0.1/::1</code>，失败再回退到所填 IP，避免 hairpin 访问问题。</li>
+    </ul>
+    <div class="note danger"><strong>HTTP 的边界：</strong>HTTP CONNECT 只能承载 TCP。因此 HTTP 模式下公网 UDP 和其他未支持 IP 协议会被阻断，不会悄悄直连。需要 UDP 时必须使用 SOCKS5 上游。</div>
+  </section>
+
+  <section id="transaction">
+    <h2>五、策略事务与功能互斥</h2>
+    <p><code>POST /api/v1/network/app-policy</code> 是字段级更新：未提交的限速、外网或代理字段保持不变。服务端先在同一个串行事务中读取当前策略并计算最终策略，避免两个并发请求都基于过期状态通过检查。</p>
+    <ol>
+      <li>校验数值、代理配置、白名单、所有活动目标能力和互斥关系。</li>
+      <li>如果限速发生变化，先安装内核限速规则，并记住用于回滚的旧值。</li>
+      <li>如果代理发生变化，先安装 fail-closed guard，再启动新适配器并切换 NAT/filter；切换成功后才关闭旧适配器。</li>
+      <li>如果外网策略变化，重建 IPv4/IPv6 防火墙 chain。</li>
+      <li>所有内核动作成功后，才持久化限速、禁网和代理期望状态。</li>
+    </ol>
+    <p>中间任一步失败都按相反顺序回滚已执行目标；即使最后写盘失败，也会恢复防火墙、代理适配器、内核限速和原持久化限速。回滚本身失败时，错误会与原始错误一起返回，不会被日志吞掉。</p>
+    <table>
+      <thead><tr><th>组合</th><th>是否允许</th><th>原因</th></tr></thead>
+      <tbody>
+        <tr><td>禁用外网 + 限速</td><td>否</td><td>无公网可限速，同时存在只会造成误导状态。</td></tr>
+        <tr><td>禁用外网 + 代理</td><td>否</td><td>禁网优先。升级遗留配置会显示 <code>paused</code>，但新请求不允许创建这个组合。</td></tr>
+        <tr><td>Host/Mixed 限速 + 代理</td><td>否</td><td>两者都依赖宿主出口分类，当前不提供可证明正确的组合语义。</td></tr>
+        <tr><td>Bridge 限速 + 代理</td><td>是</td><td>网桥 tc 和透明代理 hook 可独立工作。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="lifecycle">
+    <h2>六、实际状态、自愈与清理</h2>
+    <p>存储中的期望值不能证明内核规则还存在。Netwatch 把状态分为三层：</p>
+    <div class="cards">
+      <div class="card"><strong>desired</strong>已持久化的用户期望：限速数值、禁网开关、每应用代理配置。</div>
+      <div class="card"><strong>applied</strong>最近一次被 tc/iptables/适配器接受的状态，主要用于失败回滚。</div>
+      <div class="card"><strong>in_sync</strong>最近一次核验中内核实际规则是否与 desired 一致。</div>
+    </div>
+    <ul>
+      <li>后台生命周期观察器约每 2 秒采集应用拓扑并 reconcile 策略；限速内核详细核验有自己的节流周期。</li>
+      <li>网桥或 cgroup 重建、规则被外部删除、Netwatch 重启后，按 desired 恢复策略。</li>
+      <li>取消限速会删除 Netwatch 保留的 qdisc/filter、Host cgroup attachment 与 map；不存在的规则按“已清理”处理。</li>
+      <li>防火墙和代理更新会清理旧 A/B chain hook 与历史遗留直接规则，避免重复穿透。</li>
+      <li>当 Docker 目标清单临时为空时，不会立即刷空一套正在生效的防火墙策略，而是等待下一轮完整发现。</li>
+    </ul>
+    <p>前端应该使用 <code>limit_in_sync</code>、<code>internet_in_sync</code>、<code>proxy_in_sync</code> 和 <code>diagnostic</code> 判断现实状态，不能只看期望开关。</p>
+  </section>
+
+  <section id="instances">
+    <h2>七、多实例应用的隔离</h2>
+    <p>多实例应用中，不同用户运行的仍是同一 <code>app_id</code>，但必须使用不同 <code>instance_id</code> 保存和执行策略。Netwatch 优先使用懒猫 user-id 生成 <code>&lt;app_id&gt;@user:&lt;user&gt;</code>，必要时回退到 Compose project。</p>
+    <ul>
+      <li>多实例时只提交 <code>app_id</code> 的变更请求会被拒绝，前端必须一起提交当前行的 <code>instance_id</code>。</li>
+      <li>Bridge 实例按自己的网桥控制；Host 实例只在它们拥有可验证的独立父 cgroup 时开放变更型控制。</li>
+      <li>如果两个 Host 用户实例共享父 cgroup，统计仍可按容器进行，但限速、禁网和代理能力会全部关闭，避免一个用户的策略误伤另一个用户。</li>
+    </ul>
+  </section>
+
+  <section id="boundaries">
+    <h2>八、当前边界与排障入口</h2>
+    <table>
+      <thead><tr><th>场景</th><th>当前边界</th><th>首先检查</th></tr></thead>
+      <tbody>
+        <tr><td>Host/Mixed 限速</td><td>IPv4/IPv6 默认路由必须使用同一设备；暂不支持多 WAN、策略路由和运行中出口切换。</td><td><code>network_policy.limit_in_sync</code>、默认路由设备、优先级 49160/49161 的 filter。</td></tr>
+        <tr><td>Bridge 限速</td><td>下载 TBF 会限制网桥发向容器的流量；上传对已列出私网 CIDR 旁路。</td><td>root TBF <code>194:</code>、上传 pref 49140–49144/49152、burst/MTU 和 <code>gact pass</code>。</td></tr>
+        <tr><td>禁用外网</td><td>按 CIDR 定义私网，不是任意“本地地址”自动识别。</td><td><code>internet_in_sync</code>、活动 A/B chain、Host 命令是否加入 cgroup namespace。</td></tr>
+        <tr><td>HTTP 代理</td><td>仅 TCP；公网 UDP 失败关闭。</td><td><code>proxy_state</code>/<code>proxy_in_sync</code>、该应用独立适配器和 NAT REDIRECT。</td></tr>
+        <tr><td>SOCKS5 代理</td><td>只支持 IP 上游、无认证；UDP 需要 conntrack 与原目的地能力。</td><td>上游可达性、<code>nf_conntrack</code>、UDP ASSOCIATE 会话。</td></tr>
+      </tbody>
+    </table>
+    <div class="note ok"><strong>一句话总结：</strong>限速是“识别流量后整形或丢包”，禁用外网是“私网例外 + 公网 DROP”，设置代理是“按应用透明 REDIRECT + 协议适配”；三者的可靠性来自同一套能力预检、事务回滚、实际状态核验和周期自愈。</div>
+    <p class="small">对应核心实现：<code>app_network_control.go</code>、<code>app_traffic_limit.go</code>、<code>hostnet_limit_bpf.go</code>、<code>bpf/hostlimit.c</code>、<code>app_internet_control.go</code>、<code>app_proxy_control.go</code>、<code>app_proxy_adapter.go</code>。</p>
+  </section>
+
+  <footer>Netwatch · 应用网络控制技术原理</footer>
+</main>
+</body>
+</html>
