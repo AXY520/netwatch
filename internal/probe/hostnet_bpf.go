@@ -1,13 +1,16 @@
 package probe
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
@@ -17,6 +20,13 @@ import (
 )
 
 const hostBPFMapPinDirName = "netwatch"
+
+var hostBPFMountPaths = []string{"/usr/bin/mount", "/bin/mount", "/usr/sbin/mount", "/sbin/mount"}
+
+var hostBPFMountAttempt struct {
+	sync.Once
+	err error
+}
 
 // hostCgroupBPFManager owns the eBPF programs used for host-network container
 // accounting. Programs and cgroup links are process-owned; the two counter
@@ -259,15 +269,67 @@ func newHostCgroupMap(name string) (*ebpf.Map, string, string, error) {
 	if err != nil {
 		return nil, "", "", err
 	}
-	return mapObj, "", "未找到可写 bpffs，Host 统计 map 将在 Netwatch 重启时重置", nil
+	note := "未找到可写 bpffs，Host 统计 map 将在 Netwatch 重启时重置"
+	if hostBPFMountAttempt.err != nil {
+		note += "；宿主 bpffs 初始化失败：" + hostBPFMountAttempt.err.Error()
+	}
+	return mapObj, "", note, nil
 }
 
 func hostBPFMapPinRoot() (string, bool) {
-	return hostBPFMapPinRootAt(
-		[]string{"/sys/fs/bpf", "/host/sys/fs/bpf"},
+	candidates := []string{"/proc/1/root/sys/fs/bpf", "/sys/fs/bpf", "/host/sys/fs/bpf"}
+	if root, ok := hostBPFMapPinRootAt(
+		candidates,
 		os.MkdirAll,
 		unix.Statfs,
-	)
+	); ok {
+		return root, true
+	}
+	hostBPFMountAttempt.Do(func() {
+		hostBPFMountAttempt.err = mountHostBPFFilesystem()
+	})
+	return hostBPFMapPinRootAt(candidates, os.MkdirAll, unix.Statfs)
+}
+
+// mountHostBPFFilesystem initializes bpffs in PID 1's mount namespace. Lazycat
+// grants Netwatch SYS_ADMIN and host PID access, but some boxes expose
+// /sys/fs/bpf as an ordinary sysfs directory instead of a bpffs mount. Pinning
+// through /proc/1/root keeps maps alive across Netwatch container restarts.
+func mountHostBPFFilesystem() error {
+	findBinPaths()
+	if nsenterPath == "" {
+		return errors.New("nsenter command is unavailable")
+	}
+	mountBinary := ""
+	for _, candidate := range hostBPFMountPaths {
+		if info, err := os.Lstat("/proc/1/root" + candidate); err == nil && !info.IsDir() {
+			mountBinary = candidate
+			break
+		}
+	}
+	if mountBinary == "" {
+		return errors.New("host mount command is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, nsenterPath, hostBPFMountCommandArgs(mountBinary)...)
+	output, err := command.CombinedOutput()
+	var stat unix.Statfs_t
+	if statErr := unix.Statfs("/proc/1/root/sys/fs/bpf", &stat); statErr == nil && uint64(stat.Type) == 0xcafe4a11 {
+		return nil
+	}
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message != "" {
+			return fmt.Errorf("%s", message)
+		}
+		return err
+	}
+	return errors.New("mount command completed but /sys/fs/bpf is not bpffs")
+}
+
+func hostBPFMountCommandArgs(mountBinary string) []string {
+	return []string{"-t", "1", "-m", "-r", "--", mountBinary, "-t", "bpf", "bpf", "/sys/fs/bpf"}
 }
 
 // hostBPFMapPinRootAt is kept small and injectable for tests; production uses
@@ -495,10 +557,10 @@ func hostCgroupProgramInstructions(attach ebpf.AttachType, statsMapFD int) asm.I
 	return instructions
 }
 
-func cgroupIDInstructions(attach ebpf.AttachType) asm.Instructions {
-	if attach == ebpf.AttachCGroupInetIngress {
-		return asm.Instructions{asm.FnGetCurrentCgroupId.Call()}
-	}
+func cgroupIDInstructions(_ ebpf.AttachType) asm.Instructions {
+	// Ingress can run from softirq context, where "current" is not the task
+	// that owns the receiving socket. Resolve both directions from skb->sk so
+	// received bytes are charged to the container cgroup that owns the socket.
 	return asm.Instructions{asm.Mov.Reg(asm.R1, asm.R6), asm.FnSkbCgroupId.Call()}
 }
 
@@ -510,16 +572,60 @@ func hostCgroupPath(procRoot string, cgroup string) string {
 	if procRoot == "/proc" && strings.HasPrefix(root, "/host/") {
 		root = "/sys/fs/cgroup"
 	}
-	cgroup = strings.TrimSpace(cgroup)
-	if cgroup == "" {
-		return ""
-	}
-	cgroup = strings.TrimPrefix(cgroup, "/")
-	path := filepath.Join(root, cgroup)
-	if st, err := os.Stat(path); err == nil && st.IsDir() {
-		return path
+	for _, candidate := range hostCgroupCandidatePaths(cgroup) {
+		path := filepath.Join(root, strings.TrimPrefix(candidate, "/"))
+		if st, err := os.Stat(path); err == nil && st.IsDir() {
+			return path
+		}
 	}
 	return ""
+}
+
+// hostCgroupCandidatePaths converts cgroup paths observed from both the host
+// and a private container cgroup namespace into host-rooted candidates. With a
+// private cgroup namespace, /proc/<pid>/cgroup commonly returns /../../lzcapp-*
+// relative to the Netwatch container. Those parent components must be rebased
+// under the Lazycat application cgroup root instead of being joined literally
+// and escaping /sys/fs/cgroup.
+func hostCgroupCandidatePaths(cgroup string) []string {
+	value := filepath.ToSlash(strings.TrimSpace(cgroup))
+	if value == "" {
+		return nil
+	}
+	relative := strings.TrimPrefix(value, "/")
+	hadParent := false
+	for relative == ".." || strings.HasPrefix(relative, "../") {
+		hadParent = true
+		relative = strings.TrimPrefix(relative, "..")
+		relative = strings.TrimPrefix(relative, "/")
+	}
+	if relative == "" {
+		return nil
+	}
+
+	candidates := make([]string, 0, 2)
+	appendUnique := func(candidate string) {
+		candidate = filepath.ToSlash(filepath.Clean("/" + strings.TrimPrefix(candidate, "/")))
+		for _, existing := range candidates {
+			if existing == candidate {
+				return
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+	if !hadParent {
+		appendUnique(relative)
+		return candidates
+	}
+
+	// The private namespace root is a docker scope below lzcapp.slice. Paths to
+	// sibling containers therefore start with one or more ".." components and
+	// then the target application's systemd slice hierarchy.
+	relative = strings.TrimPrefix(relative, "lzcapp.slice/")
+	if strings.HasPrefix(relative, "lzcapp-") {
+		appendUnique(filepath.Join(lazycatApplicationCgroupRoot, relative))
+	}
+	return candidates
 }
 
 func cgroupIDFromPath(path string) (uint64, error) {

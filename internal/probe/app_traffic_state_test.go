@@ -222,6 +222,74 @@ func TestAppTrafficOverviewFiltersInactiveAppsWithoutDroppingHistory(t *testing.
 	}
 }
 
+func TestAppTrafficRealtimeUploadUsesPostPoliceCounter(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	appID := "cloud.lazycat.app.host-limit"
+	start := time.Date(2026, 9, 1, 12, 0, 0, 0, time.Local)
+	item := AppBridgeStats{
+		Bridge: hostAppTarget(appID), AppID: appID, NetworkMode: "host",
+		ContainerCount: 1, RunningCount: 1,
+	}
+	state.sampleWithPostLimitUpload([]AppBridgeStats{item}, start, map[string]uint64{appID: 10_000})
+
+	item.UploadBytes = 500_000
+	item.DownloadBytes = 80_000
+	state.sampleWithPostLimitUpload([]AppBridgeStats{item}, start.Add(2*time.Second), map[string]uint64{appID: 260_000})
+	overview := state.overviewForActiveApps(true, map[string]bool{appID: true})
+	if len(overview.Apps) != 1 {
+		t.Fatalf("apps=%#v", overview.Apps)
+	}
+	app := overview.Apps[0]
+	if app.UploadBPS != 125_000 {
+		t.Fatalf("upload_bps=%v, want 125000 post-police bytes/s", app.UploadBPS)
+	}
+	if app.DownloadBPS != 40_000 {
+		t.Fatalf("download_bps=%v, want raw ingress rate 40000", app.DownloadBPS)
+	}
+	if app.TotalUpload != 250_000 || app.TodayUpload != 250_000 || app.MonthUpload != 250_000 {
+		t.Fatalf("effective upload totals=%d/%d/%d, want 250000", app.TotalUpload, app.TodayUpload, app.MonthUpload)
+	}
+}
+
+func TestAppTrafficPostPoliceCounterResetDoesNotSpikeRate(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	appID := "cloud.lazycat.app.host-limit"
+	start := time.Date(2026, 9, 1, 12, 0, 0, 0, time.Local)
+	item := AppBridgeStats{Bridge: hostAppTarget(appID), AppID: appID, NetworkMode: "host"}
+	state.sampleWithPostLimitUpload([]AppBridgeStats{item}, start, map[string]uint64{appID: 500_000})
+	state.sampleWithPostLimitUpload([]AppBridgeStats{item}, start.Add(2*time.Second), map[string]uint64{appID: 1_000})
+
+	overview := state.overviewForActiveApps(true, map[string]bool{appID: true})
+	if len(overview.Apps) != 1 || overview.Apps[0].UploadBPS != 0 {
+		t.Fatalf("apps=%#v, reset tc counter must establish a new baseline", overview.Apps)
+	}
+}
+
+func TestAppTrafficMetricsSnapshotAggregatesActiveMixedInstanceReadOnly(t *testing.T) {
+	state := newAppTrafficState(t.TempDir())
+	policyID := "app.example@user-one"
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.Local)
+	items := []AppBridgeStats{
+		{Bridge: "lzc-br-one", AppID: "app.example", InstanceID: policyID, NetworkMode: "bridge", RunningCount: 1, UploadBytes: 100, DownloadBytes: 200},
+		{Bridge: hostAppTarget(policyID), AppID: "app.example", InstanceID: policyID, NetworkMode: "host", RunningCount: 1, UploadBytes: 300, DownloadBytes: 400},
+	}
+	state.sample(items, now)
+	items[0].UploadBytes, items[0].DownloadBytes = 150, 250
+	items[1].UploadBytes, items[1].DownloadBytes = 350, 450
+	state.sample(items, now.Add(2*time.Second))
+	lastSample := state.lastSample
+	apps := state.metricsSnapshot()
+	if len(apps) != 1 || apps[0].AppID != "app.example" || apps[0].InstanceID != policyID {
+		t.Fatalf("metrics apps=%#v", apps)
+	}
+	if apps[0].TotalUpload != 500 || apps[0].TotalDownload != 700 {
+		t.Fatalf("metrics totals=%d/%d", apps[0].TotalUpload, apps[0].TotalDownload)
+	}
+	if !state.lastSample.Equal(lastSample) {
+		t.Fatal("metrics snapshot advanced traffic sampling state")
+	}
+}
+
 func TestAppTrafficStateTracksDailyAndMonthlyTotals(t *testing.T) {
 	state := newAppTrafficState(t.TempDir())
 	appID := "cloud.lazycat.app.example"

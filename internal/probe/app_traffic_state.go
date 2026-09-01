@@ -111,6 +111,16 @@ type appTrafficBridgeBaseline struct {
 	DownloadBytes uint64 `json:"download_bytes"`
 }
 
+type appTrafficRateBaseline struct {
+	Bytes     uint64
+	SampledAt time.Time
+}
+
+type appTrafficEffectiveUpload struct {
+	delta uint64
+	rate  float64
+}
+
 // appTrafficBaselineKey keeps independent kernel counters independent. Bridge
 // counters are naturally keyed by interface; Host counters must be keyed by
 // cgroup path because one application can own several Host containers.
@@ -141,23 +151,27 @@ type appTrafficPersistedState struct {
 }
 
 type appTrafficState struct {
-	mu            sync.RWMutex
-	path          string
-	apps          map[string]appTrafficStoredUsage
-	baselines     map[string]appTrafficBridgeBaseline
-	limits        map[string]AppTrafficLimit
-	legacyBridges map[string][]legacyAppTrafficPoint
-	lastSample    time.Time
-	lastPersist   time.Time
+	mu                       sync.RWMutex
+	path                     string
+	apps                     map[string]appTrafficStoredUsage
+	baselines                map[string]appTrafficBridgeBaseline
+	effectiveUploadBaselines map[string]appTrafficRateBaseline
+	activePolicyIDs          map[string]bool
+	limits                   map[string]AppTrafficLimit
+	legacyBridges            map[string][]legacyAppTrafficPoint
+	lastSample               time.Time
+	lastPersist              time.Time
 }
 
 func newAppTrafficState(dataDir string) *appTrafficState {
 	s := &appTrafficState{
-		path:          filepath.Join(dataDir, "app_traffic_history.json"),
-		apps:          map[string]appTrafficStoredUsage{},
-		baselines:     map[string]appTrafficBridgeBaseline{},
-		limits:        map[string]AppTrafficLimit{},
-		legacyBridges: map[string][]legacyAppTrafficPoint{},
+		path:                     filepath.Join(dataDir, "app_traffic_history.json"),
+		apps:                     map[string]appTrafficStoredUsage{},
+		baselines:                map[string]appTrafficBridgeBaseline{},
+		effectiveUploadBaselines: map[string]appTrafficRateBaseline{},
+		activePolicyIDs:          map[string]bool{},
+		limits:                   map[string]AppTrafficLimit{},
+		legacyBridges:            map[string][]legacyAppTrafficPoint{},
 	}
 	body, err := os.ReadFile(s.path)
 	if err != nil {
@@ -443,6 +457,10 @@ func sortedTrafficAbsolutes(values map[string]appTrafficAbsolute) []string {
 }
 
 func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
+	s.sampleWithPostLimitUpload(items, now, nil)
+}
+
+func (s *appTrafficState) sampleWithPostLimitUpload(items []AppBridgeStats, now time.Time, counters map[string]uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.lastSample.IsZero() && now.Sub(s.lastSample) < appTrafficSampleInterval/2 {
@@ -453,6 +471,7 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 		elapsed = 0
 	}
 	s.migrateLegacyBridgesLocked(items, now)
+	effectiveUploads := s.effectiveUploadChangesLocked(counters, now)
 
 	seen := make(map[string]bool, len(items))
 	changes := make(map[string]appTrafficDelta)
@@ -512,6 +531,20 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 			delete(s.baselines, counterKey)
 		}
 	}
+	for policyID, effective := range effectiveUploads {
+		if _, active := observed[policyID]; !active {
+			continue
+		}
+		change := changes[policyID]
+		change.upload = effective.delta
+		changes[policyID] = change
+	}
+	s.activePolicyIDs = make(map[string]bool, len(observed))
+	for policyID, current := range observed {
+		if current.RunningCount > 0 {
+			s.activePolicyIDs[policyID] = true
+		}
+	}
 
 	today := now.Format(time.DateOnly)
 	month := now.Format("2006-01")
@@ -565,6 +598,9 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 			entry.UploadBPS = 0
 			entry.DownloadBPS = 0
 		}
+		if effective, ok := effectiveUploads[policyID]; ok {
+			entry.UploadBPS = effective.rate
+		}
 		entry.Daily, entry.TodayUpload, entry.TodayDownload = updateTrafficPeriod(entry.Daily, today, change.upload, change.download)
 		entry.MonthUpload, entry.MonthDownload = trafficMonthTotals(entry.Daily, month)
 		entry.Daily = trimTrafficDaily(entry.Daily)
@@ -578,6 +614,43 @@ func (s *appTrafficState) sample(items []AppBridgeStats, now time.Time) {
 	if now.Sub(s.lastPersist) >= appTrafficPersistInterval {
 		s.persistLocked(now)
 	}
+}
+
+// effectiveUploadChangesLocked converts an actually-admitted cumulative byte
+// counter into both a delta and a rate. When one is available it replaces the
+// raw bridge/cgroup upload delta for every persisted view: realtime, daily,
+// monthly, lifetime and history. Raw baselines are still advanced separately,
+// so removing a policy cannot replay previously dropped send attempts.
+//
+// These baselines deliberately stay in memory. tc actions and firewall chains
+// reset when a policy is replaced; a lower value establishes a fresh baseline
+// and therefore cannot create a false traffic spike.
+func (s *appTrafficState) effectiveUploadChangesLocked(counters map[string]uint64, now time.Time) map[string]appTrafficEffectiveUpload {
+	changes := make(map[string]appTrafficEffectiveUpload, len(counters))
+	seen := make(map[string]bool, len(counters))
+	for policyID, current := range counters {
+		policyID = strings.TrimSpace(policyID)
+		if policyID == "" {
+			continue
+		}
+		seen[policyID] = true
+		baseline, known := s.effectiveUploadBaselines[policyID]
+		effective := appTrafficEffectiveUpload{}
+		if known && current >= baseline.Bytes {
+			effective.delta = current - baseline.Bytes
+			if elapsed := now.Sub(baseline.SampledAt).Seconds(); elapsed > 0 {
+				effective.rate = float64(effective.delta) / elapsed
+			}
+		}
+		changes[policyID] = effective
+		s.effectiveUploadBaselines[policyID] = appTrafficRateBaseline{Bytes: current, SampledAt: now}
+	}
+	for policyID := range s.effectiveUploadBaselines {
+		if !seen[policyID] {
+			delete(s.effectiveUploadBaselines, policyID)
+		}
+	}
+	return changes
 }
 
 // normalizePersistedAppTrafficTotals upgrades states written while TotalUpload
@@ -812,6 +885,36 @@ func (s *appTrafficState) overviewForActiveAppsWithControls(limitSupported bool,
 		return apps[i].TotalUpload+apps[i].TotalDownload > apps[j].TotalUpload+apps[j].TotalDownload
 	})
 	return AppTrafficOverview{GeneratedAt: time.Now().Format(time.DateTime), Apps: apps, LimitSupport: limitSupported}
+}
+
+// metricsSnapshot is intentionally read-only. Prometheus scrapes must not run
+// Docker/Lazycat discovery, reconcile policies, or advance traffic baselines.
+func (s *appTrafficState) metricsSnapshot() []AppTrafficUsage {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	apps := make([]AppTrafficUsage, 0, len(s.activePolicyIDs))
+	for policyID := range s.activePolicyIDs {
+		entry, ok := s.apps[policyID]
+		if !ok {
+			continue
+		}
+		usage := entry.AppTrafficUsage
+		usage.AppID = preferAppTrafficValue(usage.AppID, baseAppID(policyID))
+		usage.InstanceID = preferAppTrafficValue(usage.InstanceID, policyID)
+		usage.Bridges = append([]string(nil), usage.Bridges...)
+		usage.NetworkModes = append([]string(nil), usage.NetworkModes...)
+		apps = append(apps, usage)
+	}
+	sort.Slice(apps, func(i, j int) bool {
+		if apps[i].AppID != apps[j].AppID {
+			return apps[i].AppID < apps[j].AppID
+		}
+		return apps[i].InstanceID < apps[j].InstanceID
+	})
+	return apps
 }
 
 func appTrafficControlCapabilities(entry AppTrafficUsage, limitSupported bool) (topology string, limitAllowed bool, internetAllowed bool) {

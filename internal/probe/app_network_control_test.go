@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -203,7 +204,7 @@ func TestCombinedPolicyRollsBackLimitWhenInternetPersistenceFails(t *testing.T) 
 	targets := []AppNetworkTarget{{
 		ID: "lzc-br-one", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-one",
 	}}
-	upload, download, internetAllowed := int64(1024), int64(2048), false
+	upload, download, internetAllowed := int64(0), int64(0), false
 	err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{
 		UploadKbps: &upload, DownloadKbps: &download, InternetAllowed: &internetAllowed,
 	})
@@ -230,5 +231,89 @@ func TestCombinedPolicyRollsBackLimitWhenInternetPersistenceFails(t *testing.T) 
 	}
 	if len(reconciled) != 2 || reconciled[0]["app.example"] != "internet" || len(reconciled[1]) != 0 {
 		t.Fatalf("internet reconcile sequence=%#v", reconciled)
+	}
+}
+
+func TestCombinedBlockedPolicyRejectsLimitAndProxy(t *testing.T) {
+	service := &Service{
+		settings:          newSettingsStore(DefaultMutableSettings()),
+		containers:        newContainerControlState(),
+		appTraffic:        newAppTrafficState(t.TempDir()),
+		appTrafficLimiter: newAppTrafficLimiter(),
+	}
+	driver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{
+		UploadLimit: true, DownloadLimit: true, InternetControl: true, ProxyControl: true,
+	}}
+	service.appNetworkController = &appNetworkController{
+		drivers:           map[AppNetworkTargetKind]appNetworkTargetDriver{AppNetworkTargetBridge: driver},
+		internetAvailable: func() bool { return true },
+	}
+	targets := []AppNetworkTarget{{ID: "lzc-br-one", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-one"}}
+	blocked, upload := false, int64(1000)
+	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{
+		InternetAllowed: &blocked, UploadKbps: &upload,
+	}); err == nil || !strings.Contains(err.Error(), "限制网速") {
+		t.Fatalf("combined limit error=%v", err)
+	}
+	proxy := true
+	if err := service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{
+		InternetAllowed: &blocked, ProxyEnabled: &proxy,
+	}); err == nil || !strings.Contains(err.Error(), "设置代理") {
+		t.Fatalf("combined proxy error=%v", err)
+	}
+	if len(driver.limits) != 0 {
+		t.Fatalf("inconsistent request reached driver: %#v", driver.limits)
+	}
+}
+
+func TestConcurrentBlockedAndLimitedUpdatesCannotCreateCombinedState(t *testing.T) {
+	driver := &recordingAppNetworkDriver{capabilities: AppNetworkCapabilities{
+		UploadLimit: true, DownloadLimit: true, InternetControl: true,
+	}}
+	service := &Service{
+		cfg:               Config{DataDir: t.TempDir()},
+		settings:          newSettingsStore(DefaultMutableSettings()),
+		containers:        newContainerControlState(),
+		appTraffic:        newAppTrafficState(t.TempDir()),
+		appTrafficLimiter: newAppTrafficLimiter(),
+	}
+	service.appNetworkController = &appNetworkController{
+		drivers:               map[AppNetworkTargetKind]appNetworkTargetDriver{AppNetworkTargetBridge: driver},
+		internetAvailable:     func() bool { return true },
+		reconcileInternet:     func(context.Context, []AppBridgeStats, map[string]string) error { return nil },
+		persistInternetPolicy: func() error { return nil },
+	}
+	targets := []AppNetworkTarget{{ID: "lzc-br-one", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-one"}}
+	start := make(chan struct{})
+	errorsSeen := make(chan error, 2)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		<-start
+		allowed := false
+		errorsSeen <- service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{InternetAllowed: &allowed})
+	}()
+	go func() {
+		defer wait.Done()
+		<-start
+		upload := int64(1000)
+		errorsSeen <- service.applyAppNetworkPolicyUpdate(context.Background(), "app.example", targets, appNetworkPolicyUpdate{UploadKbps: &upload})
+	}()
+	close(start)
+	wait.Wait()
+	close(errorsSeen)
+	failures := 0
+	for err := range errorsSeen {
+		if err != nil {
+			failures++
+		}
+	}
+	if failures != 1 {
+		t.Fatalf("concurrent update failures=%d, want exactly one rejected policy", failures)
+	}
+	policy := service.currentAppNetworkPolicy("app.example", targets)
+	if !policy.InternetAllowed && policy.UploadKbps > 0 {
+		t.Fatalf("inconsistent final policy=%#v", policy)
 	}
 }

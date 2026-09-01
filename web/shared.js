@@ -75,6 +75,12 @@ window.NetwatchShared = (function () {
             parts.push(String(options.count) + (options.countLabel || ' 项'));
         }
         var timestamp = observationTimestampLabel(options.generatedAt);
+        var fullTimestamp = timestamp;
+        var compactViewport = !!(window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+        if (compactViewport && timestamp) {
+            var compactTime = timestamp.match(/(?:^|\s)(\d{2}:\d{2})(?::\d{2})?$/);
+            if (compactTime) timestamp = compactTime[1];
+        }
         var parsedAt = parseObservationTime(options.generatedAt);
         var inferredAge = parsedAt ? Math.max(0, Math.floor((Date.now() - parsedAt.getTime()) / 1000)) : 0;
         if (state === 'fresh' && (options.stale || (options.staleAfterSeconds && inferredAge > options.staleAfterSeconds))) state = 'stale';
@@ -84,10 +90,14 @@ window.NetwatchShared = (function () {
         else if (state === 'unsupported') parts.push(tr('capability_unsupported'));
         else if (state === 'empty') parts.push(tr('no_data'));
         else if (state === 'stale' || options.stale) parts.push(tr('data_stale'));
-        if (timestamp) parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + timestamp : tr('sampled_at') + ' ' + timestamp);
+        if (timestamp) {
+            if (compactViewport && state !== 'error' && state !== 'refreshing') parts.push(timestamp);
+            else parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + timestamp : tr('sampled_at') + ' ' + timestamp);
+        }
         el.textContent = parts.join(' · ');
         el.dataset.state = state;
         if (options.title || options.error) el.title = options.title || options.error;
+        else if (compactViewport && fullTimestamp) el.title = tr('sampled_at') + ' ' + fullTimestamp;
         else el.removeAttribute('title');
     }
 

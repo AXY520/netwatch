@@ -45,6 +45,18 @@ struct parsed_packet {
 	__u8 protocol;
 };
 
+struct ipv6_option_header {
+	__u8 next_header;
+	__u8 length;
+};
+
+struct ipv6_fragment_header {
+	__u8 next_header;
+	__u8 reserved;
+	__be16 fragment_offset;
+	__be32 identification;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
@@ -79,6 +91,13 @@ struct {
 	__type(key, struct flow_key);
 	__type(value, __u64);
 } flows SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u64);
+} local_upload_bytes SEC(".maps");
 
 static __always_inline int ipv4_is_private(__be32 address)
 {
@@ -124,42 +143,98 @@ static __always_inline int parse_packet(struct __sk_buff *skb,
 
 	if (skb->protocol == bpf_htons(ETH_P_IP)) {
 		struct iphdr ip = {};
+		__u16 fragment_offset;
 
 		if (bpf_skb_load_bytes_relative(skb, 0, &ip, sizeof(ip),
 						BPF_HDR_START_NET) < 0 ||
-		    ip.version != 4 || ip.ihl < 5 ||
-		    (ip.protocol != IPPROTO_TCP && ip.protocol != IPPROTO_UDP) ||
-		    (ip.frag_off & bpf_htons(0x3fff)) != 0)
+		    ip.version != 4 || ip.ihl < 5)
 			return 0;
 		transport_offset = ip.ihl * 4;
-		if (bpf_skb_load_bytes_relative(skb, transport_offset, &ports,
-						 sizeof(ports), BPF_HDR_START_NET) < 0)
-			return 0;
 		__builtin_memcpy(packet->source_address, &ip.saddr, sizeof(ip.saddr));
 		__builtin_memcpy(packet->destination_address, &ip.daddr, sizeof(ip.daddr));
 		packet->family = 4;
 		packet->protocol = ip.protocol;
+		fragment_offset = bpf_ntohs(ip.frag_off) & 0x1fff;
+		if ((ip.protocol == IPPROTO_TCP || ip.protocol == IPPROTO_UDP) &&
+		    fragment_offset == 0 &&
+		    bpf_skb_load_bytes_relative(skb, transport_offset, &ports,
+						 sizeof(ports), BPF_HDR_START_NET) == 0) {
+			packet->source_port = ports.source;
+			packet->destination_port = ports.destination;
+		}
+		return 1;
 	} else if (skb->protocol == bpf_htons(ETH_P_IPV6)) {
 		struct ipv6hdr ip = {};
+		__u8 next_header;
+		int index;
 
 		if (bpf_skb_load_bytes_relative(skb, 0, &ip, sizeof(ip),
-						BPF_HDR_START_NET) < 0 ||
-		    (ip.nexthdr != IPPROTO_TCP && ip.nexthdr != IPPROTO_UDP))
-			return 0;
-		transport_offset = sizeof(ip);
-		if (bpf_skb_load_bytes_relative(skb, transport_offset, &ports,
-						 sizeof(ports), BPF_HDR_START_NET) < 0)
+						BPF_HDR_START_NET) < 0 || ip.version != 6)
 			return 0;
 		__builtin_memcpy(packet->source_address, &ip.saddr, sizeof(ip.saddr));
 		__builtin_memcpy(packet->destination_address, &ip.daddr, sizeof(ip.daddr));
 		packet->family = 6;
-		packet->protocol = ip.nexthdr;
+		transport_offset = sizeof(ip);
+		next_header = ip.nexthdr;
+
+		// IPv6 extension chains are bounded so the verifier can prove that this
+		// parser terminates. Six headers cover normal Hop-by-Hop, Routing,
+		// Destination, AH and Fragment combinations; longer chains still retain
+		// address/protocol classification and therefore cannot bypass policing.
+		#pragma unroll
+		for (index = 0; index < 6; index++) {
+			packet->protocol = next_header;
+			if (next_header == IPPROTO_TCP || next_header == IPPROTO_UDP) {
+				if (bpf_skb_load_bytes_relative(skb, transport_offset, &ports,
+							 sizeof(ports), BPF_HDR_START_NET) == 0) {
+					packet->source_port = ports.source;
+					packet->destination_port = ports.destination;
+				}
+				return 1;
+			}
+			if (next_header == IPPROTO_HOPOPTS ||
+			    next_header == IPPROTO_ROUTING ||
+			    next_header == IPPROTO_DSTOPTS) {
+				struct ipv6_option_header option = {};
+
+				if (bpf_skb_load_bytes_relative(skb, transport_offset, &option,
+							 sizeof(option), BPF_HDR_START_NET) < 0)
+					return 1;
+				next_header = option.next_header;
+				transport_offset += ((__u32)option.length + 1) * 8;
+				continue;
+			}
+			if (next_header == IPPROTO_FRAGMENT) {
+				struct ipv6_fragment_header fragment = {};
+
+				if (bpf_skb_load_bytes_relative(skb, transport_offset, &fragment,
+							 sizeof(fragment), BPF_HDR_START_NET) < 0)
+					return 1;
+				next_header = fragment.next_header;
+				packet->protocol = next_header;
+				transport_offset += sizeof(fragment);
+				// Non-initial fragments do not contain transport ports. A zero-port
+				// flow key still links their egress and ingress directions.
+				if ((bpf_ntohs(fragment.fragment_offset) & 0xfff8) != 0)
+					return 1;
+				continue;
+			}
+			if (next_header == IPPROTO_AH) {
+				struct ipv6_option_header auth = {};
+
+				if (bpf_skb_load_bytes_relative(skb, transport_offset, &auth,
+							 sizeof(auth), BPF_HDR_START_NET) < 0)
+					return 1;
+				next_header = auth.next_header;
+				transport_offset += ((__u32)auth.length + 2) * 4;
+				continue;
+			}
+			return 1;
+		}
+		return 1;
 	} else {
 		return 0;
 	}
-	packet->source_port = ports.source;
-	packet->destination_port = ports.destination;
-	return 1;
 }
 
 static __always_inline int peer_is_private(const struct parsed_packet *packet,
@@ -203,6 +278,10 @@ static __always_inline int socket_is_tagged(struct __sk_buff *skb,
 	struct bpf_sock *socket;
 	__u8 *tag;
 
+	if ((packet->protocol != IPPROTO_TCP && packet->protocol != IPPROTO_UDP) ||
+	    packet->source_port == 0 || packet->destination_port == 0)
+		return 0;
+
 	if (packet->family == 4) {
 		__builtin_memcpy(&tuple.ipv4.saddr, packet->source_address, 4);
 		__builtin_memcpy(&tuple.ipv4.daddr, packet->destination_address, 4);
@@ -231,6 +310,16 @@ static __always_inline int socket_is_tagged(struct __sk_buff *skb,
 	tag = bpf_sk_storage_get(&socket_tags, socket, 0, 0);
 	bpf_sk_release(socket);
 	return tag != 0;
+}
+
+static __always_inline void account_local_upload(struct __sk_buff *skb)
+{
+	__u64 *bytes;
+	__u32 key = 0;
+
+	bytes = bpf_map_lookup_elem(&local_upload_bytes, &key);
+	if (bytes)
+		__sync_fetch_and_add(bytes, (__u64)skb->len);
 }
 
 static __always_inline int allow_download(struct __sk_buff *skb,
@@ -328,6 +417,7 @@ int hostlimit_tc_egress(struct __sk_buff *skb)
 	struct flow_key flow = {};
 	struct app_config *policy;
 	struct bpf_sock *socket;
+	__u64 *generation;
 	__u8 *bridge;
 	__u8 *tag;
 	__u32 ingress_ifindex;
@@ -335,14 +425,11 @@ int hostlimit_tc_egress(struct __sk_buff *skb)
 	int matched = 0;
 
 	policy = bpf_map_lookup_elem(&config, &key);
-	if (!policy || policy->generation == 0 || !parse_packet(skb, &packet) ||
-	    peer_is_private(&packet, 0))
+	if (!policy || policy->generation == 0 || !parse_packet(skb, &packet))
 		return TC_ACT_UNSPEC;
 	ingress_ifindex = skb->ingress_ifindex;
 	bridge = bpf_map_lookup_elem(&bridge_ifindexes, &ingress_ifindex);
 	if (bridge) {
-		flow_from_packet(&flow, &packet, 0);
-		bpf_map_update_elem(&flows, &flow, &policy->generation, BPF_ANY);
 		matched = 1;
 	} else {
 		socket = skb->sk;
@@ -354,8 +441,28 @@ int hostlimit_tc_egress(struct __sk_buff *skb)
 				matched = 1;
 		}
 	}
+	if (!matched) {
+		flow_from_packet(&flow, &packet, 0);
+		generation = bpf_map_lookup_elem(&flows, &flow);
+		if (generation && *generation == policy->generation)
+			matched = 1;
+	}
 	if (!matched)
 		return TC_ACT_UNSPEC;
+	if (peer_is_private(&packet, 0)) {
+		account_local_upload(skb);
+		return TC_ACT_UNSPEC;
+	}
+	flow_from_packet(&flow, &packet, 0);
+	bpf_map_update_elem(&flows, &flow, &policy->generation, BPF_ANY);
+	// Also retain an address/protocol wildcard for non-initial return
+	// fragments, which do not carry transport ports even when the original
+	// egress packet was not fragmented.
+	if (flow.local_port != 0 || flow.remote_port != 0) {
+		flow.local_port = 0;
+		flow.remote_port = 0;
+		bpf_map_update_elem(&flows, &flow, &policy->generation, BPF_ANY);
+	}
 	if (policy->upload_mark == 0 || policy->mark_mask == 0)
 		return TC_ACT_OK;
 	skb->mark = (skb->mark & ~policy->mark_mask) | policy->upload_mark;

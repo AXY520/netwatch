@@ -3,6 +3,7 @@ package probe
 import (
 	"math"
 	"net"
+	"strings"
 	"testing"
 
 	"netwatch/internal/lzcsdk"
@@ -103,6 +104,44 @@ func TestBridgeDeviceStatus(t *testing.T) {
 	}
 }
 
+func TestTunDeviceStatusRequiresActiveRoutingEvidence(t *testing.T) {
+	if got := tunDeviceStatus(true, "up", false); got != "disconnected" {
+		t.Fatalf("inactive up TUN status=%q", got)
+	}
+	if got := tunDeviceStatus(true, "unknown", true); got != "connected" {
+		t.Fatalf("active TUN status=%q", got)
+	}
+}
+
+func TestUsableProxyTunAddressIgnoresLinkLocalOnly(t *testing.T) {
+	for _, address := range []string{"fe80::1/64", "169.254.1.2/16", "127.0.0.1/8", "::1/128"} {
+		if usableProxyTunAddress(address) {
+			t.Fatalf("%q must not activate proxy TUN status", address)
+		}
+	}
+	for _, address := range []string{"198.18.0.1/30", "fdfe:dcba:9876::1/126"} {
+		if !usableProxyTunAddress(address) {
+			t.Fatalf("%q should activate proxy TUN status", address)
+		}
+	}
+}
+
+func TestProxyTunRouteEvidence(t *testing.T) {
+	ipv4 := "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\nMeta 00000000 00000000 0001 0 0 0 00000000 0 0 0\n"
+	if !ipv4RouteTableHasInterface(strings.NewReader(ipv4), "Meta") {
+		t.Fatal("IPv4 route through Meta should be active evidence")
+	}
+
+	linkLocalIPv6 := "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000000 00000000 00000001 Meta\n"
+	if ipv6RouteTableHasInterface(strings.NewReader(linkLocalIPv6), "Meta") {
+		t.Fatal("link-local IPv6 route alone must not activate TUN status")
+	}
+	defaultIPv6 := "00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000000 00000000 00000001 Meta\n"
+	if !ipv6RouteTableHasInterface(strings.NewReader(defaultIPv6), "Meta") {
+		t.Fatal("non-link-local IPv6 route through Meta should be active evidence")
+	}
+}
+
 func TestNicDisplayRank(t *testing.T) {
 	if nicDisplayRank("eth0") >= nicDisplayRank("wlan0") {
 		t.Fatal("wired should rank before wifi")
@@ -135,6 +174,17 @@ func TestParseLinkSpeedMbps(t *testing.T) {
 	for raw, want := range tests {
 		if got := parseLinkSpeedMbps(raw); math.Abs(got-want) > 0.001 {
 			t.Errorf("parseLinkSpeedMbps(%q) = %g, want %g", raw, got, want)
+		}
+	}
+}
+
+func TestNegotiatedLinkSpeedOnlyAppliesToPhysicalInterfaces(t *testing.T) {
+	if !shouldReadNegotiatedLinkSpeed("wired") {
+		t.Fatal("wired interface should expose negotiated speed")
+	}
+	for _, linkType := range []string{"tun", "bridge", ""} {
+		if shouldReadNegotiatedLinkSpeed(linkType) {
+			t.Fatalf("%q must not expose negotiated speed", linkType)
 		}
 	}
 }

@@ -6032,3 +6032,370 @@ input[type="radio"] {
         grid-template-columns: repeat(auto-fit, minmax(min(7rem, 100%), 1fr)) !important;
     }
 }
+
+/* Mobile keeps the desktop section order while using a denser single column. */
+@media (max-width: 640px) {
+    body {
+        padding: 8px;
+        padding-right: calc(8px + var(--scrollbar-compensation, 0px));
+    }
+
+    header {
+        gap: 8px;
+        margin-bottom: 10px;
+        padding: 11px 12px 12px;
+        border-radius: 10px;
+    }
+
+    .logo { font-size: 18px; }
+
+    .controls {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        width: 100%;
+    }
+
+    .controls button,
+    .controls .button-link,
+    #theme-toggle,
+    .controls .icon-button {
+        width: 100%;
+        min-width: 0;
+        min-height: 38px;
+        height: 38px;
+        padding: 0 6px;
+        gap: 5px;
+        border-radius: 7px !important;
+        font-size: 12px;
+    }
+
+    .controls .ui-icon,
+    #theme-toggle .ui-icon {
+        width: 15px !important;
+        height: 15px !important;
+        -webkit-mask-size: 15px 15px !important;
+        mask-size: 15px 15px !important;
+    }
+
+    .dashboard-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .card {
+        width: 100%;
+        padding: 12px;
+        border-radius: 10px !important;
+        overflow: visible;
+    }
+
+    .card-title,
+    .dashboard-collapsible.collapsed .card-title {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        min-height: 40px;
+        margin-bottom: 10px;
+        font-size: 14px;
+    }
+
+    .card-title > span:first-child {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: var(--text-main);
+    }
+
+    .card-title .title-tools,
+    #app-traffic-section .card-title .title-tools,
+    .dashboard-collapsible.collapsed .card-title .title-tools {
+        display: flex;
+        flex: 0 1 auto;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+        gap: 5px;
+        width: auto;
+        min-width: 0;
+        margin-left: auto;
+    }
+
+    .card-title .title-tools .placeholder,
+    .card-title .observation-status,
+    #app-traffic-status {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: 94px;
+        overflow: hidden;
+        color: var(--text-muted);
+        font-family: var(--font-ui);
+        font-size: 11px;
+        font-style: normal;
+        font-weight: 400;
+        line-height: 1.25;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .card-title .title-tools button,
+    .card-title .title-tools .button-link,
+    .card-title .title-tools .icon-button,
+    #nat-refresh-btn {
+        flex: 0 0 auto;
+        min-height: 38px;
+        height: 38px;
+        padding: 0 9px;
+        font-size: 12px;
+    }
+
+    .card-title .title-tools .icon-button,
+    #nat-refresh-btn {
+        width: 38px;
+        min-width: 38px;
+        padding: 0;
+    }
+
+    .dashboard-collapsible.collapsed {
+        padding-bottom: 12px;
+    }
+
+    .dashboard-collapsible.collapsed .card-title {
+        margin-bottom: 0;
+    }
+
+    /* Four reachability results fit in one compact, two-column scan area. */
+    #connectivity-card .connectivity-split {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px;
+    }
+
+    .connectivity-group {
+        padding: 8px 7px 6px;
+    }
+
+    .connectivity-group .table-subtitle {
+        margin-bottom: 3px;
+        font-size: 12px;
+    }
+
+    #domestic-table th,
+    #domestic-table td,
+    #global-table th,
+    #global-table td {
+        padding: 4px 0;
+        font-size: 11px;
+    }
+
+    #domestic-table th:nth-child(1),
+    #domestic-table td:nth-child(1),
+    #global-table th:nth-child(1),
+    #global-table td:nth-child(1) { width: 44%; }
+
+    #domestic-table th:nth-child(2),
+    #domestic-table td:nth-child(2),
+    #global-table th:nth-child(2),
+    #global-table td:nth-child(2) { width: 25%; }
+
+    #domestic-table th:nth-child(3),
+    #domestic-table td:nth-child(3),
+    #global-table th:nth-child(3),
+    #global-table td:nth-child(3) { width: 31%; }
+
+    .connectivity-table-fixed col.col-target { width: 44%; }
+    .connectivity-table-fixed col.col-status { width: 25%; }
+    .connectivity-table-fixed col.col-latency { width: 31%; }
+    .connectivity-table-fixed tbody tr { height: 38px; }
+    .connectivity-table-fixed td.col-target { padding-left: 4px; }
+    .connectivity-table-fixed thead th.col-target { padding-left: 4px; }
+    .connectivity-table-fixed .target-info { gap: 4px; }
+    .connectivity-table-fixed .site-icon { width: 15px; height: 15px; }
+    .connectivity-table-fixed .target-info span { font-size: 11px; }
+    .connectivity-table-fixed .connectivity-status.nat-badge {
+        min-width: 0;
+        padding: 2px 3px;
+        font-size: 9px;
+    }
+    .connectivity-table-fixed .latency-value {
+        min-width: 0;
+        font-size: 11px;
+    }
+
+    .identity-strip {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .identity-strip-row {
+        display: grid;
+        gap: 2px;
+        width: auto;
+        align-items: start;
+        justify-content: start;
+    }
+
+    .identity-strip-label { font-size: 10px; letter-spacing: 0; }
+    .identity-strip-value { font-size: 13px; text-align: left; }
+    .identity-ip-grid { margin-top: 8px; gap: 8px; }
+    .identity-ip-card { padding: 9px 10px; }
+    .identity-ip-main { font-size: 12px; line-height: 1.45; }
+    .identity-ip-meta { min-height: 0; margin-top: 3px; font-size: 10px; }
+    .identity-ip-card-head { flex-wrap: nowrap; }
+    .ipv6-detail-btn { min-height: 32px; padding: 0 8px; }
+    .egress-lookup-block { margin-top: 8px; }
+    .egress-lookup-block > div:first-child { display: none; }
+    .egress-item { padding: 8px 10px; }
+    .egress-ip { font-size: 12px; }
+    .egress-meta { font-size: 10px; line-height: 1.35; }
+
+    .trace-toolbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 7px;
+        margin-bottom: 8px;
+    }
+
+    .trace-toolbar input,
+    .trace-toolbar button { min-height: 40px; }
+    .trace-toolbar .trace-stop-btn { grid-column: 1 / -1; }
+    .trace-summary:has(> .placeholder:only-child) { display: none; }
+    .trace-details-btn:disabled { display: none; }
+    .trace-details-btn { margin-top: 8px; }
+    .trace-nat-panel { margin-top: 9px; padding-top: 9px; }
+    .trace-nat-head { margin-bottom: 4px; font-size: 13px; }
+    .trace-nat-head .placeholder { font-size: 11px; font-style: normal; }
+    .nat-type { margin-bottom: 2px; font-size: 17px; }
+    .nat-meta { min-height: 0; margin-bottom: 3px; font-size: 11px; }
+    .nat-note { font-size: 10px; line-height: 1.4; }
+
+    .nic-realtime-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px;
+    }
+    .nic-realtime-item:only-child { grid-column: 1 / -1; }
+    .nic-realtime-item { padding: 9px; }
+    .nic-realtime-head { gap: 4px; margin-bottom: 6px; }
+    .nic-realtime-name { min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .nic-realtime-badge { padding: 1px 4px; font-size: 9px; letter-spacing: 0; }
+    .nic-realtime-rows { gap: 4px; }
+    .nic-realtime-label { font-size: 9px; letter-spacing: 0; }
+    .nic-realtime-value { font-size: 13px; }
+    .nic-realtime-total { margin-top: 5px; font-size: 9px; line-height: 1.35; }
+
+    #interfaces-status { display: none; }
+    .interfaces-table-fixed tbody { gap: 8px; }
+    .interfaces-table-fixed tr { gap: 3px; padding: 9px 10px; margin-bottom: 8px; }
+    .interfaces-table-fixed td {
+        grid-template-columns: 4.2rem minmax(0, 1fr);
+        gap: 6px;
+        padding: 1px 0;
+        font-size: 12px;
+    }
+    .interfaces-table-fixed td::before { font-size: 10px; letter-spacing: 0; }
+    .interfaces-table-fixed .col-ipv4,
+    .interfaces-table-fixed .col-ipv6,
+    .interfaces-table-fixed .col-mac { line-height: 1.4; }
+
+    #host-ports-section:not(.collapsed) .card-title {
+        flex-wrap: wrap;
+    }
+    #host-ports-section:not(.collapsed) .card-title .title-tools {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 38px 38px;
+        flex: 1 0 100%;
+        width: 100%;
+    }
+    #host-ports-section:not(.collapsed) #host-ports-status { display: none; }
+    #host-ports-section:not(.collapsed) .host-port-search { min-width: 0; }
+    #host-ports-section:not(.collapsed) .host-port-search input { width: 100%; height: 38px; }
+    .host-port-group-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        padding: 6px;
+    }
+    .host-port-group-head { min-height: 38px; padding: 5px 7px; gap: 5px; }
+    .owner-badge { margin-right: 2px; padding: 0 5px; font-size: 10px; }
+    .host-port-item { min-height: 42px; padding: 6px 7px; }
+    .host-port-main strong { font-size: 13px; }
+    .host-port-proto,
+    .host-port-state { margin-left: 3px; font-size: 9px; }
+
+    .traffic-note,
+    .settings-hint { font-size: 10px; line-height: 1.4; }
+
+    /* Keep primary dialog actions aligned with the title instead of creating
+       a second, oversized header row. */
+    #settings-window > .window-head,
+    #notification-settings-window > .window-head {
+        flex-direction: row;
+        align-items: center;
+        min-height: 38px;
+        padding-right: 128px;
+    }
+    #settings-window > .window-head .window-actions,
+    #notification-settings-window > .window-head .window-actions {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        grid-template-columns: none !important;
+        gap: 6px;
+        width: auto;
+    }
+    #settings-window > .window-head .window-actions > .window-close-btn,
+    #notification-settings-window > .window-head .window-actions > .window-close-btn {
+        position: static;
+    }
+    #settings-window > .window-head .window-actions > :not(.window-close-btn),
+    #notification-settings-window > .window-head .window-actions > :not(.window-close-btn) {
+        width: auto;
+        min-height: 38px;
+        height: 38px;
+        padding: 0 10px;
+        font-size: 12px;
+    }
+    #settings-window .settings-row {
+        gap: 8px;
+        padding: 9px 0;
+    }
+    #settings-window .settings-row > span {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 13px;
+        line-height: 1.35;
+    }
+    #settings-window .settings-row:not(.settings-row-experimental) > span {
+        white-space: nowrap;
+    }
+    #settings-window .settings-inline-controls {
+        flex: 0 1 auto;
+        min-width: 0;
+        gap: 5px;
+    }
+    #settings-window .settings-inline-controls select { max-width: 76px; padding-inline: 8px; }
+    #open-notification-settings { min-width: 76px; padding-inline: 7px; font-size: 11px; }
+
+    #network-config-window > .window-head .note {
+        max-width: 190px;
+        font-size: 10px;
+        line-height: 1.35;
+    }
+}
+
+@media (max-width: 370px) {
+    .controls button,
+    .controls .button-link,
+    #theme-toggle,
+    .controls .icon-button { font-size: 11px; }
+    .controls .btn-with-icon .ui-icon,
+    .controls .button-link .ui-icon { display: none !important; }
+    #theme-toggle .ui-icon { display: block !important; }
+    .card-title .title-tools .placeholder,
+    .card-title .observation-status,
+    #app-traffic-status { max-width: 72px; }
+}

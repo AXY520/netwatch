@@ -636,9 +636,8 @@ function renderNATInfo(nat) {
     var explain = natExplain[nat.type];
 	var meta = explain ? (explain[0] + ' / ' + explain[1]) : '';
 	if (nat.confidence) meta += (meta ? ' · ' : '') + String(nat.confidence).toUpperCase();
-    if (els.natMeta) els.natMeta.textContent = meta;
+	if (els.natMeta) els.natMeta.textContent = meta;
 	var note = nat.diagnostic || (explain ? explain[2] : '') || nat.note || '';
-	if (nat.proxy_affected && note.indexOf('代理') < 0) note += (note ? '；' : '') + '检测到代理 TUN，结果可能受分流规则影响';
 	if (els.natNote) els.natNote.textContent = note;
     NetwatchShared.setObservationStatus(els.natStatus, {
 		state: nat.generated_at ? 'fresh' : (nat.error ? 'error' : 'empty'),

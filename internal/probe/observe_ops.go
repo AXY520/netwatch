@@ -37,12 +37,11 @@ func (s *Service) RefreshNetworkInfo(ctx context.Context) NetworkInfo {
 	s.mu.Lock()
 	prev := s.summary.NetworkInfo
 	info := NetworkInfo{
-		GeneratedAt:      localTimestamp(),
-		Hostname:         hostname,
-		Interfaces:       interfaces,
-		DefaultIPv4:      readDefaultIPv4Route(),
-		DefaultIPv6:      readDefaultIPv6Route(),
-		ProxyEnvironment: detectProxyEnvironment(),
+		GeneratedAt: localTimestamp(),
+		Hostname:    hostname,
+		Interfaces:  interfaces,
+		DefaultIPv4: readDefaultIPv4Route(),
+		DefaultIPv6: readDefaultIPv6Route(),
 		// Keep last known egress snapshot; full probe/run refreshes these later.
 		EgressIPv4:           prev.EgressIPv4,
 		EgressIPv6:           prev.EgressIPv6,

@@ -514,6 +514,72 @@ func hostTrafficFiltersInSync(instance *hostTrafficLimitInstance) (bool, error) 
 	return true, nil
 }
 
+// acceptedHostUploadBytes returns the bytes that reached the skbedit action
+// after the native police action. Packets rejected by police stop at that
+// action, so this counter represents traffic actually admitted to the device
+// instead of the cgroup's pre-police send attempts and TCP retransmissions.
+func acceptedHostUploadBytes(filters []tcnetlink.Filter, instance *hostTrafficLimitInstance) (uint64, bool) {
+	if instance == nil || instance.limit.UploadKbps <= 0 {
+		return 0, false
+	}
+	wantHandle := instance.slot << 16
+	for _, filter := range filters {
+		fw, ok := filter.(*tcnetlink.FwFilter)
+		if !ok || fw.Attrs().Handle != wantHandle || fw.Attrs().Priority != hostTrafficLimitPolicePreference {
+			continue
+		}
+		seenPolice := false
+		for _, action := range fw.Actions {
+			switch action.(type) {
+			case *tcnetlink.PoliceAction:
+				seenPolice = true
+			case *tcnetlink.SkbEditAction:
+				stats := action.Attrs().Statistics
+				if seenPolice && stats != nil && stats.Basic != nil {
+					return stats.Basic.Bytes, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+func acceptedHostLocalUploadBytes(instance *hostTrafficLimitInstance) (uint64, bool) {
+	if instance == nil || instance.objects.LocalUploadBytes == nil {
+		return 0, false
+	}
+	var bytes uint64
+	if err := instance.objects.LocalUploadBytes.Lookup(uint32(0), &bytes); err != nil {
+		return 0, false
+	}
+	return bytes, true
+}
+
+func (m *hostTrafficLimiter) acceptedUploadCounters() map[string]uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	counters := make(map[string]uint64)
+	for policyID, instance := range m.apps {
+		if instance == nil || instance.limit.UploadKbps <= 0 {
+			continue
+		}
+		device, err := tcnetlink.LinkByName(instance.device)
+		if err != nil {
+			continue
+		}
+		filters, err := tcnetlink.FilterList(device, tcnetlink.HANDLE_MIN_EGRESS)
+		if err != nil {
+			continue
+		}
+		publicBytes, publicOK := acceptedHostUploadBytes(filters, instance)
+		localBytes, localOK := acceptedHostLocalUploadBytes(instance)
+		if publicOK && localOK {
+			counters[policyID] = publicBytes + localBytes
+		}
+	}
+	return counters
+}
+
 func hostTrafficPoliceFilter(instance *hostTrafficLimitInstance, device string, uploadKbps int64) (*tcnetlink.FwFilter, error) {
 	link, err := tcnetlink.LinkByName(device)
 	if err != nil {

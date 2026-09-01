@@ -544,6 +544,13 @@ function initDashboardPanelCollapse() {
     var collapsed = new Set((state.settings.dashboard_collapsed_sections || []).filter(function (key) {
         return !!allowed[key];
     }));
+    var compactViewport = !!(window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+    var mobileHostPortsPreferenceKey = 'netwatch_mobile_host_ports_panel_v1';
+    var mobileHostPortsPreference = compactViewport ? localStorage.getItem(mobileHostPortsPreferenceKey) : null;
+    if (compactViewport) {
+        if (mobileHostPortsPreference === 'expanded') collapsed.delete('host_ports');
+        else collapsed.add('host_ports');
+    }
     var saveQueue = Promise.resolve();
 
     var paint = function () {
@@ -593,6 +600,9 @@ function initDashboardPanelCollapse() {
             if (!allowed[key]) return;
             if (collapsed.has(key)) collapsed.delete(key);
             else collapsed.add(key);
+            if (compactViewport && key === 'host_ports') {
+                localStorage.setItem(mobileHostPortsPreferenceKey, collapsed.has(key) ? 'collapsed' : 'expanded');
+            }
             paint();
             persist();
         });

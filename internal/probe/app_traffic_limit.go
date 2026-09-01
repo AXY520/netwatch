@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	tcnetlink "github.com/vishvananda/netlink"
+
 	"netwatch/internal/logger"
 )
 
@@ -43,6 +45,8 @@ var hostTrafficControlPaths = []string{
 }
 
 var trafficRatePattern = regexp.MustCompile(`(?i)\brate\s+([0-9]+(?:\.[0-9]+)?)\s*(bit|kbit|mbit|gbit)\b`)
+var trafficMTUPattern = regexp.MustCompile(`(?i)\bmtu\s+([0-9]+(?:\.[0-9]+)?)\s*(b|kb|kib|mb|mib)?\b`)
+var trafficBurstPattern = regexp.MustCompile(`(?i)\bburst\s+([0-9]+(?:\.[0-9]+)?)\s*(b|kb|kib|mb|mib)?\b`)
 
 type appTrafficLimitInspection struct {
 	DownloadKbps int64
@@ -51,6 +55,9 @@ type appTrafficLimitInspection struct {
 	UploadRule   bool
 	UploadBypass map[string]bool
 	UploadAction bool
+	UploadCount  bool
+	UploadMTU    bool
+	UploadBurst  bool
 	Ingress      bool
 }
 
@@ -94,7 +101,13 @@ func inspectBridgeTrafficLimit(ctx context.Context, bridge string, desired AppTr
 			issues = append(issues, fmt.Sprintf("上传速率为 %d Kbit/s，期望 %d Kbit/s", inspection.UploadKbps, desired.UploadKbps))
 		}
 		if !inspection.UploadAction {
-			issues = append(issues, "上传 police 动作不是 conform-exceed drop/ok")
+			issues = append(issues, "上传 police 动作未丢弃超限流量")
+		}
+		if !inspection.UploadCount {
+			issues = append(issues, "上传 police 后的放行计数动作缺失")
+		}
+		if !inspection.UploadMTU || !inspection.UploadBurst {
+			issues = append(issues, "上传 police 的 MTU/burst 无法容纳 GSO 大包")
 		}
 		if len(inspection.UploadBypass) != len(appTrafficTCUploadBypassFilters) {
 			issues = append(issues, fmt.Sprintf("上传局域网 bypass filter 不完整（%d/%d）", len(inspection.UploadBypass), len(appTrafficTCUploadBypassFilters)))
@@ -135,19 +148,65 @@ func parseAppTrafficLimitInspection(qdiscOutput, filterOutput string) appTraffic
 			pref = currentPref
 		}
 		switch {
-		case pref == appTrafficTCFilterPref && strings.Contains(line, "police"):
+		case pref == appTrafficTCFilterPref && strings.Contains(strings.ToLower(line), "police"):
 			inspection.UploadRule = true
-			inspection.UploadAction = strings.Contains(strings.ToLower(line), "drop/ok")
+			inspection.UploadAction = trafficPoliceDropsExcess(line)
+			inspection.UploadMTU = trafficSizeAtLeast(line, trafficMTUPattern, 65535)
+			inspection.UploadBurst = trafficSizeAtLeast(line, trafficBurstPattern, 65535)
 			if rate, ok := parseTrafficRateKbps(line); ok {
 				inspection.UploadKbps = rate
 			}
-		case pref == appTrafficTCFilterPref && inspection.UploadRule && strings.Contains(strings.ToLower(line), "drop/ok"):
+		case pref == appTrafficTCFilterPref && inspection.UploadRule && trafficPoliceDropsExcess(line):
 			inspection.UploadAction = true
-		case isAppTrafficUploadBypassPref(pref):
+		case pref == appTrafficTCFilterPref && inspection.UploadRule && trafficAccountingAction(line):
+			inspection.UploadCount = true
+		case pref == appTrafficTCFilterPref && inspection.UploadRule:
+			inspection.UploadMTU = inspection.UploadMTU || trafficSizeAtLeast(line, trafficMTUPattern, 65535)
+			inspection.UploadBurst = inspection.UploadBurst || trafficSizeAtLeast(line, trafficBurstPattern, 65535)
+		case isAppTrafficUploadBypassPref(pref) && trafficPassAction(line):
 			inspection.UploadBypass[pref] = true
 		}
 	}
 	return inspection
+}
+
+func trafficSizeAtLeast(line string, pattern *regexp.Regexp, minimum float64) bool {
+	match := pattern.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return false
+	}
+	value, err := strconv.ParseFloat(match[1], 64)
+	if err != nil || value < 0 {
+		return false
+	}
+	switch strings.ToLower(match[2]) {
+	case "kb", "kib":
+		value *= 1024
+	case "mb", "mib":
+		value *= 1024 * 1024
+	}
+	return value >= minimum
+}
+
+// iproute2 has used both the compact "conform-exceed drop/pipe" form and an
+// expanded "action drop" form for the same police action. The following gact
+// action is checked separately, so accepting the expanded form cannot mistake
+// a terminal police rule for Netwatch's current two-action rule.
+func trafficPoliceDropsExcess(line string) bool {
+	line = strings.ToLower(line)
+	return strings.Contains(line, "drop/pipe") || strings.Contains(line, "drop/ok") ||
+		strings.Contains(line, "action drop") || strings.Contains(line, "action shot")
+}
+
+func trafficAccountingAction(line string) bool {
+	line = strings.ToLower(line)
+	return strings.Contains(line, "action order 2") && trafficPassAction(line)
+}
+
+func trafficPassAction(line string) bool {
+	line = strings.ToLower(line)
+	return strings.Contains(line, "gact") &&
+		(strings.Contains(line, "action pass") || strings.Contains(line, "action ok"))
 }
 
 func trafficFilterPref(line string) string {
@@ -526,17 +585,119 @@ func configureBridgeUploadLimit(ctx context.Context, bridge string, kbps int64) 
 			return trafficControlError("set upload local bypass", bridge, out, err)
 		}
 	}
-	burst := appTrafficBurstBytes(kbps)
+	// The burst must be at least one maximum-size offloaded skb; setting only
+	// police MTU to 65535 would still make every GSO packet exceed a 16 KiB
+	// token bucket at low configured rates.
+	burst := limitDirectionBurst(kbps)
 	filterArgs := []string{"dev", bridge, "ingress", "pref", appTrafficTCFilterPref, "handle", appTrafficTCFilterHandle,
 		"protocol", "all", "matchall", "action", "police", "rate", strconv.FormatInt(kbps, 10) + "kbit",
-		// tc's conform-exceed syntax is EXCEEDACT/NOTEXCEEDACT. Drop only
-		// packets above the ceiling; conforming packets must pass.
-		"burst", strconv.FormatInt(burst, 10), "conform-exceed", "drop/ok"}
+		// GSO packets can be much larger than tc's implicit 2 KiB police MTU.
+		// A 64 KiB ceiling admits valid offloaded packets while the token bucket
+		// still enforces the configured byte rate.
+		"burst", strconv.FormatInt(burst, 10), "mtu", "65535",
+		// Conforming packets continue to the gact action. Its action statistics
+		// are Netwatch's post-police, actually-admitted upload counter.
+		"conform-exceed", "drop/pipe", "action", "gact", "pass"}
 	out, err := runTrafficControlCommand(ctx, append([]string{"filter", "add"}, filterArgs...)...)
 	if err != nil {
 		return trafficControlError("set upload limit", bridge, out, err)
 	}
 	return nil
+}
+
+// acceptedBridgeUploadBytes returns the sum of traffic admitted by the public
+// police rule and traffic passed by Netwatch's private-network bypass rules.
+// Reading action statistics through netlink avoids parsing tc's human output
+// and, unlike the bridge rx counter, excludes packets rejected by police.
+func acceptedBridgeUploadBytes(bridge string) (uint64, bool) {
+	link, err := tcnetlink.LinkByName(bridge)
+	if err != nil {
+		return 0, false
+	}
+	filters, err := tcnetlink.FilterList(link, tcnetlink.HANDLE_MIN_INGRESS)
+	if err != nil {
+		return 0, false
+	}
+	return acceptedBridgeUploadBytesFromFilters(filters)
+}
+
+func acceptedBridgeUploadBytesFromFilters(filters []tcnetlink.Filter) (uint64, bool) {
+	mainPref, _ := strconv.ParseUint(appTrafficTCFilterPref, 10, 16)
+	bypassPrefs := make(map[uint16]struct{}, len(appTrafficTCUploadBypassFilters))
+	for _, bypass := range appTrafficTCUploadBypassFilters {
+		value, parseErr := strconv.ParseUint(bypass.pref, 10, 16)
+		if parseErr == nil {
+			bypassPrefs[uint16(value)] = struct{}{}
+		}
+	}
+
+	var total uint64
+	mainFound := false
+	bypassFound := make(map[uint16]struct{}, len(bypassPrefs))
+	for _, filter := range filters {
+		attrs := filter.Attrs()
+		if attrs == nil {
+			continue
+		}
+		actions := appTrafficFilterActions(filter)
+		switch {
+		case attrs.Priority == uint16(mainPref):
+			seenPolice := false
+			for _, action := range actions {
+				switch action.(type) {
+				case *tcnetlink.PoliceAction:
+					seenPolice = true
+				case *tcnetlink.GenericAction:
+					if seenPolice {
+						if bytes, ok := appTrafficActionBytes(action); ok {
+							total += bytes
+							mainFound = true
+						}
+					}
+				}
+			}
+		case hasTrafficFilterPreference(bypassPrefs, attrs.Priority):
+			for _, action := range actions {
+				if _, ok := action.(*tcnetlink.GenericAction); !ok {
+					continue
+				}
+				if bytes, ok := appTrafficActionBytes(action); ok {
+					total += bytes
+					bypassFound[attrs.Priority] = struct{}{}
+					break
+				}
+			}
+		}
+	}
+	return total, mainFound && len(bypassFound) == len(bypassPrefs)
+}
+
+func hasTrafficFilterPreference(values map[uint16]struct{}, preference uint16) bool {
+	_, ok := values[preference]
+	return ok
+}
+
+func appTrafficFilterActions(filter tcnetlink.Filter) []tcnetlink.Action {
+	switch value := filter.(type) {
+	case *tcnetlink.MatchAll:
+		return value.Actions
+	case *tcnetlink.Flower:
+		return value.Actions
+	case *tcnetlink.FwFilter:
+		return value.Actions
+	case *tcnetlink.U32:
+		return value.Actions
+	default:
+		return nil
+	}
+}
+
+func appTrafficActionBytes(action tcnetlink.Action) (uint64, bool) {
+	if action == nil || action.Attrs() == nil || action.Attrs().Statistics == nil ||
+		action.Attrs().Statistics.Basic == nil {
+		return 0, false
+	}
+	return action.Attrs().Statistics.Basic.Bytes, true
 }
 
 // clearBridgeUploadFilters removes every filter at Netwatch's reserved

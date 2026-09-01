@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -484,11 +485,7 @@ func collectAppTraffic() AppTrafficSnapshot {
 		}
 	}
 	if hostStatsUnavailable {
-		diagnostic := hostTrafficDiagnostic(hostStats)
-		if diagnostic == "" {
-			diagnostic = "未获得 eBPF 诊断信息，Host 容器 cgroup 路径解析或初始化未完成"
-		}
-		snap.Note = "Host 模式流量统计不可用：" + diagnostic + "；Bridge 流量统计不受影响。"
+		snap.Note = hostTrafficAvailabilityNote(hostStats)
 	}
 
 	// 按总流量降序，便于前端排序展示
@@ -512,6 +509,29 @@ func hostTrafficDiagnostic(items []AppBridgeStats) string {
 		}
 	}
 	return ""
+}
+
+func hostTrafficAvailabilityNote(items []AppBridgeStats) string {
+	unavailable := 0
+	for _, item := range items {
+		if item.Source == "cgroup_skb_ebpf_unavailable" {
+			unavailable++
+		}
+	}
+	if unavailable == 0 {
+		return ""
+	}
+	diagnostic := hostTrafficDiagnostic(items)
+	if diagnostic == "" {
+		diagnostic = "未获得 eBPF 诊断信息，Host 容器 cgroup 路径解析或初始化未完成"
+	}
+	if unavailable < len(items) {
+		return fmt.Sprintf(
+			"Host 模式流量统计部分不可用：%d/%d 个 Host 容器不可用（%s）；其余 Host 与 Bridge 流量统计不受影响。",
+			unavailable, len(items), diagnostic,
+		)
+	}
+	return "Host 模式流量统计不可用：" + diagnostic + "；Bridge 流量统计不受影响。"
 }
 
 type bridgeAddrs struct {

@@ -26,7 +26,7 @@ func TestDefaultConfig(t *testing.T) {
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg    Config
+		cfg     Config
 		wantErr error
 	}{
 		{
@@ -35,8 +35,8 @@ func TestConfigValidate(t *testing.T) {
 				Port:            "8080",
 				RefreshInterval: 10 * time.Second,
 				HTTPTimeout:     5 * time.Second,
-				NATTimeout:     2 * time.Second,
-				DataDir:        "/tmp",
+				NATTimeout:      2 * time.Second,
+				DataDir:         "/tmp",
 			},
 			wantErr: nil,
 		},
@@ -46,8 +46,8 @@ func TestConfigValidate(t *testing.T) {
 				Port:            "8080",
 				RefreshInterval: 0,
 				HTTPTimeout:     5 * time.Second,
-				NATTimeout:     2 * time.Second,
-				DataDir:        "/tmp",
+				NATTimeout:      2 * time.Second,
+				DataDir:         "/tmp",
 			},
 			wantErr: ErrInvalidRefreshInterval,
 		},
@@ -56,9 +56,9 @@ func TestConfigValidate(t *testing.T) {
 			cfg: Config{
 				Port:            "8080",
 				RefreshInterval: 10 * time.Second,
-				HTTPTimeout:   5 * time.Second,
-				NATTimeout:     2 * time.Second,
-				DataDir:        "",
+				HTTPTimeout:     5 * time.Second,
+				NATTimeout:      2 * time.Second,
+				DataDir:         "",
 			},
 			wantErr: ErrInvalidDataDir,
 		},
