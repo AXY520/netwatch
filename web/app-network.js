@@ -50,92 +50,6 @@ function netwatchPost(path, body) {
     });
 }
 
-
-function detectProxyState() {
-	var environment = state.summary && state.summary.network_info && state.summary.network_info.proxy_environment;
-	if (environment && environment.mode) {
-		var interfaces = (environment.interfaces || []).filter(Boolean);
-		var suffix = '';
-		if (environment.mode === 'tun') suffix = 'TUN' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
-		if (environment.mode === 'environment') suffix = 'ENV';
-		if (environment.mode === 'mixed') suffix = 'TUN + ENV' + (interfaces.length ? ' · ' + interfaces.join(', ') : '');
-		return {
-			mode: environment.mode,
-			label: environment.detected ? (i18n('proxy_detected') + (suffix ? ' · ' + suffix : '')) : i18n('no_proxy'),
-			note: environment.note || ''
-		};
-	}
-    var ci = (state.summary && state.summary.website_connectivity) || {};
-    var globalSites = (ci.global || []).filter(function (s) { return s && s.status; });
-    if (globalSites.length === 0) {
-        return { mode: 'unknown', label: i18n('unknown_status') };
-    }
-    var okCount = globalSites.filter(function (s) { return s.status === 'ok'; }).length;
-    var total = globalSites.length;
-    var glb = (state.egressData && state.egressData.lookups || []).find(function (l) { return l.scope === 'global' && l.ip; });
-    var domesticV4 = state.egressData && state.egressData.domestic_ip && state.egressData.domestic_ip.ipv4;
-    var inChina = function (entry) {
-        if (!entry) return false;
-        var country = String(entry.country || '').trim();
-        var region = String(entry.region || entry.location || '').trim();
-        var blob = country + ' ' + region;
-        if (/中国|中國|China/i.test(blob)) return true;
-        // ISO code only when it's a standalone country code field, not substring of ISP text.
-        if (/^(CN|CHN)$/i.test(country)) return true;
-        return false;
-    };
-    var hasMetaTun = false;
-    try {
-        var ifaces = (state.summary && state.summary.network_info && state.summary.network_info.interfaces) || [];
-        hasMetaTun = ifaces.some(function (iface) {
-            return iface && iface.present && iface.link_type === 'tun' &&
-                (iface.device_status === 'connected' || iface.oper_state === 'up');
-        });
-    } catch (_) {}
-
-    // Need egress geo to decide "proxy vs overseas direct"; otherwise stay unknown.
-    var hasEgress = !!(domesticV4 && (domesticV4.ip || domesticV4.country || domesticV4.location)) || !!(glb && glb.ip);
-    var boxInChina = inChina(domesticV4) || inChina(glb);
-
-    if (okCount === total) {
-        if (!hasEgress && !hasMetaTun) {
-            return { mode: 'unknown', label: i18n('unknown_status') };
-        }
-        // Domestic geo + all foreign sites OK ⇒ system proxy/TUN is carrying global traffic.
-        if (boxInChina || hasMetaTun) {
-            return { mode: 'proxy', label: i18n('proxy_detected') };
-        }
-        return { mode: 'direct', label: i18n('global_egress_detected') };
-    }
-    if (okCount === 0) {
-        // All blocked: no working proxy path (or network dead). Don't claim "proxy on".
-        return { mode: 'direct', label: i18n('no_proxy') };
-    }
-    // Split routing / partial proxy.
-    if (hasMetaTun) {
-        return { mode: 'partial', label: i18n('proxy_detected') + ' · ' + i18n('unknown_status') };
-    }
-    return { mode: 'partial', label: i18n('unknown_status') };
-}
-
-function renderProxyBanner() {
-    var inlineEl = document.getElementById('proxy-inline-status');
-    var s = detectProxyState();
-	if (inlineEl) {
-		inlineEl.textContent = s.label;
-		inlineEl.title = s.note || '';
-		inlineEl.dataset.proxyMode = s.mode || 'unknown';
-	}
-}
-
-function refreshProxyDisplay() {
-    renderProxyBanner();
-    if (state.summary && state.summary.website_connectivity) {
-        window.__app.updateConnectivityTable(els.domesticTable, state.summary.website_connectivity.domestic || []);
-        window.__app.updateConnectivityTable(els.globalTable, state.summary.website_connectivity.global || []);
-    }
-}
-
 function stampOf(obj) {
     return (obj && obj.generated_at) ? String(obj.generated_at) : '';
 }
@@ -186,7 +100,6 @@ function renderSummary(summary) {
     updateWebsiteObservationStatus(summary.website_connectivity || {}, 'fresh');
     window.__app.renderNetworkInfo(summary.network_info || {});
     if (window.__app.renderNATInfo) window.__app.renderNATInfo((summary.network_info && summary.network_info.nat) || {});
-    refreshProxyDisplay();
 }
 
 function updateWebsiteObservationStatus(data, status, error) {
@@ -376,7 +289,6 @@ function renderEgressLookups(data) {
         staleAfterSeconds: 900
     });
     renderDomesticIPSnapshot(data.domestic_ip || {});
-    refreshProxyDisplay();
 }
 
 function setIdentityBadge(el, text, mode) {

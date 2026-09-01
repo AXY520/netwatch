@@ -89,11 +89,10 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 		EgressIPv6:       egressIPv6,
 		EgressIPv4Region: egressIPv4Region,
 		EgressIPv6Region: egressIPv6Region,
-		ProxyEnvironment: detectProxyEnvironment(),
 		DetectionNotes: []string{
 			"结果以当前容器网络命名空间为准，建议使用 host 网络模式。",
 			"界面自动展示物理有线/Wi-Fi、netwatch 网桥，以及 mihomo 等代理 TUN（如 Meta）。",
-			"出口地区主要用于判断代理是否启用以及流量分流是否符合预期。",
+			"出口地区仅展示公网 IP 归属，不用于判断代理状态。",
 		},
 	}
 
@@ -208,7 +207,7 @@ func collectInterfaces(sdkStatus lzcsdk.NetStatus, sdkOK bool) []InterfaceInfo {
 		}
 		if info.LinkType == "wifi" {
 			info.LinkSpeedRxMbps, info.LinkSpeedTxMbps = readWiFiLinkSpeedMbps(name)
-		} else {
+		} else if shouldReadNegotiatedLinkSpeed(info.LinkType) {
 			info.LinkSpeedMbps = readLinkSpeedMbps(name)
 		}
 		for _, addr := range addrs {
@@ -456,8 +455,10 @@ func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK b
 	if !sdkOK {
 		// Still derive status from kernel when SDK is unavailable.
 		switch info.LinkType {
-		case "bridge", "tun":
+		case "bridge":
 			info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
+		case "tun":
+			info.DeviceStatus = tunDeviceStatus(info.Present, kernelOperState, proxyTunInfoActive(info))
 		case "wired", "wifi":
 			if info.Present && kernelOperState == "up" && hasAddrs {
 				info.DeviceStatus = "connected"
@@ -480,9 +481,96 @@ func applySDKToInterface(info InterfaceInfo, sdkStatus lzcsdk.NetStatus, sdkOK b
 	case "bridge":
 		info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
 	case "tun":
-		info.DeviceStatus = bridgeDeviceStatus(info.Present, kernelOperState, hasAddrs)
+		info.DeviceStatus = tunDeviceStatus(info.Present, kernelOperState, proxyTunInfoActive(info))
 	}
 	return info
+}
+
+func shouldReadNegotiatedLinkSpeed(linkType string) bool {
+	return linkType == "wired"
+}
+
+func proxyTunInfoActive(info InterfaceInfo) bool {
+	for _, address := range append(append([]string{}, info.IPv4...), info.IPv6...) {
+		if usableProxyTunAddress(address) {
+			return true
+		}
+	}
+	return interfaceHasProxyRoute(info.Name)
+}
+
+func usableProxyTunAddress(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	ip, _, err := net.ParseCIDR(value)
+	if err != nil {
+		ip = net.ParseIP(strings.Split(value, "%")[0])
+	}
+	return ip != nil && !ip.IsUnspecified() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast()
+}
+
+func interfaceHasProxyRoute(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	if file, err := os.Open("/proc/net/route"); err == nil {
+		active := ipv4RouteTableHasInterface(file, name)
+		_ = file.Close()
+		if active {
+			return true
+		}
+	}
+	if file, err := os.Open("/proc/net/ipv6_route"); err == nil {
+		active := ipv6RouteTableHasInterface(file, name)
+		_ = file.Close()
+		return active
+	}
+	return false
+}
+
+func ipv4RouteTableHasInterface(reader io.Reader, name string) bool {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && fields[0] == name && fields[1] != "Destination" {
+			return true
+		}
+	}
+	return false
+}
+
+func ipv6RouteTableHasInterface(reader io.Reader, name string) bool {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 10 || fields[len(fields)-1] != name {
+			continue
+		}
+		destination := strings.ToLower(fields[0])
+		// A kernel-created fe80::/64 or multicast route only proves that the
+		// link exists; it does not prove that the TUN routes user traffic.
+		if strings.HasPrefix(destination, "fe80") || strings.HasPrefix(destination, "ff") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func tunDeviceStatus(present bool, kernelOperState string, active bool) string {
+	if !present {
+		return "unavailable"
+	}
+	if kernelOperState == "down" || kernelOperState == "lowerlayerdown" || kernelOperState == "notpresent" {
+		return "disconnected"
+	}
+	if active {
+		return "connected"
+	}
+	return "disconnected"
 }
 
 // bridgeDeviceStatus maps kernel bridge operstate into the same device_status vocabulary

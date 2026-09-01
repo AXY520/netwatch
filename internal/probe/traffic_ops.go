@@ -198,8 +198,8 @@ func (s *Service) observeAppTraffic() {
 		logger.Warn("migrate multi-instance application policy: %v", err)
 	}
 	if s.appTraffic != nil {
-		s.appTraffic.sample(items, time.Now())
 		s.reconcileAppTrafficLimits(items)
+		s.appTraffic.sampleWithPostLimitUpload(items, time.Now(), s.effectiveUploadCounters(items))
 	}
 	blockedApps := s.containers.snapshotBlockedApps()
 	_, proxyApps, proxyConfigs := s.settings.appProxyState()
@@ -216,8 +216,8 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 	if err := s.migrateLegacyAppInstancePolicies(snapshot.Bridges); err != nil {
 		logger.Warn("migrate multi-instance application policy: %v", err)
 	}
-	s.appTraffic.sample(snapshot.Bridges, time.Now())
 	s.reconcileAppTrafficLimits(snapshot.Bridges)
+	s.appTraffic.sampleWithPostLimitUpload(snapshot.Bridges, time.Now(), s.effectiveUploadCounters(snapshot.Bridges))
 	overview := s.appTraffic.overviewForActiveAppsWithControls(
 		trafficControlAvailable(), activeAppTrafficIDs(snapshot.Bridges), experimentalHost,
 	)
@@ -234,6 +234,70 @@ func (s *Service) AppTrafficSnapshot() AppTrafficSnapshot {
 		snapshot.Note = overview.Note
 	}
 	return snapshot
+}
+
+func (s *Service) AppTrafficMetricsSnapshot() []AppTrafficUsage {
+	if s == nil || s.appTraffic == nil {
+		return nil
+	}
+	return s.appTraffic.metricsSnapshot()
+}
+
+func (s *Service) effectiveUploadCounters(items []AppBridgeStats) map[string]uint64 {
+	if s.appTrafficLimiter == nil || s.appTraffic == nil {
+		return nil
+	}
+	limits := s.appTraffic.limitsSnapshot()
+	hostPolicies := make(map[string]bool)
+	activePolicies := make(map[string]bool)
+	for _, item := range items {
+		if policyID := appTrafficPolicyID(item); policyID != "" {
+			activePolicies[policyID] = true
+		}
+		if item.NetworkMode == "host" || strings.HasPrefix(strings.TrimSpace(item.Bridge), hostAppTargetPrefix) {
+			if policyID := appTrafficPolicyID(item); policyID != "" {
+				hostPolicies[policyID] = true
+			}
+		}
+	}
+	counters := make(map[string]uint64)
+	if s.appTrafficLimiter.host != nil {
+		for policyID, bytes := range s.appTrafficLimiter.host.acceptedUploadCounters() {
+			counters[policyID] = bytes
+		}
+	}
+	for _, item := range items {
+		if item.NetworkMode == "host" || !strings.HasPrefix(strings.TrimSpace(item.Bridge), lzcBridgePrefix) {
+			continue
+		}
+		policyID := appTrafficPolicyID(item)
+		if policyID == "" || hostPolicies[policyID] || limits[policyID].UploadKbps <= 0 {
+			continue
+		}
+		if bytes, ok := acceptedBridgeUploadBytes(item.Bridge); ok {
+			counters[policyID] += bytes
+		}
+	}
+	if s.containers != nil {
+		blocked := s.containers.snapshotBlockedApps()
+		if len(blocked) > 0 {
+			firewallCounters := map[string]uint64(nil)
+			if s.appInternetController != nil {
+				firewallCounters = s.appInternetController.localUploadCounters(s.LifecycleContext())
+			}
+			for policyID := range blocked {
+				if activePolicies[policyID] {
+					// Even a zero counter is authoritative while the firewall policy
+					// is active: raw bridge/cgroup bytes include rejected attempts.
+					counters[policyID] = firewallCounters[policyID]
+				}
+			}
+		}
+	}
+	if len(counters) == 0 {
+		return nil
+	}
+	return counters
 }
 
 // activeAppTrafficIDs identifies applications that currently have at least

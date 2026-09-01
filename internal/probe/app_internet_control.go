@@ -2,12 +2,14 @@ package probe
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ const (
 	appFirewallOutputChainA  = "NETWATCH-OUT-A"
 	appFirewallOutputChainB  = "NETWATCH-OUT-B"
 	appFirewallCommandLimit  = 5 * time.Second
+	appFirewallCounterPrefix = "netwatch-local:"
 )
 
 var hostFirewallIPv4Paths = []string{"/usr/sbin/iptables", "/usr/bin/iptables", "/sbin/iptables", "/bin/iptables"}
@@ -60,15 +63,21 @@ type appInternetTargetRuntime struct {
 }
 
 type appInternetController struct {
-	mu            sync.RWMutex
-	runtime       map[string]appInternetTargetRuntime
-	signature     string
-	lastApplied   time.Time
-	nextRetry     time.Time
-	lastErr       error
-	lastV4        appFirewallRuleSet
-	lastV6        appFirewallRuleSet
-	legacyTargets string
+	mu                    sync.RWMutex
+	runtime               map[string]appInternetTargetRuntime
+	signature             string
+	lastApplied           time.Time
+	nextRetry             time.Time
+	lastErr               error
+	lastV4                appFirewallRuleSet
+	lastV6                appFirewallRuleSet
+	activeV4              appFirewallActiveChains
+	activeV6              appFirewallActiveChains
+	counterGeneration     uint64
+	counterReadGeneration uint64
+	counterRaw            map[string]uint64
+	counterTotal          map[string]uint64
+	legacyTargets         string
 }
 
 type appFirewallRuleSet struct {
@@ -76,8 +85,16 @@ type appFirewallRuleSet struct {
 	output  [][]string
 }
 
+type appFirewallActiveChains struct {
+	forward string
+	output  string
+}
+
 func newAppInternetController() *appInternetController {
-	return &appInternetController{runtime: make(map[string]appInternetTargetRuntime)}
+	return &appInternetController{
+		runtime: make(map[string]appInternetTargetRuntime), counterRaw: make(map[string]uint64),
+		counterTotal: make(map[string]uint64),
+	}
 }
 
 func hostFirewallPath(ipv6 bool) (string, bool) {
@@ -182,22 +199,29 @@ func (c *appInternetController) reconcile(ctx context.Context, activeTargets []A
 			return nil
 		}
 	}
-	if err := applyAppFirewallRules(ctx, false, v4); err != nil {
-		if !c.lastApplied.IsZero() {
-			if rollbackErr := applyAppFirewallRules(ctx, false, c.lastV4); rollbackErr != nil {
-				err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
-			}
+	// Preserve bytes accumulated in the currently active A/B chains before a
+	// policy change or periodic verification flushes them.
+	if c.counterGeneration > 0 && c.hasBlockedTargetLocked() {
+		_ = c.refreshFirewallLocalCountersLocked(ctx)
+	}
+	activeV4, err := applyAppFirewallRules(ctx, false, v4)
+	if err != nil {
+		if rollbackErr := c.rollbackFirewallRulesLocked(ctx, false); rollbackErr != nil {
+			err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
 		}
 		c.markFailedLocked(activeTargets, err)
 		c.signature, c.lastErr, c.nextRetry = signature, err, nowTime.Add(10*time.Second)
 		return err
 	}
+	activeV6 := appFirewallActiveChains{}
 	if hostIPv6Enabled() {
-		if err := applyAppFirewallRules(ctx, true, v6); err != nil {
-			if !c.lastApplied.IsZero() {
-				if rollbackErr := applyAppFirewallRules(ctx, false, c.lastV4); rollbackErr != nil {
-					err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
-				}
+		activeV6, err = applyAppFirewallRules(ctx, true, v6)
+		if err != nil {
+			if rollbackErr := c.rollbackFirewallRulesLocked(ctx, false); rollbackErr != nil {
+				err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
+			}
+			if rollbackErr := c.rollbackFirewallRulesLocked(ctx, true); rollbackErr != nil {
+				err = fmt.Errorf("%w; rollback IPv6 firewall policy: %v", err, rollbackErr)
 			}
 			c.markFailedLocked(activeTargets, err)
 			c.signature, c.lastErr, c.nextRetry = signature, err, nowTime.Add(10*time.Second)
@@ -207,14 +231,12 @@ func (c *appInternetController) reconcile(ctx context.Context, activeTargets []A
 	legacyTargets := appInternetTargetSetSignature(activeTargets)
 	if legacyTargets != c.legacyTargets {
 		if err := cleanupLegacyAppInternetRules(ctx, activeTargets, desiredBlocked); err != nil {
-			if !c.lastApplied.IsZero() {
-				if rollbackErr := applyAppFirewallRules(ctx, false, c.lastV4); rollbackErr != nil {
-					err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
-				}
-				if hostIPv6Enabled() {
-					if rollbackErr := applyAppFirewallRules(ctx, true, c.lastV6); rollbackErr != nil {
-						err = fmt.Errorf("%w; rollback IPv6 firewall policy: %v", err, rollbackErr)
-					}
+			if rollbackErr := c.rollbackFirewallRulesLocked(ctx, false); rollbackErr != nil {
+				err = fmt.Errorf("%w; rollback IPv4 firewall policy: %v", err, rollbackErr)
+			}
+			if hostIPv6Enabled() {
+				if rollbackErr := c.rollbackFirewallRulesLocked(ctx, true); rollbackErr != nil {
+					err = fmt.Errorf("%w; rollback IPv6 firewall policy: %v", err, rollbackErr)
 				}
 			}
 			c.markFailedLocked(activeTargets, err)
@@ -238,7 +260,44 @@ func (c *appInternetController) reconcile(ctx context.Context, activeTargets []A
 	c.lastErr = nil
 	c.lastV4 = cloneAppFirewallRuleSet(v4)
 	c.lastV6 = cloneAppFirewallRuleSet(v6)
+	c.activeV4 = activeV4
+	c.activeV6 = activeV6
+	c.advanceFirewallCounterGenerationLocked()
 	return nil
+}
+
+func (c *appInternetController) hasBlockedTargetLocked() bool {
+	for _, status := range c.runtime {
+		if status.Blocked {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *appInternetController) rollbackFirewallRulesLocked(ctx context.Context, ipv6 bool) error {
+	rules := c.lastV4
+	if ipv6 {
+		rules = c.lastV6
+	}
+	active, err := applyAppFirewallRules(ctx, ipv6, rules)
+	if err != nil {
+		return err
+	}
+	if ipv6 {
+		c.activeV6 = active
+	} else {
+		c.activeV4 = active
+	}
+	c.advanceFirewallCounterGenerationLocked()
+	return nil
+}
+
+func (c *appInternetController) advanceFirewallCounterGenerationLocked() {
+	c.counterGeneration++
+	if c.counterGeneration == 0 {
+		c.counterGeneration++
+	}
 }
 
 func appInternetTargetSetSignature(targets []AppNetworkTarget) string {
@@ -321,17 +380,21 @@ func buildAppFirewallRules(targets []AppNetworkTarget, desiredBlocked map[string
 		if desiredBlocked[target.ID] == "" {
 			continue
 		}
+		policyID := appNetworkTargetPolicyID(target)
+		if policyID == "" {
+			return v4, v6, fmt.Errorf("internet-control target %s has no application policy id", target.ID)
+		}
 		switch target.Kind {
 		case AppNetworkTargetBridge:
 			if target.Interface == "" || !strings.HasPrefix(target.Interface, lzcBridgePrefix) {
 				return v4, v6, fmt.Errorf("invalid Bridge internet-control target %q", target.ID)
 			}
 			for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
-				v4.forward = append(v4.forward, []string{"-i", target.Interface, "-d", cidr, "-j", "RETURN"})
+				v4.forward = append(v4.forward, appFirewallCounterRule([]string{"-i", target.Interface, "-d", cidr, "-j", "RETURN"}, policyID))
 			}
 			v4.forward = append(v4.forward, []string{"-i", target.Interface, "-j", "DROP"})
 			for _, cidr := range []string{"fc00::/7", "fe80::/10"} {
-				v6.forward = append(v6.forward, []string{"-i", target.Interface, "-d", cidr, "-j", "RETURN"})
+				v6.forward = append(v6.forward, appFirewallCounterRule([]string{"-i", target.Interface, "-d", cidr, "-j", "RETURN"}, policyID))
 			}
 			v6.forward = append(v6.forward, []string{"-i", target.Interface, "-j", "DROP"})
 		case AppNetworkTargetCgroup:
@@ -348,11 +411,11 @@ func buildAppFirewallRules(targets []AppNetworkTarget, desiredBlocked map[string
 			}
 			for _, matchPath := range hostFirewallCgroupPaths(path) {
 				for _, cidr := range hostNetworkPrivateCIDRs {
-					v4.output = append(v4.output, hostIptablesRuleArgs(matchPath, cidr, "RETURN"))
+					v4.output = append(v4.output, appFirewallCounterRule(hostIptablesRuleArgs(matchPath, cidr, "RETURN"), policyID))
 				}
 				v4.output = append(v4.output, hostIptablesRuleArgs(matchPath, "", "DROP"))
 				for _, cidr := range hostNetworkPrivateCIDRs6 {
-					v6.output = append(v6.output, hostIptablesRuleArgs(matchPath, cidr, "RETURN"))
+					v6.output = append(v6.output, appFirewallCounterRule(hostIptablesRuleArgs(matchPath, cidr, "RETURN"), policyID))
 				}
 				v6.output = append(v6.output, hostIptablesRuleArgs(matchPath, "", "DROP"))
 			}
@@ -363,7 +426,36 @@ func buildAppFirewallRules(targets []AppNetworkTarget, desiredBlocked map[string
 	return v4, v6, nil
 }
 
-func applyAppFirewallRules(ctx context.Context, ipv6 bool, rules appFirewallRuleSet) error {
+func appFirewallCounterRule(rule []string, policyID string) []string {
+	comment := appFirewallCounterPrefix + base64.RawURLEncoding.EncodeToString([]byte(policyID))
+	result := make([]string, 0, len(rule)+4)
+	inserted := false
+	for index := 0; index < len(rule); index++ {
+		if !inserted && rule[index] == "-j" {
+			result = append(result, "-m", "comment", "--comment", comment)
+			inserted = true
+		}
+		result = append(result, rule[index])
+	}
+	if !inserted {
+		result = append(result, "-m", "comment", "--comment", comment)
+	}
+	return result
+}
+
+func appFirewallCounterPolicy(comment string) (string, bool) {
+	if !strings.HasPrefix(comment, appFirewallCounterPrefix) {
+		return "", false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(comment, appFirewallCounterPrefix))
+	if err != nil || strings.TrimSpace(string(decoded)) == "" {
+		return "", false
+	}
+	return string(decoded), true
+}
+
+func applyAppFirewallRules(ctx context.Context, ipv6 bool, rules appFirewallRuleSet) (appFirewallActiveChains, error) {
+	empty := appFirewallActiveChains{}
 	currentA := firewallHookExists(ctx, ipv6, "FORWARD", appFirewallForwardChainA) || firewallHookExists(ctx, ipv6, "OUTPUT", appFirewallOutputChainA)
 	currentB := firewallHookExists(ctx, ipv6, "FORWARD", appFirewallForwardChainB) || firewallHookExists(ctx, ipv6, "OUTPUT", appFirewallOutputChainB)
 	forwardStaging, outputStaging := appFirewallForwardChainA, appFirewallOutputChainA
@@ -374,37 +466,37 @@ func applyAppFirewallRules(ctx context.Context, ipv6 bool, rules appFirewallRule
 	}
 	for _, chain := range []string{appFirewallForwardChainA, appFirewallForwardChainB, appFirewallOutputChainA, appFirewallOutputChainB} {
 		if err := ensureFirewallChain(ctx, ipv6, chain); err != nil {
-			return err
+			return empty, err
 		}
 	}
 	if err := flushAndPopulateFirewallChain(ctx, ipv6, forwardStaging, rules.forward); err != nil {
-		return err
+		return empty, err
 	}
 	if err := flushAndPopulateFirewallChain(ctx, ipv6, outputStaging, rules.output); err != nil {
-		return err
+		return empty, err
 	}
 	if _, err := firewallCommand(ctx, ipv6, "-I", "FORWARD", "1", "-j", forwardStaging); err != nil {
-		return fmt.Errorf("install Netwatch FORWARD hook: %w", err)
+		return empty, fmt.Errorf("install Netwatch FORWARD hook: %w", err)
 	}
 	if _, err := firewallCommand(ctx, ipv6, "-I", "OUTPUT", "1", "-j", outputStaging); err != nil {
 		_ = deleteFirewallRuleAll(ctx, ipv6, "FORWARD", []string{"-j", forwardStaging})
-		return fmt.Errorf("install Netwatch OUTPUT hook: %w", err)
+		return empty, fmt.Errorf("install Netwatch OUTPUT hook: %w", err)
 	}
 	if err := deleteFirewallRuleAll(ctx, ipv6, "FORWARD", []string{"-j", forwardOld}); err != nil {
-		return err
+		return empty, err
 	}
 	if err := deleteFirewallRuleAll(ctx, ipv6, "OUTPUT", []string{"-j", outputOld}); err != nil {
-		return err
+		return empty, err
 	}
 	if err := normalizeFirewallHook(ctx, ipv6, "FORWARD", forwardStaging); err != nil {
-		return err
+		return empty, err
 	}
 	if err := normalizeFirewallHook(ctx, ipv6, "OUTPUT", outputStaging); err != nil {
-		return err
+		return empty, err
 	}
 	_, _ = firewallCommand(ctx, ipv6, "-F", forwardOld)
 	_, _ = firewallCommand(ctx, ipv6, "-F", outputOld)
-	return nil
+	return appFirewallActiveChains{forward: forwardStaging, output: outputStaging}, nil
 }
 
 func firewallCommand(parent context.Context, ipv6 bool, args ...string) (string, error) {
@@ -418,6 +510,107 @@ func firewallCommand(parent context.Context, ipv6 bool, args ...string) (string,
 		return out, err
 	}
 	return out, nil
+}
+
+// localUploadCounters returns a monotonic per-policy count of packets that a
+// disabled application was still allowed to send to private networks. DROP
+// rule counters are intentionally excluded: those are blocked send attempts,
+// not application traffic that reached a peer.
+func (c *appInternetController) localUploadCounters(ctx context.Context) map[string]uint64 {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.counterGeneration == 0 {
+		return nil
+	}
+	if err := c.refreshFirewallLocalCountersLocked(ctx); err != nil {
+		return c.cachedFirewallLocalCountersLocked()
+	}
+	return c.cachedFirewallLocalCountersLocked()
+}
+
+func (c *appInternetController) refreshFirewallLocalCountersLocked(ctx context.Context) error {
+	raw := make(map[string]uint64)
+	read := func(ipv6 bool, chain string) error {
+		if chain == "" {
+			return nil
+		}
+		output, err := firewallCommand(ctx, ipv6, "-L", chain, "-v", "-x", "-n")
+		if err != nil {
+			return err
+		}
+		for policyID, bytes := range parseAppFirewallLocalCounters(output) {
+			raw[policyID] += bytes
+		}
+		return nil
+	}
+	for _, item := range []struct {
+		ipv6   bool
+		chains appFirewallActiveChains
+	}{{chains: c.activeV4}, {ipv6: true, chains: c.activeV6}} {
+		if err := read(item.ipv6, item.chains.forward); err != nil {
+			return err
+		}
+		if err := read(item.ipv6, item.chains.output); err != nil {
+			return err
+		}
+	}
+	newGeneration := c.counterReadGeneration != c.counterGeneration
+	for policyID, current := range raw {
+		previous := c.counterRaw[policyID]
+		switch {
+		case newGeneration:
+			c.counterTotal[policyID] += current
+		case current >= previous:
+			c.counterTotal[policyID] += current - previous
+		default:
+			// An unexpected per-chain reset is the same discontinuity as an A/B
+			// rotation: begin at zero without subtracting from the monotonic total.
+			c.counterTotal[policyID] += current
+		}
+	}
+	c.counterRaw = raw
+	c.counterReadGeneration = c.counterGeneration
+	return nil
+}
+
+func (c *appInternetController) cachedFirewallLocalCountersLocked() map[string]uint64 {
+	result := make(map[string]uint64, len(c.counterRaw))
+	for policyID := range c.counterRaw {
+		result[policyID] = c.counterTotal[policyID]
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func parseAppFirewallLocalCounters(output string) map[string]uint64 {
+	counters := make(map[string]uint64)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 3 {
+			continue
+		}
+		if _, err := strconv.ParseUint(fields[0], 10, 64); err != nil {
+			continue
+		}
+		bytes, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		for _, field := range fields[2:] {
+			policyID, ok := appFirewallCounterPolicy(strings.Trim(field, `"`))
+			if !ok {
+				continue
+			}
+			counters[policyID] += bytes
+			break
+		}
+	}
+	return counters
 }
 
 func ensureFirewallChain(ctx context.Context, ipv6 bool, chain string) error {

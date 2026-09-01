@@ -45,7 +45,7 @@
   <header>
     <h1>Netwatch 应用流量与网络控制实现说明</h1>
     <p class="lead">本文描述当前代码中“应用流量统计、限制网速、禁用外网、设置代理”四个功能的统一控制模型、数据流、适用范围和限制。文档以当前分支代码为准。</p>
-    <p class="meta">更新时间：2026-08-31</p>
+    <p class="meta">更新时间：2026-09-01</p>
     <p class="meta">适用代码：<code>internal/probe/apptraffic.go</code>、<code>app_traffic_state.go</code>、<code>app_traffic_limit.go</code>、<code>app_network_control.go</code>、<code>app_proxy_control.go</code>、<code>app_proxy_adapter.go</code></p>
   </header>
 
@@ -100,8 +100,8 @@
       <li>两个计数 map 优先 pin 到宿主机 bpffs 的 <code>netwatch/</code> 目录；Netwatch 重启后会重新加载同一 map，内核累计计数可继续使用。程序和 cgroup attachment 仍由当前进程管理，服务退出后会自动解除。</li>
       <li>attachment 同时记录 cgroup 路径和 ID；完整运行时清单确认容器停止、路径被新 cgroup 复用或 map key 已无活动归属后，关闭旧 link 并删除 RX/TX key。清单不完整时跳过整轮清理，避免误删。</li>
     </ul>
-    <p>cgroup 路径按以下顺序解析并验证：Docker inspect 字段、宿主机 <code>/host/proc/&lt;PID&gt;/cgroup</code>、懒猫 systemd cgroup 结构。若加载、附着或读取失败，快照应携带具体诊断。</p>
-    <div class="note warning"><strong>当前状态：</strong>Host eBPF 依赖宿主机 cgroup v2、容器 PID/挂载、BPF 权限和内核支持。任何一项不满足都会导致 Host 统计不可用，但不影响 Bridge 统计。未挂载 bpffs、bpffs 不可写或 pin 失败时，统计仍会使用临时 map，并在 diagnostic 中明确提示重启会重置计数。目标懒猫盒子的 <code>/sys/fs/bpf</code> 当前是普通 sysfs 目录而非 bpffs，真机已验证会走这条降级路径。Host 统计不是 Docker 网桥统计的“另一份数据”，两者来源不同。</div>
+    <p>cgroup 路径按以下顺序解析并验证：Docker inspect 字段、宿主机 <code>/host/proc/&lt;PID&gt;/cgroup</code>、懒猫 systemd cgroup 结构。私有 cgroup namespace 返回的 <code>/../../lzcapp-*</code> 相对路径会重新锚定到宿主机应用树；systemd slice 会按连字符展开完整父层级，以兼容应用 ID 形成的多层 slice。若加载、附着或读取失败，快照应携带具体诊断；仅部分 Host 容器失败时报告失败数量，不覆盖其余 Host/Bridge 统计的可用状态。</p>
+    <div class="note warning"><strong>当前状态：</strong>Host eBPF 依赖宿主机 cgroup v2、容器 PID/挂载、BPF 权限和内核支持。任何一项不满足都会导致 Host 统计不可用，但不影响 Bridge 统计。程序会优先检查 <code>/proc/1/root/sys/fs/bpf</code>，宿主未挂载 bpffs 时在 PID 1 的 mount namespace 中 best-effort 初始化。挂载、写入或 pin 失败时仍降级为临时 map，并在 diagnostic 中明确原因。Host 统计不是 Docker 网桥统计的“另一份数据”，两者来源不同。</div>
 
     <h3>2.3 采样、速率和历史</h3>
     <ul>
@@ -109,6 +109,8 @@
       <li>每个独立内核计数源保存上一次计数作为 baseline：Bridge 使用网桥名，Host 使用容器 cgroup 路径。只累加正向差值；网桥/cgroup 重建或计数回退时只重建对应来源的 baseline。</li>
       <li>同一用户实例的多个网桥、多个容器按 <code>instance_id</code> 聚合；单实例时该 key 仍等于 <code>app_id</code>。</li>
       <li>实时速率 = 本次正向字节差 / 两次采样间隔，单位为 B/s；没有有效间隔时速率为 0。</li>
+      <li>限速应用的上传使用 police 后公网放行计数加私网实际计数；禁用外网时只计防火墙私网 <code>RETURN</code>，不计 <code>DROP</code> 的发送尝试。该有效口径同时用于实时、今日、本月、总量和趋势。</li>
+      <li>Prometheus 从状态层只读快照按 <code>app_id + instance_id</code> 输出，不在 metrics scrape 中触发采样或策略修复。</li>
       <li>今日、本月流量按每日记录汇总；应用级历史和 baseline 持久化到 <code>app_traffic_history.json</code>。</li>
       <li>应用列表只展示当前仍有运行容器的应用，删除或停止的应用不会继续作为活动条目展示。</li>
     </ul>
@@ -142,7 +144,7 @@
       </tbody>
     </table>
     <p>Host/Mixed filter 使用优先级 <code>49160/49161</code>，只添加 <code>clsact</code>，不会替换物理网卡原有 root qdisc。IPv4/IPv6 的 TCP/UDP 共用该路径；RFC1918、loopback、link-local 和 IPv6 ULA 不进入公网预算。下载和上传都是 policing，不是无丢包 shaping：TCP 会通过重传近似收敛，UDP 超限包会直接丢弃。</p>
-    <p class="danger"><strong>拓扑边界：</strong>当前只选择一个默认出口；IPv4/IPv6 默认路由位于不同设备时拒绝启用。多 WAN、策略路由、VPN/tunnel、IPv6 扩展头和运行中出口切换尚未覆盖。</p>
+    <p class="danger"><strong>拓扑边界：</strong>当前只选择一个默认出口；IPv4/IPv6 默认路由位于不同设备时拒绝启用。多 WAN、策略路由、VPN/tunnel 和运行中出口切换尚未覆盖。</p>
 
     <h3>3.4 修改、取消和恢复</h3>
     <ul>
@@ -232,11 +234,11 @@
       <li><strong>HTTP 应用的 UDP 不通：</strong>这是当前协议边界，HTTP 上游只转发 TCP，剩余公网流量失败关闭；需要 UDP 时选择 SOCKS5。</li>
       <li><strong>Host/Mixed 代理与限速：</strong>两者当前互斥，必须先恢复直连或取消限速。代理按应用独立配置和监听，不共用上游或内部端口。</li>
       <li><strong>Host 统计不可用：</strong>先看快照中的具体 diagnostic，确认 cgroup v2、宿主机 proc/cgroup 挂载、BPF capability、程序加载和附着错误。Host 统计按每个容器 cgroup 独立读取和维护 baseline，再按 <code>instance_id</code> 聚合；一个 cgroup 重启归零不会重置同实例其他容器的增量。</li>
-      <li><strong>限速后应用断网：</strong>检查网桥 ingress police 的动作顺序必须是 <code>conform-exceed drop/ok</code>；正常包应放行，超限包才丢弃。</li>
+      <li><strong>限速后应用断网：</strong>检查网桥 ingress police 是否使用至少 128 KiB burst、<code>mtu 65535</code> 和 <code>conform-exceed drop/pipe</code>，且后续存在 <code>gact pass</code>。</li>
       <li><strong>取消后仍受限：</strong>纯 Bridge 检查 root TBF <code>194:</code> 和优先级 <code>49140-49144/49152</code>；Host/Mixed 检查默认出口优先级 <code>49160/49161</code>。同时确认后台 reconcile 没有重新读取旧的持久化状态。</li>
       <li><strong>网桥统计不是应用精确进程统计：</strong>Bridge 模式下它统计的是整个应用网桥的内核计数；同一 Compose project 的多个容器可能汇总到一个应用。</li>
       <li><strong>Host 与 Bridge 混合应用：</strong>统计仍按容器 cgroup 和网桥分别采样后聚合；禁用外网分别调用 Bridge/Host driver，限速则只调用一次 Host/Mixed limiter，让两类公网流量共享应用预算。</li>
-      <li><strong>重启影响：</strong>Bridge sysfs 计数由内核维护，网桥重建会归零；Host eBPF map 只在真实 bpffs 可用时跨服务重启复用。由于 cgroup attachment 由进程管理，Netwatch 完全停止期间不会产生新的 Host 统计。目标盒子当前没有挂载 bpffs，真机重启验证确认临时 map 会归零，diagnostic 会明确提示。</li>
+      <li><strong>重启影响：</strong>Bridge sysfs 计数由内核维护，网桥重建会归零；Host eBPF map 在真实 bpffs 可用时跨服务重启复用，否则降级为临时 map。新版会 best-effort 在宿主 mount namespace 初始化 bpffs；由于 cgroup attachment 仍由进程管理，Netwatch 完全停止期间不会产生新的 Host 统计。</li>
     </ul>
   </section>
 
@@ -257,7 +259,7 @@
     <ul>
       <li>这是 policing，不是 shaping；TCP 依靠拥塞控制收敛，UDP 超限包直接丢弃，128 KiB burst 会影响短流瞬时值。</li>
       <li>只支持 IPv4/IPv6 默认路由位于同一设备；多 WAN、策略路由、VPN/tunnel 和出口切换未覆盖。</li>
-      <li>IPv4/IPv6 的直接 TCP/UDP 已实现；IPv6 扩展头链尚未解析。</li>
+      <li>IPv4 分片、IPv6 常见扩展头与分片、TCP/UDP 以及其他 IP 协议均进入分类；无传输层端口的分片使用地址/协议回退 flow key。</li>
       <li>每应用占用一个 mark slot，最多同时 4095 个 Host/Mixed 限速应用。</li>
       <li>空 <code>clsact</code> 可以在取消后保留；它不会替换或改变 root qdisc。</li>
     </ul>

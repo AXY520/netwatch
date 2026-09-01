@@ -105,10 +105,6 @@
 
                 <div class="identity-strip">
                     <div class="identity-strip-row">
-                        <span class="identity-strip-label" data-i18n="proxy_env">代理环境</span>
-                        <span class="identity-strip-value" id="proxy-inline-status">---</span>
-                    </div>
-                    <div class="identity-strip-row">
                         <span class="identity-strip-label" data-i18n="default_gateway">默认网关</span>
                         <span class="identity-strip-value" id="val-gw4">---</span>
                     </div>
@@ -147,7 +143,7 @@
 
             </section>
 
-            <section class="card trace-card">
+            <section class="card trace-card" id="diagnostics-card">
                 <div class="card-title">
                     <span data-i18n="trace_title">路径诊断</span>
                     <div class="title-tools">
@@ -178,7 +174,7 @@
                 </div>
             </section>
 
-            <section class="card interfaces-card">
+            <section class="card interfaces-card" id="nic-realtime-card">
                 <div class="card-title">
                     <span data-i18n="nic_realtime_title">网卡实时速率</span>
                     <div class="title-tools">
@@ -189,7 +185,7 @@
                 <div id="nic-realtime-list" class="nic-realtime-list"></div>
             </section>
 
-            <section class="card interfaces-card">
+            <section class="card interfaces-card" id="interfaces-detail-card">
                 <div class="card-title">
                     <span data-i18n="nic_detail_title">硬件网卡接口详情</span>
                     <div class="title-tools">
@@ -536,7 +532,7 @@
         <div class="window-head">
             <div>
                 <div class="window-title" data-i18n="network_config_title">网络配置</div>
-                <div class="note" data-i18n="network_config_note">IP、MAC与网桥3分钟未确认回滚||DNS60秒未确认回滚</div>
+                <div class="note" data-i18n="network_config_note">变更未确认会自动回滚</div>
             </div>
             <div class="window-actions">
                 <button id="network-config-refresh-btn" class="icon-button" title="刷新网卡" aria-label="刷新网卡" data-i18n-title="ipv6_renew_refresh" data-i18n-aria-label="ipv6_renew_refresh"><span class="ui-icon ui-icon--refresh" aria-hidden="true"></span></button>

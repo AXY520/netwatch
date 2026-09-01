@@ -59,6 +59,13 @@ func TestHostBPFMapPinRootAtSkipsUnavailableMounts(t *testing.T) {
 	}
 }
 
+func TestHostBPFMountCommandEntersHostMountNamespaceAndRoot(t *testing.T) {
+	want := []string{"-t", "1", "-m", "-r", "--", "/usr/bin/mount", "-t", "bpf", "bpf", "/sys/fs/bpf"}
+	if got := hostBPFMountCommandArgs("/usr/bin/mount"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mount args=%#v want=%#v", got, want)
+	}
+}
+
 func TestJoinHostBPFPinNotesDeduplicatesSameFallback(t *testing.T) {
 	const note = "未找到可写 bpffs，Host 统计 map 将在 Netwatch 重启时重置"
 	if got := joinHostBPFPinNotes(note, note); got != note {
@@ -280,6 +287,25 @@ func TestHostCgroupProgramInstructionsContainNoInvalidOpcode(t *testing.T) {
 	}
 }
 
+func TestHostCgroupProgramsUseSocketCgroupForBothDirections(t *testing.T) {
+	want := asm.FnSkbCgroupId.Call()
+	for _, attach := range []ebpf.AttachType{ebpf.AttachCGroupInetIngress, ebpf.AttachCGroupInetEgress} {
+		instructions := cgroupIDInstructions(attach)
+		found := slices.ContainsFunc(instructions, func(instruction asm.Instruction) bool {
+			return instruction.OpCode == want.OpCode && instruction.Constant == want.Constant
+		})
+		if !found {
+			t.Fatalf("attach=%v does not resolve the cgroup from skb->sk: %#v", attach, instructions)
+		}
+		current := asm.FnGetCurrentCgroupId.Call()
+		if slices.ContainsFunc(instructions, func(instruction asm.Instruction) bool {
+			return instruction.OpCode == current.OpCode && instruction.Constant == current.Constant
+		}) {
+			t.Fatalf("attach=%v still uses the current task cgroup", attach)
+		}
+	}
+}
+
 func TestHostTrafficDiagnosticReturnsConcreteFailure(t *testing.T) {
 	items := []AppBridgeStats{
 		{Source: "linux_bridge_sysfs"},
@@ -287,6 +313,31 @@ func TestHostTrafficDiagnosticReturnsConcreteFailure(t *testing.T) {
 	}
 	if got := hostTrafficDiagnostic(items); got != "加载 ingress cgroup eBPF 失败: invalid opcode" {
 		t.Fatalf("diagnostic=%q", got)
+	}
+}
+
+func TestHostTrafficAvailabilityNoteReportsPartialFailure(t *testing.T) {
+	items := []AppBridgeStats{
+		{Source: "cgroup_skb_ebpf"},
+		{Source: "cgroup_skb_ebpf"},
+		{Source: "cgroup_skb_ebpf_unavailable", Diagnostic: "missing nested cgroup"},
+	}
+	got := hostTrafficAvailabilityNote(items)
+	want := "Host 模式流量统计部分不可用：1/3 个 Host 容器不可用（missing nested cgroup）；其余 Host 与 Bridge 流量统计不受影响。"
+	if got != want {
+		t.Fatalf("note=%q want=%q", got, want)
+	}
+}
+
+func TestHostTrafficAvailabilityNoteReportsCompleteFailure(t *testing.T) {
+	items := []AppBridgeStats{
+		{Source: "cgroup_skb_ebpf_unavailable", Diagnostic: "attach failed"},
+		{Source: "cgroup_skb_ebpf_unavailable", Diagnostic: "attach failed"},
+	}
+	got := hostTrafficAvailabilityNote(items)
+	want := "Host 模式流量统计不可用：attach failed；Bridge 流量统计不受影响。"
+	if got != want {
+		t.Fatalf("note=%q want=%q", got, want)
 	}
 }
 
@@ -334,6 +385,36 @@ func TestResolveContainerHostCgroupPathUsesLazycatLayoutFallback(t *testing.T) {
 	)
 	if path != "/host/sys/fs/cgroup"+wantCandidate || diagnostic != "" {
 		t.Fatalf("path=%q diagnostic=%q", path, diagnostic)
+	}
+}
+
+func TestResolveContainerHostCgroupPathExpandsSystemdSliceHierarchy(t *testing.T) {
+	container := dockerlzc.ContainerRuntimeInfo{
+		ID:    "abc123",
+		AppID: "community.lazycat.czyt.rustdesk-server",
+		PID:   1234,
+	}
+	wantCandidate := "/system.slice/runc-lzc-os.scope/lzcapp.slice/lzcapp-community.lazycat.czyt.rustdesk.slice/lzcapp-community.lazycat.czyt.rustdesk-server.slice/docker-abc123.scope"
+	path, diagnostic := resolveContainerHostCgroupPath(
+		container,
+		func(int) (string, error) { return "", errors.New("proc unavailable") },
+		func(candidate string) string {
+			if candidate == wantCandidate {
+				return "/host/sys/fs/cgroup" + candidate
+			}
+			return ""
+		},
+	)
+	if path != "/host/sys/fs/cgroup"+wantCandidate || diagnostic != "" {
+		t.Fatalf("path=%q diagnostic=%q", path, diagnostic)
+	}
+}
+
+func TestHostCgroupCandidatePathsRebasesPrivateNamespacePath(t *testing.T) {
+	input := "/../../lzcapp-community.lazycat.czyt.rustdesk.slice/lzcapp-community.lazycat.czyt.rustdesk-server.slice/docker-abc123.scope"
+	want := "/system.slice/runc-lzc-os.scope/lzcapp.slice/lzcapp-community.lazycat.czyt.rustdesk.slice/lzcapp-community.lazycat.czyt.rustdesk-server.slice/docker-abc123.scope"
+	if got := hostCgroupCandidatePaths(input); !slices.Contains(got, want) {
+		t.Fatalf("candidates=%v want %q", got, want)
 	}
 }
 
