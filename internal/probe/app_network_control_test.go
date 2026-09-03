@@ -84,6 +84,31 @@ func TestAppNetworkPolicyStatusHandlesMissingController(t *testing.T) {
 	}
 }
 
+func TestAppNetworkPolicyStatusDistinguishesVerificationFromBlocking(t *testing.T) {
+	service := &Service{
+		containers:            newContainerControlState(),
+		appInternetController: newAppInternetController(),
+	}
+	service.appNetworkController = newAppNetworkController(service, nil)
+	app := AppTrafficUsage{
+		AppID: "app.example",
+		NetworkTargets: []AppNetworkTarget{{
+			ID: "lzc-br-example", Kind: AppNetworkTargetBridge, AppID: "app.example", Interface: "lzc-br-example",
+		}},
+	}
+
+	status := service.appNetworkPolicyStatus(app, nil)
+	if !status.Desired.InternetAllowed || status.InternetState != "verifying" || status.InternetInSync {
+		t.Fatalf("unverified allowed policy=%#v", status)
+	}
+
+	service.appInternetController.runtime["lzc-br-example"] = appInternetTargetRuntime{Blocked: true, InSync: false}
+	status = service.appNetworkPolicyStatus(app, nil)
+	if !status.Desired.InternetAllowed || status.InternetState != "partial" {
+		t.Fatalf("drifted allowed policy=%#v", status)
+	}
+}
+
 func TestAppNetworkPolicyStatusReportsTrafficLimitDrift(t *testing.T) {
 	limiter := newAppTrafficLimiter()
 	limiter.runtime["lzc-br-example"] = appTrafficLimitRuntime{

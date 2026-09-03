@@ -20,15 +20,57 @@ import (
 
 const websiteProbeTimeoutFallback = 5 * time.Second
 
+const (
+	websiteProbeBatchGrace  = 300 * time.Millisecond
+	websiteProbeCallerGrace = 200 * time.Millisecond
+)
+
 // Max body we will discard after headers — favicons are tiny; never wait on a full page.
 const websiteProbeDrainLimit = 64 << 10
 
-func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectivity {
-	timeout := s.cfg.HTTPTimeout
-	if timeout <= 0 {
-		timeout = websiteProbeTimeoutFallback
+// probeWebsiteConnectivity merges concurrent startup/manual/background calls
+// and applies the short manual-refresh cooldown supplied by the caller.
+func (s *Service) probeWebsiteConnectivity(ctx context.Context, minAge time.Duration) WebsiteConnectivity {
+	s.websiteProbeMu.Lock()
+	cache := s.websiteProbeCache
+	if cache.GeneratedAt != "" && egressCacheWithin(s.websiteProbeUpdatedAt, time.Now(), minAge) {
+		s.websiteProbeMu.Unlock()
+		return cache
 	}
-	batchCtx, batchCancel := context.WithTimeout(ctx, timeout+300*time.Millisecond)
+	if done := s.websiteProbeDone; done != nil {
+		s.websiteProbeMu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		s.websiteProbeMu.Lock()
+		cache = s.websiteProbeCache
+		s.websiteProbeMu.Unlock()
+		return cache
+	}
+	done := make(chan struct{})
+	s.websiteProbeDone = done
+	s.websiteProbeMu.Unlock()
+
+	result := s.ProbeWebsiteConnectivity(ctx)
+	s.websiteProbeMu.Lock()
+	s.websiteProbeCache = result
+	s.websiteProbeUpdatedAt = time.Now()
+	if s.websiteProbeDone == done {
+		s.websiteProbeDone = nil
+		close(done)
+	}
+	s.websiteProbeMu.Unlock()
+	return result
+}
+
+func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectivity {
+	timeout, domesticSites, globalSites := s.websiteProbeConfigSnapshot()
+	// Domestic and global probes run as two bounded lanes. Sites inside each
+	// lane are independent UI entries and are checked sequentially, avoiding a
+	// burst of four simultaneous public requests while still reporting all of
+	// the configured sites.
+	batchCtx, batchCancel := context.WithTimeout(ctx, websiteProbeBudget(timeout, len(domesticSites), len(globalSites)))
 	defer batchCancel()
 
 	var domestic, global []TargetResult
@@ -36,11 +78,11 @@ func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectiv
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		domestic = probeTargets(batchCtx, s.cfg.DomesticSites, timeout)
+		domestic = probeTargets(batchCtx, domesticSites, timeout)
 	}()
 	go func() {
 		defer wg.Done()
-		global = probeTargets(batchCtx, s.cfg.GlobalSites, timeout)
+		global = probeTargets(batchCtx, globalSites, timeout)
 	}()
 	wg.Wait()
 
@@ -51,6 +93,29 @@ func (s *Service) ProbeWebsiteConnectivity(ctx context.Context) WebsiteConnectiv
 		Domestic:       domestic,
 		Global:         global,
 	}
+}
+
+func (s *Service) websiteProbeConfigSnapshot() (time.Duration, []SiteTarget, []SiteTarget) {
+	s.mu.RLock()
+	timeout := s.cfg.HTTPTimeout
+	domestic := append([]SiteTarget(nil), s.cfg.DomesticSites...)
+	global := append([]SiteTarget(nil), s.cfg.GlobalSites...)
+	s.mu.RUnlock()
+	if timeout <= 0 {
+		timeout = websiteProbeTimeoutFallback
+	}
+	return timeout, domestic, global
+}
+
+func websiteProbeBudget(timeout time.Duration, domesticTargets, globalTargets int) time.Duration {
+	if timeout <= 0 {
+		timeout = websiteProbeTimeoutFallback
+	}
+	maxTargets := max(domesticTargets, globalTargets)
+	if maxTargets <= 0 {
+		return websiteProbeBatchGrace
+	}
+	return timeout*time.Duration(maxTargets) + websiteProbeBatchGrace
 }
 
 // Shared keep-alive client; per-request deadline comes only from context.
@@ -84,25 +149,17 @@ func probeTargets(ctx context.Context, targets []SiteTarget, timeout time.Durati
 	if timeout <= 0 {
 		timeout = websiteProbeTimeoutFallback
 	}
-	results := make([]TargetResult, len(targets))
-	if len(targets) == 0 {
-		return results
+	results := make([]TargetResult, 0, len(targets))
+	for _, target := range targets {
+		results = append(results, probeHTTPTarget(ctx, target, timeout))
 	}
-	var wg sync.WaitGroup
-	wg.Add(len(targets))
-	for i, target := range targets {
-		go func(index int, target SiteTarget) {
-			defer wg.Done()
-			results[index] = probeHTTPTarget(ctx, target, timeout)
-		}(i, target)
-	}
-	wg.Wait()
 	return results
 }
 
 // probeHTTPTarget is one GET of a small URL. Mirrors zashboard's img.onload / onerror:
-//   got headers → ok + latency_ms
-//   error/timeout → down + latency_ms=0
+//
+//	got headers → ok + latency_ms
+//	error/timeout → down + latency_ms=0
 func probeHTTPTarget(ctx context.Context, target SiteTarget, timeout time.Duration) TargetResult {
 	result := TargetResult{
 		Name:      target.Name,

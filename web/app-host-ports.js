@@ -237,7 +237,8 @@ function initHostPorts() {
         });
     };
 
-    var load = async function () {
+    var load = async function (refresh) {
+        refresh = refresh === true;
         if (btn) btn.disabled = true;
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
             state: lastSuccessfulData ? 'refreshing' : 'loading',
@@ -248,9 +249,9 @@ function initHostPorts() {
         document.getElementById('host-ports-section')?.setAttribute('aria-busy', 'true');
         try {
             var data = window.NetwatchAPI
-                ? await window.NetwatchAPI.get('/api/v1/network/ports')
+                ? await (refresh ? window.NetwatchAPI.post('/api/v1/network/ports') : window.NetwatchAPI.get('/api/v1/network/ports'))
                 : await (async function () {
-                    var resp = await fetch('/api/v1/network/ports', { cache: 'no-store' });
+                    var resp = await fetch('/api/v1/network/ports', { method: refresh ? 'POST' : 'GET', cache: 'no-store' });
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return resp.json();
                 })();
@@ -286,9 +287,9 @@ function initHostPorts() {
     if (sharedBackdrop) sharedBackdrop.addEventListener('click', closeDetail);
 
     if (searchInput) searchInput.addEventListener('input', function () { render(latestPortsData); });
-    if (btn) btn.addEventListener('click', load);
+    if (btn) btn.addEventListener('click', function () { load(true); });
     window.__app.refreshHostPorts = load;
-    load();
+    load(false);
 }
 
 window.__app.initHostPorts = initHostPorts;

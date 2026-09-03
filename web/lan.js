@@ -622,6 +622,11 @@ const state = {
             if (!scan) {
                 const devices = await lanGet('/api/v1/lan/devices', 8000);
                 render(devices || { devices: [], online: 0 });
+                // A very early page open may join the process-start scan. Poll
+                // only its cached state until completion; never start a scan.
+                if (devices && devices.scanning) {
+                    await pollScanUntilDone(Date.now(), 20000);
+                }
                 return;
             }
             // Async scan: POST returns immediately with scanning=true + current cache.
@@ -820,13 +825,7 @@ const state = {
     NetwatchShared.initLazycatFullscreen?.();
     initTheme();
     loadSettingsAndScheduleRefresh();
-    // Show cache immediately, then force a scan for fresh data.
-    load(false).finally(function () {
-        load(true).catch(function () {}).finally(function () {
-            // If scan failed/timed out and list still empty, try cache once more.
-            if (!state.lastLANData || !(state.lastLANData.devices || []).length) {
-                load(false);
-            }
-        });
-    });
+    // Page load only reads the process-owned snapshot. Initial discovery runs
+    // when Netwatch starts; a new scan is reserved for the explicit button.
+    load(false);
 })();

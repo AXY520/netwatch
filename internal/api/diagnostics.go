@@ -109,17 +109,21 @@ func (h *Handler) handleRealtimeNetStats(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) handleHostPorts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	var result probe.HostPortsSnapshot
+	switch r.Method {
+	case http.MethodGet:
+		result = probe.GetHostPortsSnapshot(r.Context())
+	case http.MethodPost:
+		result = probe.CollectHostPorts(r.Context())
+	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	result := probe.CollectHostPorts(r.Context())
 	writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, time.Minute)
 }
 
 func (h *Handler) handleEgressLookups(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		h.service.ClearPublicIPCache()
 		result := h.service.RefreshEgressLookups(r.Context())
 		writeObservationJSON(w, http.StatusOK, result, result.GeneratedAt, 15*time.Minute)
 		return

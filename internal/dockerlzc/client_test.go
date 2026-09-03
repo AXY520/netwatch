@@ -23,6 +23,24 @@ func TestBuildBridgeMapUsesNetworkSpecificRuntime(t *testing.T) {
 	}
 }
 
+func TestContainerRuntimeNetworkEndpointsPreserveLocalAddressMetadata(t *testing.T) {
+	names, endpoints := containerRuntimeNetworkEndpoints(map[string]containerNetworkEndpoint{
+		"z_default": {
+			IPAddress:         "172.28.4.133",
+			GlobalIPv6Address: "fd12:3456::133",
+			Aliases:           []string{"postgres"},
+			DNSNames:          []string{"postgres.cloud.lazycat.app.ai.lzcapp"},
+		},
+		"a_default": {IPAddress: "172.29.0.2"},
+	})
+	if len(names) != 2 || names[0] != "a_default" || names[1] != "z_default" {
+		t.Fatalf("network names=%v", names)
+	}
+	if got := endpoints[1]; got.Network != "z_default" || got.IPv4 != "172.28.4.133" || got.IPv6 != "fd12:3456::133" || len(got.DNSNames) != 1 {
+		t.Fatalf("runtime endpoint=%+v", got)
+	}
+}
+
 func TestBuildBridgeMapUsesPrimaryAppContainerStart(t *testing.T) {
 	networks := []networkSummary{
 		{Name: "app_default", Labels: map[string]string{"com.docker.compose.project": "app"}, Options: map[string]string{"com.docker.network.bridge.name": "lzc-br-current"}},

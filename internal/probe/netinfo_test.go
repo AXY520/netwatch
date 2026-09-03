@@ -1,13 +1,47 @@
 package probe
 
 import (
+	"context"
 	"math"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"netwatch/internal/lzcsdk"
 )
+
+func TestProbeNetworkInfoRoutineRefreshPreservesPublicIdentity(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"ip":"203.0.113.10"}`))
+	}))
+	defer server.Close()
+
+	service := &Service{
+		cfg: Config{
+			HTTPTimeout:        200 * time.Millisecond,
+			PublicIPv4Endpoint: server.URL,
+			PublicIPv6Endpoint: server.URL,
+		},
+		summary: Summary{NetworkInfo: NetworkInfo{
+			EgressIPv4: "198.51.100.20",
+			EgressIPv6: "2001:db8::20",
+		}},
+	}
+
+	info := service.probeNetworkInfo(context.Background(), false)
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("routine refresh made %d public identity requests, want 0", got)
+	}
+	if info.EgressIPv4 != "198.51.100.20" || info.EgressIPv6 != "2001:db8::20" {
+		t.Fatalf("routine refresh replaced cached identity: IPv4=%q IPv6=%q", info.EgressIPv4, info.EgressIPv6)
+	}
+}
 
 func TestInferLinkType(t *testing.T) {
 	cases := map[string]string{
@@ -101,6 +135,31 @@ func TestBridgeDeviceStatus(t *testing.T) {
 	}
 	if got := bridgeDeviceStatus(true, "down", false); got != "disconnected" {
 		t.Fatalf("down: %q", got)
+	}
+}
+
+func TestReconcileStatusFallsBackWhenSDKStatusIsMissing(t *testing.T) {
+	for _, sdkStatus := range []string{"", "unknown"} {
+		if got := reconcileStatus(sdkStatus, "up", true); got != "connected" {
+			t.Fatalf("sdk=%q up with address: got %q, want connected", sdkStatus, got)
+		}
+	}
+	if got := reconcileStatus("", "down", true); got != "disconnected" {
+		t.Fatalf("missing SDK with down kernel: got %q, want disconnected", got)
+	}
+	if got := reconcileStatus("", "unknown", false); got != "unknown" {
+		t.Fatalf("missing all evidence: got %q, want unknown", got)
+	}
+}
+
+func TestReconcileStatusRejectsStaleSDKConnected(t *testing.T) {
+	for _, kernelStatus := range []string{"down", "lowerlayerdown", "notpresent"} {
+		if got := reconcileStatus("connected", kernelStatus, true); got != "disconnected" {
+			t.Fatalf("kernel=%q: got %q, want disconnected", kernelStatus, got)
+		}
+	}
+	if got := reconcileStatus("connected", "up", false); got != "disconnected" {
+		t.Fatalf("connected without address: got %q, want disconnected", got)
 	}
 }
 

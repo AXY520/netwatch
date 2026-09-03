@@ -191,11 +191,15 @@ type AppConnectionEntry struct {
 	LocalPort           int    `json:"local_port"`
 	RemoteAddress       string `json:"remote_address"`
 	RemotePort          int    `json:"remote_port"`
+	RemoteHost          string `json:"remote_host,omitempty"`
 	State               string `json:"state"`
 	Direction           string `json:"direction"`
 	ContainerID         string `json:"container_id,omitempty"`
 	ContainerName       string `json:"container_name,omitempty"`
+	ProcessName         string `json:"process_name,omitempty"`
+	ProcessPID          int    `json:"process_pid,omitempty"`
 	AppID               string `json:"app_id,omitempty"`
+	InstanceID          string `json:"instance_id,omitempty"`
 	Project             string `json:"project,omitempty"`
 	NetworkMode         string `json:"network_mode,omitempty"`
 	AttributionReliable bool   `json:"attribution_reliable"`
@@ -203,8 +207,9 @@ type AppConnectionEntry struct {
 
 type AppConnectionSnapshot struct {
 	GeneratedAt string               `json:"generated_at"`
+	AppID       string               `json:"app_id"`
+	InstanceID  string               `json:"instance_id"`
 	Supported   bool                 `json:"supported"`
-	Revealed    bool                 `json:"revealed"`
 	Truncated   bool                 `json:"truncated"`
 	Limit       int                  `json:"limit"`
 	Connections []AppConnectionEntry `json:"connections"`
@@ -639,11 +644,15 @@ type DomesticIPSnapshot struct {
 type IPv6Availability struct {
 	HasGlobalAddress  bool   `json:"has_global_address"`
 	GlobalAddress     string `json:"global_address,omitempty"`
+	AddressError      string `json:"address_error,omitempty"`
 	OutboundReachable bool   `json:"outbound_reachable"`
 	OutboundLatencyMS int64  `json:"outbound_latency_ms,omitempty"`
 	OutboundTarget    string `json:"outbound_target,omitempty"`
+	OutboundError     string `json:"outbound_error,omitempty"`
 	HTTPSReachable    bool   `json:"https_reachable"`
+	HTTPSError        string `json:"https_error,omitempty"`
 	DNSResolvable     bool   `json:"dns_resolvable"`
+	DNSError          string `json:"dns_error,omitempty"`
 	Summary           string `json:"summary"`
 	CheckedAt         string `json:"checked_at,omitempty"`
 }

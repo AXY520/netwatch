@@ -33,6 +33,43 @@ type natClassification struct {
 	Diagnostic        string
 }
 
+// probeNAT merges overlapping requests and lets manual callers reuse a very
+// recent result. NAT classification needs two STUN observations, but never
+// sends to more than the configured primary and first fallback.
+func (s *Service) probeNAT(ctx context.Context, minAge time.Duration) NATInfo {
+	s.natProbeMu.Lock()
+	cache := s.natProbeCache
+	if cache.GeneratedAt != "" && egressCacheWithin(s.natProbeUpdatedAt, time.Now(), minAge) {
+		s.natProbeMu.Unlock()
+		return cache
+	}
+	if done := s.natProbeDone; done != nil {
+		s.natProbeMu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		s.natProbeMu.Lock()
+		cache = s.natProbeCache
+		s.natProbeMu.Unlock()
+		return cache
+	}
+	done := make(chan struct{})
+	s.natProbeDone = done
+	s.natProbeMu.Unlock()
+
+	result := s.ProbeNAT(ctx)
+	s.natProbeMu.Lock()
+	s.natProbeCache = result
+	s.natProbeUpdatedAt = time.Now()
+	if s.natProbeDone == done {
+		s.natProbeDone = nil
+		close(done)
+	}
+	s.natProbeMu.Unlock()
+	return result
+}
+
 func (s *Service) ProbeNAT(ctx context.Context) NATInfo {
 	results := NATInfo{
 		GeneratedAt: localTimestamp(),
@@ -40,7 +77,11 @@ func (s *Service) ProbeNAT(ctx context.Context) NATInfo {
 		Note:        "使用同一 UDP socket 向多个 STUN 服务器观测映射；结果反映微服出口，不代表浏览器所在网络。",
 	}
 
-	observations := parallelSTUNObservations(ctx, s.cfg.STUNServers, s.cfg.NATTimeout)
+	servers := s.cfg.STUNServers
+	if len(servers) > 2 {
+		servers = servers[:2]
+	}
+	observations := parallelSTUNObservations(ctx, servers, s.cfg.NATTimeout)
 	results.Observations = successfulNATObservations(observations)
 	results.Reachable = false
 	for _, observation := range observations {

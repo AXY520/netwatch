@@ -84,12 +84,11 @@ window.NetwatchShared = (function () {
         var parsedAt = parseObservationTime(options.generatedAt);
         var inferredAge = parsedAt ? Math.max(0, Math.floor((Date.now() - parsedAt.getTime()) / 1000)) : 0;
         if (state === 'fresh' && (options.stale || (options.staleAfterSeconds && inferredAge > options.staleAfterSeconds))) state = 'stale';
-        if (state === 'loading') parts.push(tr('first_loading'));
+        if (state === 'loading') parts.push(options.loadingText || tr('first_loading'));
         else if (state === 'refreshing') parts.push(tr('refreshing'));
         else if (state === 'error') parts.push(tr('refresh_failed'));
         else if (state === 'unsupported') parts.push(tr('capability_unsupported'));
         else if (state === 'empty') parts.push(tr('no_data'));
-        else if (state === 'stale' || options.stale) parts.push(tr('data_stale'));
         if (timestamp) {
             if (compactViewport && state !== 'error' && state !== 'refreshing') parts.push(timestamp);
             else parts.push((state === 'error' || state === 'refreshing') ? tr('last_success_prefix') + timestamp : tr('sampled_at') + ' ' + timestamp);
@@ -408,7 +407,10 @@ window.NetwatchShared = (function () {
         var appCommon = getLazycatAppCommon();
         if (!appCommon || typeof appCommon.SetFullScreen !== 'function') return false;
         var now = Date.now();
-        if (!force && requestLazycatFullscreen._lastAt && now - requestLazycatFullscreen._lastAt < 800) return true;
+        // pageshow/focus often arrive together. Never ask the native shell to
+        // relayout repeatedly, even when the caller considers the request
+        // forced; mobile browser chrome resize events otherwise form a loop.
+        if (requestLazycatFullscreen._lastAt && now - requestLazycatFullscreen._lastAt < 1500) return true;
         requestLazycatFullscreen._lastAt = now;
         Promise.resolve()
             .then(function () { return appCommon.SetFullScreen(); })
@@ -436,21 +438,14 @@ window.NetwatchShared = (function () {
         var requestNow = function () {
             initLazycatFullscreen(0);
         };
-        var requestOnInput = function () {
-            if (canRequestLazycatFullscreen()) requestLazycatFullscreen(true);
-        };
         window.addEventListener('pageshow', requestNow);
         window.addEventListener('focus', requestNow);
-        window.addEventListener('resize', requestNow);
-        window.addEventListener('orientationchange', requestNow);
-        document.addEventListener('visibilitychange', function () {
-            requestNow();
+        window.addEventListener('orientationchange', function () {
+            setTimeout(requestNow, 250);
         });
-        document.addEventListener('pointerdown', requestOnInput, { passive: true });
-        document.addEventListener('touchstart', requestOnInput, { passive: true });
-        bindLazycatFullscreenWatchers._timer = setInterval(function () {
-            if (canRequestLazycatFullscreen()) requestLazycatFullscreen(false);
-        }, 2000);
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) requestNow();
+        });
     }
 
     function initLazycatFullscreen(attempt) {

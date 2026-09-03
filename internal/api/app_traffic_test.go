@@ -27,6 +27,26 @@ func TestHandleAppTrafficHistoryRequiresAppID(t *testing.T) {
 	}
 }
 
+func TestHandleAppTrafficConnectionsRequiresAppID(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/network/app-traffic/connections", nil)
+	rec := httptest.NewRecorder()
+	handler.handleAppTrafficConnections(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleAppTrafficConnectionsAllowsOnlyGet(t *testing.T) {
+	handler := newTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/app-traffic/connections?app_id=app.example", nil)
+	rec := httptest.NewRecorder()
+	handler.handleAppTrafficConnections(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestHandleAppTrafficLimitRejectsInvalidAppIDBeforeTrafficControl(t *testing.T) {
 	handler := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/network/app-traffic/limit", strings.NewReader(`{"app_id":"","upload_kbps":1000}`))

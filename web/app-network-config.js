@@ -363,9 +363,10 @@ function updateNetworkConfigMethodState() {
     updateNetworkConfigApplyState();
 }
 
-async function loadNetworkConfigDevices(preferredDevice) {
+async function loadNetworkConfigDevices(preferredDevice, refresh) {
     var e = networkConfigEls();
     if (!e.device) return;
+    refresh = refresh === true;
     preferredDevice = String(preferredDevice || e.device.value || '').trim();
     e.device.innerHTML = '';
     e.device.disabled = true;
@@ -379,7 +380,9 @@ async function loadNetworkConfigDevices(preferredDevice) {
         var respData;
         var respStatus = 200;
         try {
-            respData = await netwatchGet('/api/v1/network/config/devices');
+            respData = refresh
+                ? await netwatchPost('/api/v1/network/config/devices')
+                : await netwatchGet('/api/v1/network/config/devices');
         } catch (err) {
             respStatus = err.status || 500;
             if (respStatus === 404) {
@@ -417,7 +420,9 @@ async function loadNetworkConfigDevices(preferredDevice) {
             setNetworkConfigFormEnabled(false);
             if (window.syncCustomSelect) window.syncCustomSelect(e.device);
             if (e.status) e.status.textContent = i18n('network_config_no_device');
-            if (typeof window.__app.loadHostBridges === 'function') {
+            if (typeof window.__app.loadHostBridges === 'function' &&
+                typeof window.__app.currentNetworkConfigTab === 'function' &&
+                window.__app.currentNetworkConfigTab() === 'bridge') {
                 window.__app.loadHostBridges();
             }
             // Bridge may hold the only address — DNS candidates can still repopulate the dropdown.
@@ -432,7 +437,9 @@ async function loadNetworkConfigDevices(preferredDevice) {
         if (typeof window.__app.renderNetworkConfigDeviceOptions === 'function') {
             window.__app.renderNetworkConfigDeviceOptions({ preferredDevice: preferredDevice });
         }
-        if (typeof window.__app.loadHostBridges === 'function') {
+        if (typeof window.__app.loadHostBridges === 'function' &&
+            typeof window.__app.currentNetworkConfigTab === 'function' &&
+            window.__app.currentNetworkConfigTab() === 'bridge') {
             window.__app.loadHostBridges();
         }
         if (state.networkConfigPendingData && state.networkConfigPendingData.pending) {
@@ -669,9 +676,9 @@ async function finishNetworkConfig(kind) {
         if (e.rollback) e.rollback.hidden = true;
         if (e.macConfirm) e.macConfirm.hidden = true;
         if (e.macRollback) e.macRollback.hidden = true;
-        await loadNetworkConfigDevices(targetDevice);
+        await loadNetworkConfigDevices(targetDevice, true);
         if (status) status.textContent = kind === 'confirm' ? i18n('network_config_confirmed') : i18n('network_config_rolled_back');
-        setTimeout(function () { if (window.__app.loadSummary) window.__app.loadSummary(false, true); }, 1200);
+        setTimeout(function () { if (window.__app.loadSummary) window.__app.loadSummary(false, false); }, 1200);
     } catch (err) {
         if (status) status.textContent = i18n('network_config_failed') + ': ' + err.message;
     }
@@ -681,7 +688,7 @@ function waitForNetworkConfigDevice(device) {
     var attempts = 12;
     return new Promise(function (resolve) {
         function check() {
-            netwatchGet('/api/v1/network/config/devices').then(function (data) {
+            netwatchPost('/api/v1/network/config/devices').then(function (data) {
                 var devices = data && Array.isArray(data.devices) ? data.devices : [];
                 if (devices.some(function (item) { return item && item.device === device; })) {
                     resolve(true);
@@ -732,9 +739,9 @@ async function restartNetworkConfigDevice() {
         if (e.status) e.status.textContent = i18n('network_config_restart_waiting');
         var recovered = await waitForNetworkConfigDevice(device);
         if (!recovered) throw interruptedError || new Error(i18n('network_config_restart_unreachable'));
-        await loadNetworkConfigDevices(device);
+        await loadNetworkConfigDevices(device, true);
         try { await refreshNetworkDetailCards(); } catch (_) {}
-        if (window.__app.loadSummary) window.__app.loadSummary(false, true);
+        if (window.__app.loadSummary) window.__app.loadSummary(false, false);
         if (e.status) e.status.textContent = i18n('network_config_restarted');
         if (e.output && result && result.output) {
             e.output.textContent = result.output;

@@ -86,11 +86,12 @@ function applyIncomingSummary(summary, opts) {
     opts = opts || {};
     var next = opts.force ? summary : mergeIncomingSummary(summary);
     if (!next) return false;
-    renderSummary(next);
+    renderSummary(next, { refreshNetworkIdentity: opts.refreshNetworkIdentity === true });
     return true;
 }
 
-function renderSummary(summary) {
+function renderSummary(summary, opts) {
+    opts = opts || {};
     state.summary = summary;
     state.refreshInterval = summary.refresh_interval_sec || 10;
     state.settings.refresh_interval_sec = state.refreshInterval;
@@ -98,7 +99,8 @@ function renderSummary(summary) {
     window.__app.updateConnectivityTable(els.domesticTable, (summary.website_connectivity && summary.website_connectivity.domestic) || []);
     window.__app.updateConnectivityTable(els.globalTable, (summary.website_connectivity && summary.website_connectivity.global) || []);
     updateWebsiteObservationStatus(summary.website_connectivity || {}, 'fresh');
-    window.__app.renderNetworkInfo(summary.network_info || {});
+    var refreshNetworkIdentity = opts.refreshNetworkIdentity === true || !state.networkIdentityRendered;
+    window.__app.renderNetworkInfo(summary.network_info || {}, { refreshIdentity: refreshNetworkIdentity });
     if (window.__app.renderNATInfo) window.__app.renderNATInfo((summary.network_info && summary.network_info.nat) || {});
 }
 
@@ -128,16 +130,13 @@ async function refreshNetworkDetailCards() {
                     state.summary.generated_at = info.generated_at;
                 }
             }
-            window.__app.renderNetworkInfo(info);
+            window.__app.renderNetworkInfo(info, { refreshIdentity: true });
         }
     } catch (err) {
-        // Fallback to full summary if light path unavailable.
+        // Fallback is snapshot-only: an interface refresh failure must not
+        // silently turn into a website/public-network probe.
         try {
-            if (window.__app && window.__app.refreshInterfacesOnly) {
-                await window.__app.refreshInterfacesOnly();
-            } else if (window.__app && window.__app.loadSummary) {
-                await window.__app.loadSummary(false, true);
-            }
+            if (window.__app && window.__app.loadSummary) await window.__app.loadSummary(false, false);
         } catch (_) {}
     }
     try {
@@ -165,7 +164,7 @@ async function loadSummary(showOverlay, refresh) {
             if (!response.ok) throw new Error('HTTP ' + response.status);
             data = await response.json();
         }
-        renderSummary(data);
+        renderSummary(data, { refreshNetworkIdentity: refresh === true });
     } catch (error) {
         console.error(error);
         NetwatchShared.showToast(i18n('load_failed') + ': ' + error.message, 'error');
@@ -338,9 +337,18 @@ function renderIPv6DetailWindow(avail) {
     setIPv6LayerDot('ipv6-detail-outbound', avail.outbound_reachable);
     setIPv6LayerDot('ipv6-detail-https', avail.https_reachable);
     setIPv6LayerDot('ipv6-detail-dns', avail.dns_resolvable);
-    var setVal = function (id, text) { var el = document.getElementById(id); if (el) el.textContent = text || ''; };
-    setVal('ipv6-detail-addr-val', avail.global_address || i18n('not_detected'));
-    setVal('ipv6-detail-outbound-val', avail.outbound_reachable ? (avail.outbound_target || '') + (avail.outbound_latency_ms ? ' \u00B7 ' + avail.outbound_latency_ms + ' ms' : '') : '');
+    var setVal = function (id, text) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text || '';
+        el.title = text || '';
+    };
+    setVal('ipv6-detail-addr-val', avail.global_address || avail.address_error || i18n('not_detected'));
+    setVal('ipv6-detail-outbound-val', avail.outbound_reachable
+        ? (avail.outbound_target || '') + (avail.outbound_latency_ms ? ' \u00B7 ' + avail.outbound_latency_ms + ' ms' : '')
+        : (avail.outbound_error || i18n('unavailable')));
+    setVal('ipv6-detail-https-val', avail.https_reachable ? i18n('ok') : (avail.https_error || i18n('unavailable')));
+    setVal('ipv6-detail-dns-val', avail.dns_resolvable ? i18n('ok') : (avail.dns_error || i18n('unavailable')));
     var checkedEl = document.getElementById('ipv6-detail-checked');
     if (checkedEl) {
         checkedEl.textContent = avail.checked_at ? i18n('ipv6_detail_checked_at') + ': ' + avail.checked_at : '';
@@ -364,6 +372,8 @@ function openIPv6DetailWindow() {
     }
     win.classList.add('active');
     NetwatchShared.lockModalScroll();
+    // Opening a detail window only renders the process-owned snapshot. IPv6
+    // availability is refreshed together with the explicit egress button.
 }
 
 function closeIPv6DetailWindow() {
@@ -515,13 +525,28 @@ async function initEgressLookups() {
     var load = async function (force) {
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
             state: state.egressData ? 'refreshing' : 'loading',
-            generatedAt: state.egressData && state.egressData.generated_at
+            generatedAt: state.egressData && state.egressData.generated_at,
+            loadingText: i18n('loading')
         });
         btn.disabled = true;
         try {
-            var egressData = force
-                ? await netwatchPost('/api/v1/network/egress-lookups')
-                : await netwatchGet('/api/v1/network/egress-lookups');
+            var identityRequest = force
+                ? netwatchPost('/api/v1/network/interfaces/refresh').catch(function (error) {
+                    console.warn('local network identity refresh failed', error);
+                    return null;
+                })
+                : Promise.resolve(null);
+            var results = await Promise.all([
+                force ? netwatchPost('/api/v1/network/egress-lookups') : netwatchGet('/api/v1/network/egress-lookups'),
+                identityRequest
+            ]);
+            var egressData = results[0];
+            var networkInfo = results[1];
+            if (networkInfo) {
+                if (state.summary) state.summary.network_info = networkInfo;
+                window.__app.renderNetworkInfo(networkInfo, { refreshIdentity: true });
+                if (window.__app.renderNATInfo) window.__app.renderNATInfo(networkInfo.nat || {});
+            }
             renderEgressLookups(egressData);
         } catch (e) {
             if (statusEl) NetwatchShared.setObservationStatus(statusEl, {

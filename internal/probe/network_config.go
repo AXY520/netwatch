@@ -26,6 +26,7 @@ const networkConfigRollbackDelay = 3 * time.Minute
 
 type networkConfigSnapshot struct {
 	Connection  string `json:"connection"`
+	SlaveType   string `json:"-"`
 	Method      string `json:"method"`
 	Addresses   string `json:"addresses"`
 	Gateway     string `json:"gateway"`
@@ -62,6 +63,12 @@ func (s *Service) ListNetworkConfigDevices(ctx context.Context) NetworkConfigDev
 		return NetworkConfigDevicesResponse{Enabled: true, Error: err.Error()}
 	}
 	return NetworkConfigDevicesResponse{Enabled: true, Devices: devices}
+}
+
+// InvalidateNetworkConfigDeviceSnapshot is used by the explicit UI refresh.
+// Ordinary GETs intentionally retain the process-owned startup snapshot.
+func (s *Service) InvalidateNetworkConfigDeviceSnapshot() {
+	invalidateHostNetworkDeviceInventoryCache()
 }
 
 func (s *Service) RestartNetworkConfigDevice(ctx context.Context, req NetworkConfigRestartRequest) NetworkConfigRestartResult {
@@ -153,6 +160,9 @@ func (s *Service) ApplyNetworkConfig(ctx context.Context, req NetworkConfigApply
 		}
 	}()
 
+	// A mutation must validate against current host state, not the UI's startup
+	// snapshot.
+	invalidateHostNetworkDeviceInventoryCache()
 	devices, err := listNetworkConfigDevices(ctx)
 	if err != nil {
 		return NetworkConfigApplyResult{Device: req.Device, Error: err.Error()}
@@ -373,32 +383,92 @@ type hostNetworkDeviceInventoryItem struct {
 	Runtime    networkDeviceRuntimeConfig
 }
 
-const hostNetworkDeviceInventoryTTL = 2 * time.Second
-
 var hostNetworkDeviceInventoryCache struct {
 	sync.Mutex
-	at      time.Time
-	devices []hostNetworkDeviceInventoryItem
+	at         time.Time
+	devices    []hostNetworkDeviceInventoryItem
+	loading    chan struct{}
+	generation uint64
+	ready      bool
+	err        error
 }
 
 func invalidateHostNetworkDeviceInventoryCache() {
 	hostNetworkDeviceInventoryCache.Lock()
 	hostNetworkDeviceInventoryCache.at = time.Time{}
 	hostNetworkDeviceInventoryCache.devices = nil
+	hostNetworkDeviceInventoryCache.ready = false
+	hostNetworkDeviceInventoryCache.err = nil
+	hostNetworkDeviceInventoryCache.generation++
+	hostNetworkDeviceInventoryCache.Unlock()
+}
+
+func startHostNetworkDeviceInventoryCollection(ctx context.Context) {
+	hostNetworkDeviceInventoryCache.Lock()
+	if hostNetworkDeviceInventoryCache.ready || hostNetworkDeviceInventoryCache.loading != nil {
+		hostNetworkDeviceInventoryCache.Unlock()
+		return
+	}
+	loading := make(chan struct{})
+	hostNetworkDeviceInventoryCache.loading = loading
+	generation := hostNetworkDeviceInventoryCache.generation
+	hostNetworkDeviceInventoryCache.Unlock()
+
+	go func() {
+		warmCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+		defer cancel()
+		devices, err := collectHostNetworkDeviceInventory(warmCtx)
+		finishHostNetworkDeviceInventoryCollection(loading, generation, devices, err)
+	}()
+}
+
+func finishHostNetworkDeviceInventoryCollection(loading chan struct{}, generation uint64, devices []hostNetworkDeviceInventoryItem, err error) {
+	hostNetworkDeviceInventoryCache.Lock()
+	if generation == hostNetworkDeviceInventoryCache.generation {
+		hostNetworkDeviceInventoryCache.at = time.Now()
+		hostNetworkDeviceInventoryCache.devices = append([]hostNetworkDeviceInventoryItem(nil), devices...)
+		hostNetworkDeviceInventoryCache.ready = true
+		hostNetworkDeviceInventoryCache.err = err
+	}
+	if hostNetworkDeviceInventoryCache.loading == loading {
+		hostNetworkDeviceInventoryCache.loading = nil
+		close(loading)
+	}
 	hostNetworkDeviceInventoryCache.Unlock()
 }
 
 // listHostNetworkDeviceInventory is the single source of truth for connected
 // host devices that may be configured or used as DNS resolver sources.
 func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInventoryItem, error) {
-	hostNetworkDeviceInventoryCache.Lock()
-	if time.Since(hostNetworkDeviceInventoryCache.at) < hostNetworkDeviceInventoryTTL && hostNetworkDeviceInventoryCache.devices != nil {
-		devices := append([]hostNetworkDeviceInventoryItem(nil), hostNetworkDeviceInventoryCache.devices...)
+	for {
+		hostNetworkDeviceInventoryCache.Lock()
+		if hostNetworkDeviceInventoryCache.ready {
+			devices := append([]hostNetworkDeviceInventoryItem(nil), hostNetworkDeviceInventoryCache.devices...)
+			err := hostNetworkDeviceInventoryCache.err
+			hostNetworkDeviceInventoryCache.Unlock()
+			return devices, err
+		}
+		if loading := hostNetworkDeviceInventoryCache.loading; loading != nil {
+			hostNetworkDeviceInventoryCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-loading:
+				continue
+			}
+		}
+		loading := make(chan struct{})
+		hostNetworkDeviceInventoryCache.loading = loading
+		generation := hostNetworkDeviceInventoryCache.generation
 		hostNetworkDeviceInventoryCache.Unlock()
-		return devices, nil
-	}
-	hostNetworkDeviceInventoryCache.Unlock()
 
+		devices, err := collectHostNetworkDeviceInventory(ctx)
+		finishHostNetworkDeviceInventoryCollection(loading, generation, devices, err)
+		return devices, err
+	}
+}
+
+func collectHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInventoryItem, error) {
 	out, err := nmcli(ctx, []string{"-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"}, 5*time.Second)
 	if err != nil {
 		return nil, err
@@ -434,9 +504,6 @@ func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInv
 			defer wg.Done()
 			dev := candidates[index]
 			isManagedBridge := strings.EqualFold(dev.Type, "bridge") && isManagedHostBridgeName(dev.Device)
-			if !isManagedBridge && connectionIsBridgePort(ctx, dev.Connection) {
-				return
-			}
 			var detailWG sync.WaitGroup
 			detailWG.Add(2)
 			go func() {
@@ -452,6 +519,9 @@ func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInv
 				}
 			}()
 			detailWG.Wait()
+			if !isManagedBridge && strings.EqualFold(dev.Snapshot.SlaveType, "bridge") {
+				return
+			}
 			resolved[index] = dev
 			keep[index] = true
 		}(index)
@@ -463,10 +533,6 @@ func listHostNetworkDeviceInventory(ctx context.Context) ([]hostNetworkDeviceInv
 			devices = append(devices, dev)
 		}
 	}
-	hostNetworkDeviceInventoryCache.Lock()
-	hostNetworkDeviceInventoryCache.at = time.Now()
-	hostNetworkDeviceInventoryCache.devices = append([]hostNetworkDeviceInventoryItem(nil), devices...)
-	hostNetworkDeviceInventoryCache.Unlock()
 	return devices, nil
 }
 
@@ -526,15 +592,22 @@ func readNetworkConfigSnapshot(ctx context.Context, connection string) (networkC
 	if connection == "" {
 		return networkConfigSnapshot{}, errors.New("empty connection")
 	}
-	out, err := nmcli(ctx, []string{"-g", "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "connection", "show", connection}, 5*time.Second)
+	out, err := nmcli(ctx, []string{"-g", "connection.slave-type,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "connection", "show", connection}, 5*time.Second)
 	if err != nil {
 		return networkConfigSnapshot{}, err
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for len(lines) < 4 {
+	for len(lines) < 5 {
 		lines = append(lines, "")
 	}
-	return networkConfigSnapshot{Connection: connection, Method: strings.TrimSpace(lines[0]), Addresses: strings.TrimSpace(lines[1]), Gateway: strings.TrimSpace(lines[2]), DNS: strings.TrimSpace(lines[3])}, nil
+	return networkConfigSnapshot{
+		Connection: connection,
+		SlaveType:  strings.TrimSpace(lines[0]),
+		Method:     strings.TrimSpace(lines[1]),
+		Addresses:  strings.TrimSpace(lines[2]),
+		Gateway:    strings.TrimSpace(lines[3]),
+		DNS:        strings.TrimSpace(lines[4]),
+	}, nil
 }
 
 func readNetworkConfigMACSetting(ctx context.Context, connection, property string) (string, error) {

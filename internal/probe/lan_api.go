@@ -45,8 +45,8 @@ func (s *Service) StartLANScan() LANDeviceSnapshot {
 	}
 	go func(id string) {
 		defer s.lan.endScan(id)
-		// Detached from HTTP request context so proxy/client cancel cannot kill it.
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// Detached from the HTTP request, but still cancelled with the service.
+		ctx, cancel := context.WithTimeout(s.backgroundCtx(), 15*time.Second)
 		defer cancel()
 		_ = s.scanLANDevices(ctx, false)
 	}(scanID)

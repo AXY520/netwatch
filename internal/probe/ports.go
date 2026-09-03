@@ -34,6 +34,7 @@ var hostPortsCache = struct {
 	snapshot HostPortsSnapshot
 	expires  time.Time
 	ok       bool
+	loading  chan struct{}
 }{}
 
 func hostProcRoot() string {
@@ -43,25 +44,82 @@ func hostProcRoot() string {
 	return "/proc"
 }
 
-func CollectHostPorts(ctx context.Context) HostPortsSnapshot {
-	now := time.Now()
+// GetHostPortsSnapshot is the page-load path. It only returns the snapshot
+// collected by process startup or a manual refresh. When startup collection is
+// already in flight, it joins that work instead of launching another scan.
+func GetHostPortsSnapshot(ctx context.Context) HostPortsSnapshot {
 	hostPortsCache.Lock()
-	if hostPortsCache.ok && now.Before(hostPortsCache.expires) {
+	if hostPortsCache.ok {
 		snap := cloneHostPortsSnapshot(hostPortsCache.snapshot)
 		hostPortsCache.Unlock()
 		return snap
 	}
+	loading := hostPortsCache.loading
 	hostPortsCache.Unlock()
+	if loading != nil {
+		select {
+		case <-ctx.Done():
+		case <-loading:
+		}
+	}
+	hostPortsCache.Lock()
+	snap := cloneHostPortsSnapshot(hostPortsCache.snapshot)
+	hostPortsCache.Unlock()
+	return snap
+}
+
+func startHostPortsCollection(ctx context.Context) {
+	hostPortsCache.Lock()
+	if hostPortsCache.ok || hostPortsCache.loading != nil {
+		hostPortsCache.Unlock()
+		return
+	}
+	hostPortsCache.loading = make(chan struct{})
+	hostPortsCache.Unlock()
+	go func() {
+		storeHostPortsSnapshot(collectHostPorts(ctx))
+	}()
+}
+
+func CollectHostPorts(ctx context.Context) HostPortsSnapshot {
+	for {
+		now := time.Now()
+		hostPortsCache.Lock()
+		if hostPortsCache.ok && now.Before(hostPortsCache.expires) {
+			snap := cloneHostPortsSnapshot(hostPortsCache.snapshot)
+			hostPortsCache.Unlock()
+			return snap
+		}
+		if loading := hostPortsCache.loading; loading != nil {
+			hostPortsCache.Unlock()
+			select {
+			case <-ctx.Done():
+				return GetHostPortsSnapshot(ctx)
+			case <-loading:
+				continue
+			}
+		}
+		hostPortsCache.loading = make(chan struct{})
+		hostPortsCache.Unlock()
+		break
+	}
 
 	snap := collectHostPorts(ctx)
+	storeHostPortsSnapshot(snap)
+	return snap
+}
 
+func storeHostPortsSnapshot(snap HostPortsSnapshot) {
 	hostPortsCache.Lock()
 	hostPortsCache.snapshot = cloneHostPortsSnapshot(snap)
 	hostPortsCache.expires = time.Now().Add(hostPortsCacheTTL)
 	hostPortsCache.ok = true
+	loading := hostPortsCache.loading
+	hostPortsCache.loading = nil
+	if loading != nil {
+		close(loading)
+	}
 	hostPortsCache.Unlock()
-
-	return snap
 }
 
 func collectHostPorts(ctx context.Context) HostPortsSnapshot {

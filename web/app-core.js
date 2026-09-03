@@ -8,6 +8,7 @@ var state = {
     timerInterval: null,
     summary: null,
     egressData: null,
+    networkIdentityRendered: false,
     traceResult: null,
     tracePoller: null,
     fastRefreshing: false,
@@ -138,7 +139,6 @@ var els = {
     ipv6DetailBackdrop: document.getElementById('ipv6-detail-window-backdrop'),
     ipv6RenewWindow: document.getElementById('ipv6-renew-window'),
     ipv6RenewBackdrop: document.getElementById('ipv6-renew-window-backdrop'),
-    saveSettings: document.getElementById('save-settings'),
     settingNICRealtimeEnabled: document.getElementById('setting-nic-realtime-enabled'),
     settingNICRealtimeIntervalSec: document.getElementById('setting-nic-realtime-interval-sec'),
     settingBackgroundMonitorEnabled: document.getElementById('setting-background-monitor-enabled'),
@@ -169,7 +169,6 @@ var els = {
     notificationSettingsWindow: document.getElementById('notification-settings-window'),
     openNotificationSettings: document.getElementById('open-notification-settings'),
     closeNotificationSettings: document.getElementById('close-notification-settings'),
-    saveNotificationSettings: document.getElementById('save-notification-settings'),
     broadbandNote: document.getElementById('broadband-note'),
     transferNote: document.getElementById('transfer-note'),
     runBroadbandTest: document.getElementById('run-broadband-test'),
@@ -547,11 +546,15 @@ function shortAppName(appid) {
 window.__app.shortAppName = shortAppName;
 
 // renderNetworkInfo used by multiple modules
-function renderNetworkInfo(networkInfo) {
+function renderNetworkInfo(networkInfo, options) {
     networkInfo = networkInfo || {};
-    els.valGw4.textContent = networkInfo.default_ipv4 ? (networkInfo.default_ipv4.gateway || i18n('unknown')) : i18n('unknown');
-    if (els.valPlatformConnectivity) {
-        els.valPlatformConnectivity.textContent = formatPlatformConnectivity(networkInfo);
+    options = options || {};
+    if (options.refreshIdentity !== false) {
+        els.valGw4.textContent = networkInfo.default_ipv4 ? (networkInfo.default_ipv4.gateway || i18n('unknown')) : i18n('unknown');
+        if (els.valPlatformConnectivity) {
+            els.valPlatformConnectivity.textContent = formatPlatformConnectivity(networkInfo);
+        }
+        state.networkIdentityRendered = true;
     }
     var interfaces = Array.isArray(networkInfo.interfaces) ? networkInfo.interfaces : [];
     var escapeHtml = NetwatchShared.escapeHtml;

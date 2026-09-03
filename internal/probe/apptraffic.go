@@ -2,6 +2,7 @@ package probe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -110,57 +111,75 @@ type AppTrafficSnapshot struct {
 }
 
 type appTrafficMetadata struct {
-	bridgeMap    map[string]dockerlzc.BridgeAppInfo
-	appMap       map[string]lzcsdk.AppInfo
-	boxDomain    string
-	localTitles  map[string]string
-	localAppIDs  []string
-	hostAppIDs   map[string]bool
-	hostProjects map[string]bool
+	bridgeMap        map[string]dockerlzc.BridgeAppInfo
+	appMap           map[string]lzcsdk.AppInfo
+	boxDomain        string
+	localTitles      map[string]string
+	localAppIDs      []string
+	hostAppIDs       map[string]bool
+	hostProjects     map[string]bool
+	dockerDiagnostic string
+	dockerStale      bool
 }
+
+const (
+	appTrafficMetadataTTL        = time.Minute
+	appTrafficMetadataRetryDelay = 5 * time.Second
+	appTrafficDockerReadTimeout  = 5 * time.Second
+)
 
 var appTrafficMetadataCache struct {
 	sync.RWMutex
-	at   time.Time
-	data appTrafficMetadata
+	at         time.Time
+	retryAfter time.Time
+	refreshing bool
+	generation uint64
+	data       appTrafficMetadata
 }
 
 func InvalidateAppTrafficMetadataCache() {
 	appTrafficMetadataCache.Lock()
 	appTrafficMetadataCache.at = time.Time{}
-	appTrafficMetadataCache.data = appTrafficMetadata{}
+	appTrafficMetadataCache.generation++
 	appTrafficMetadataCache.Unlock()
 }
 
 func cachedAppTrafficMetadata() appTrafficMetadata {
-	appTrafficMetadataCache.RLock()
-	if time.Since(appTrafficMetadataCache.at) < time.Minute {
+	now := time.Now()
+	appTrafficMetadataCache.Lock()
+	if !appTrafficMetadataCache.at.IsZero() && now.Sub(appTrafficMetadataCache.at) < appTrafficMetadataTTL {
 		metadata := appTrafficMetadataCache.data
-		appTrafficMetadataCache.RUnlock()
+		appTrafficMetadataCache.Unlock()
 		return metadata
 	}
-	appTrafficMetadataCache.RUnlock()
-
-	metadata := appTrafficMetadata{}
-	if dockerlzc.Available() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		metadata.bridgeMap, _ = dockerlzc.BuildBridgeMap(ctx)
-		if containers, err := dockerlzc.ListContainerRuntime(ctx); err == nil {
-			metadata.hostAppIDs = make(map[string]bool)
-			metadata.hostProjects = make(map[string]bool)
-			for _, container := range containers {
-				if !container.Running || container.NetworkMode != "host" {
-					continue
-				}
-				if appID := strings.TrimSpace(container.AppID); appID != "" {
-					metadata.hostAppIDs[appID] = true
-				}
-				if project := strings.TrimSpace(container.Project); project != "" {
-					metadata.hostProjects[project] = true
-				}
-			}
+	if now.Before(appTrafficMetadataCache.retryAfter) {
+		metadata := appTrafficMetadataCache.data
+		appTrafficMetadataCache.Unlock()
+		return metadata
+	}
+	if appTrafficMetadataCache.refreshing {
+		metadata := appTrafficMetadataCache.data
+		if metadata.bridgeMap == nil && metadata.dockerDiagnostic == "" {
+			metadata.dockerDiagnostic = "正在读取 lzc-docker 应用信息"
 		}
+		appTrafficMetadataCache.Unlock()
+		return metadata
+	}
+	appTrafficMetadataCache.refreshing = true
+	generation := appTrafficMetadataCache.generation
+	metadata := appTrafficMetadataCache.data
+	appTrafficMetadataCache.Unlock()
+
+	var dockerErr error
+	if dockerlzc.Available() {
+		ctx, cancel := context.WithTimeout(context.Background(), appTrafficDockerReadTimeout)
+		bridgeMap, containers, err := dockerlzc.BuildBridgeMapWithRuntime(ctx)
 		cancel()
+		dockerErr = err
+		metadata = mergeAppTrafficDockerMetadata(metadata, bridgeMap, containers, err, true)
+	} else {
+		dockerErr = errors.New("docker socket not mounted")
+		metadata = mergeAppTrafficDockerMetadata(metadata, nil, nil, dockerErr, false)
 	}
 	if lzcsdk.Available() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -173,10 +192,53 @@ func cachedAppTrafficMetadata() appTrafficMetadata {
 		metadata.localAppIDs, _ = appmeta.LoadAppIDs()
 	}
 	appTrafficMetadataCache.Lock()
-	appTrafficMetadataCache.at = time.Now()
+	if dockerErr != nil {
+		appTrafficMetadataCache.at = time.Time{}
+		appTrafficMetadataCache.retryAfter = time.Now().Add(appTrafficMetadataRetryDelay)
+	} else {
+		appTrafficMetadataCache.retryAfter = time.Time{}
+		if generation == appTrafficMetadataCache.generation {
+			appTrafficMetadataCache.at = time.Now()
+		} else {
+			appTrafficMetadataCache.at = time.Time{}
+		}
+	}
 	appTrafficMetadataCache.data = metadata
+	appTrafficMetadataCache.refreshing = false
 	appTrafficMetadataCache.Unlock()
 	return metadata
+}
+
+func mergeAppTrafficDockerMetadata(previous appTrafficMetadata, bridgeMap map[string]dockerlzc.BridgeAppInfo, containers []dockerlzc.ContainerRuntimeInfo, err error, socketMounted bool) appTrafficMetadata {
+	if err != nil {
+		previous.dockerStale = previous.bridgeMap != nil
+		if !socketMounted {
+			previous.dockerDiagnostic = "未检测到 lzc-docker socket 挂载"
+		} else if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+			previous.dockerDiagnostic = "读取 lzc-docker 应用拓扑超时"
+		} else {
+			previous.dockerDiagnostic = "lzc-docker API 暂时不可用：" + strings.TrimSpace(err.Error())
+		}
+		return previous
+	}
+
+	previous.bridgeMap = bridgeMap
+	previous.hostAppIDs = make(map[string]bool)
+	previous.hostProjects = make(map[string]bool)
+	for _, container := range containers {
+		if !container.Running || container.NetworkMode != "host" {
+			continue
+		}
+		if appID := strings.TrimSpace(container.AppID); appID != "" {
+			previous.hostAppIDs[appID] = true
+		}
+		if project := strings.TrimSpace(container.Project); project != "" {
+			previous.hostProjects[project] = true
+		}
+	}
+	previous.dockerDiagnostic = ""
+	previous.dockerStale = false
+	return previous
 }
 
 const (
@@ -278,56 +340,6 @@ func isNetwatchApp(info dockerlzc.BridgeAppInfo) bool {
 		return -1
 	}, proj)
 	return compact == "cloudlazycatappnetwatch" || compact == "netwatch"
-}
-
-// whitelistedApps contains app IDs whose network cannot be blocked.
-var whitelistedAppIDs = map[string]bool{
-	"cloud.lazycat.app.photo":       true,
-	"cloud.lazycat.shell.files":     true,
-	"cloud.lazycat.shell.appstore":  true,
-	"cloud.lazycat.app.ai":          true,
-	"cloud.lazycat.developer.tools": true,
-	"cloud.lazycat.app.forward":     true,
-	"cloud.lazycat.totoro":          true,
-	"cloud.lazycat.lightos.entry":   true,
-}
-
-// excludedTrafficAppIDs are system apps excluded from traffic trend collection.
-var excludedTrafficAppIDs = map[string]bool{
-	"cloud.lazycat.shell.settings": true,
-	"cloud.lazycat.shell.backup":   true,
-	"cloud.lazycat.shell.appstore": true,
-	"cloud.lazycat.app.forward":    true,
-}
-
-// isWhitelistedApp checks if the given app ID or title matches the whitelist.
-func isWhitelistedApp(appID, title string) bool {
-	if whitelistedAppIDs[appID] {
-		return true
-	}
-	titleLower := strings.ToLower(title)
-	whitelistTitles := []string{"懒猫相册", "懒猫网盘", "懒猫商店", "ai pod", "懒猫开发者工具", "局域网端口转发"}
-	for _, t := range whitelistTitles {
-		if strings.Contains(titleLower, strings.ToLower(t)) {
-			return true
-		}
-	}
-	return false
-}
-
-// isExcludedApp checks if the given app should be excluded from traffic trends.
-func isExcludedApp(appID, title string) bool {
-	if excludedTrafficAppIDs[appID] {
-		return true
-	}
-	titleLower := strings.ToLower(title)
-	excludedTitles := []string{"系统设置", "system settings", "备份和还原", "backup and restore", "app store"}
-	for _, t := range excludedTitles {
-		if strings.Contains(titleLower, strings.ToLower(t)) {
-			return true
-		}
-	}
-	return false
 }
 
 func appTrafficIdentityKey(item AppBridgeStats) string {
@@ -494,12 +506,36 @@ func collectAppTraffic() AppTrafficSnapshot {
 			snap.Bridges[j].RxBytes+snap.Bridges[j].TxBytes
 	})
 
-	if len(snap.Bridges) == 0 {
+	if dockerNote := appTrafficDockerMetadataNote(metadata); dockerNote != "" {
+		snap.Note = appendAppTrafficNote(snap.Note, dockerNote)
+	}
+	if len(snap.Bridges) == 0 && snap.Note == "" {
 		snap.Note = "未发现 lzc-br-* 网桥"
-	} else if bridgeMap == nil {
-		snap.Note = "未挂载 lzc-docker socket，仅展示网桥级流量。请检查 lzc-build.yml 的 docker.sock bind"
 	}
 	return snap
+}
+
+func appTrafficDockerMetadataNote(metadata appTrafficMetadata) string {
+	diagnostic := strings.TrimSpace(metadata.dockerDiagnostic)
+	if diagnostic == "" {
+		return ""
+	}
+	if metadata.dockerStale {
+		return "lzc-docker 暂时不可用，正在展示最近一次成功读取的应用信息（" + diagnostic + "）"
+	}
+	return diagnostic + "；暂时仅展示网桥级流量"
+}
+
+func appendAppTrafficNote(current, next string) string {
+	current = strings.TrimSpace(current)
+	next = strings.TrimSpace(next)
+	if current == "" {
+		return next
+	}
+	if next == "" || strings.Contains(current, next) {
+		return current
+	}
+	return strings.TrimRight(current, "。；") + "；" + next
 }
 
 func hostTrafficDiagnostic(items []AppBridgeStats) string {
