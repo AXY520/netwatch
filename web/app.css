@@ -21,9 +21,11 @@
             --radius-control: 8px;
             --grid-gap: 1rem;
 
-            --font-ui: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-            --font-number: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-            --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+            /* System-only typography: keep the package small while preferring
+               the newer Windows UI and terminal fonts when available. */
+            --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+            --font-number: var(--font-ui);
+            --font-mono: "Cascadia Mono", "Cascadia Code", "SFMono-Regular", "SF Mono", Menlo, Monaco, "Noto Sans Mono", Consolas, "Liberation Mono", monospace;
             --transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
         }
 
@@ -54,6 +56,17 @@
             text-size-adjust: 100%;
         }
         [hidden] { display: none !important; }
+        .sr-only {
+            position: absolute !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: -1px !important;
+            overflow: hidden !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }
 
         body {
             background-color: var(--bg-color);
@@ -418,9 +431,12 @@
 .ui-icon--network { --ui-icon: url('/icons/ui/network.svg'); }
 .ui-icon--trace { --ui-icon: url('/icons/ui/route.svg'); }
 .ui-icon--route { --ui-icon: url('/icons/ui/route.svg'); }
+.ui-icon--connections { --ui-icon: url('/icons/ui/waypoints.svg'); }
 .ui-icon--help { --ui-icon: url('/icons/ui/info.svg'); }
 .ui-icon--bell { --ui-icon: url('/icons/ui/bell.svg'); }
 .ui-icon--more { --ui-icon: url('/icons/ui/ellipsis.svg'); }
+.ui-icon--pause { --ui-icon: url('/icons/ui/pause.svg'); }
+.ui-icon--play { --ui-icon: url('/icons/ui/play.svg'); }
 
 .btn-with-icon {
     display: inline-flex;
@@ -1371,9 +1387,15 @@ button.icon-button,
         .host-port-sort {
             font-size: 0.74rem;
         }
+        .host-port-search {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            height: 38px;
+        }
         .host-port-search input {
             width: 7.5rem;
-            height: 2rem;
+            height: 38px;
             padding: 0 0.6rem;
             border: 1px solid var(--border-subtle);
             background: rgba(255,255,255,0.025);
@@ -2788,7 +2810,9 @@ button.icon-button,
 
         .placeholder {
             color: var(--text-muted);
-            font-style: italic;
+            /* CJK system fonts generally have no real italic face; browsers
+               synthesize a slanted glyph that looks especially poor on Windows. */
+            font-style: normal;
         }
 
         #loading-overlay {
@@ -4466,12 +4490,22 @@ table, td, th, .latency, #egress-status, #website-status, #nat-status {
     font-variant-numeric: tabular-nums;
 }
 
-.mono,
+.mono {
+    font-family: var(--font-mono);
+}
+
 .latency,
 #egress-status,
 #website-status,
 #nat-status {
-    font-family: var(--font-mono);
+    font-family: var(--font-number);
+}
+
+/* Tracking intended for terse English labels makes Chinese system glyphs look
+   fragmented. Translated Chinese copy uses its native spacing; fixed ASCII
+   labels such as NETWATCH, LIVE and interface state chips keep their tracking. */
+html:lang(zh-CN) [data-i18n] {
+    letter-spacing: normal;
 }
 
 .button-link,
@@ -5121,9 +5155,9 @@ button.icon-button,
     --radius-card: 12px;
     --radius-control: 8px;
     --grid-gap: 1rem;
-    --font-ui: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, -apple-system, sans-serif;
-    --font-number: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-    --font-mono: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+    --font-number: var(--font-ui);
+    --font-mono: "Cascadia Mono", "Cascadia Code", "SFMono-Regular", "SF Mono", Menlo, Monaco, "Noto Sans Mono", Consolas, "Liberation Mono", monospace;
 }
 
 [data-theme="dark"] {
@@ -6208,8 +6242,8 @@ input[type="radio"] {
     .connectivity-table-fixed col.col-status { width: 25%; }
     .connectivity-table-fixed col.col-latency { width: 31%; }
     .connectivity-table-fixed tbody tr { height: 38px; }
-    .connectivity-table-fixed td.col-target { padding-left: 4px; }
-    .connectivity-table-fixed thead th.col-target { padding-left: 4px; }
+    .connectivity-table-fixed td.col-target { padding-left: 8px; }
+    .connectivity-table-fixed thead th.col-target { padding-left: 8px; }
     .connectivity-table-fixed .target-info { gap: 4px; }
     .connectivity-table-fixed .site-icon { width: 15px; height: 15px; }
     .connectivity-table-fixed .target-info span { font-size: 11px; }
@@ -6312,6 +6346,12 @@ input[type="radio"] {
     #host-ports-section:not(.collapsed) #host-ports-status { display: none; }
     #host-ports-section:not(.collapsed) .host-port-search { min-width: 0; }
     #host-ports-section:not(.collapsed) .host-port-search input { width: 100%; height: 38px; }
+    #host-ports-section:not(.collapsed) .title-tools .icon-button {
+        width: 38px;
+        min-width: 38px;
+        height: 38px;
+        min-height: 38px;
+    }
     .host-port-group-list {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px;
@@ -6334,7 +6374,7 @@ input[type="radio"] {
         flex-direction: row;
         align-items: center;
         min-height: 38px;
-        padding-right: 128px;
+        padding-right: 44px;
     }
     #settings-window > .window-head .window-actions,
     #notification-settings-window > .window-head .window-actions {
@@ -6398,4 +6438,334 @@ input[type="radio"] {
     .card-title .title-tools .placeholder,
     .card-title .observation-status,
     #app-traffic-status { max-width: 72px; }
+}
+
+/* Mobile speed-test headers keep every action on the same 38px baseline.
+   History collapses to its icon so close remains the top-right action without
+   forcing Start and History onto a second row. */
+@media (max-width: 900px) {
+    #broadband-window > .window-head,
+    #transfer-window > .window-head {
+        flex-direction: row;
+        align-items: center;
+        min-height: 38px;
+        gap: 6px;
+        padding-right: 0;
+    }
+
+    #broadband-window > .window-head > :first-child,
+    #transfer-window > .window-head > :first-child {
+        min-width: 0;
+    }
+
+    #broadband-window > .window-head .window-title,
+    #transfer-window > .window-head .window-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    #broadband-window > .window-head .window-actions,
+    #transfer-window > .window-head .window-actions {
+        position: static;
+        display: flex !important;
+        align-items: center;
+        grid-template-columns: none !important;
+        width: auto !important;
+        gap: 6px;
+    }
+
+    #broadband-window > .window-head .window-actions > button,
+    #transfer-window > .window-head .window-actions > button {
+        align-self: center;
+        height: 38px !important;
+        min-height: 38px !important;
+        max-height: 38px !important;
+        margin: 0;
+    }
+
+    #open-broadband-history,
+    #open-transfer-history {
+        width: 38px !important;
+        min-width: 38px !important;
+        max-width: 38px !important;
+        padding: 0 !important;
+    }
+
+    #open-broadband-history > :not(.ui-icon),
+    #open-transfer-history > :not(.ui-icon) {
+        display: none;
+    }
+
+    #run-broadband-test,
+    #run-transfer-test {
+        width: auto !important;
+        min-width: 0;
+        padding: 0 10px !important;
+    }
+
+    #close-broadband-window,
+    #close-transfer-window {
+        position: static !important;
+    }
+}
+
+/* Route-trace text action and close action share the same top-aligned 38px row. */
+#trace-window > .window-head {
+    align-items: flex-start;
+}
+#trace-window > .window-head:has(#trace-window-stop:not([hidden])) {
+    padding-right: 8rem;
+}
+#trace-window > .window-head .window-actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex !important;
+    align-items: center;
+    width: auto !important;
+    gap: .5rem;
+}
+#trace-window > .window-head #trace-window-stop {
+    align-self: center;
+    height: 38px !important;
+    min-height: 38px !important;
+    max-height: 38px !important;
+    margin: 0;
+}
+#trace-window > .window-head #close-trace-window {
+    position: static !important;
+}
+
+/* Application connection details: an on-demand, non-persistent snapshot. */
+#app-connections-backdrop { z-index: 1290; }
+#app-connections-window {
+    --app-connection-inbound-color: #2563eb;
+    --app-connection-inbound-bg: #eaf2ff;
+    --app-connection-inbound-hover: #dce9ff;
+    --app-connection-outbound-color: #c2410c;
+    --app-connection-outbound-bg: #fff1e8;
+    --app-connection-outbound-hover: #ffe5d3;
+    --app-connection-unknown-color: var(--text-muted);
+    --app-connection-unknown-bg: color-mix(in srgb, var(--text-muted) 7%, transparent);
+    --app-connection-unknown-hover: color-mix(in srgb, var(--text-muted) 12%, transparent);
+    z-index: 1300;
+    width: min(920px, calc(100vw - 2rem));
+    max-height: min(760px, calc(100vh - 2rem));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+[data-theme="dark"] #app-connections-window {
+    --app-connection-inbound-color: #8ab4ff;
+    --app-connection-inbound-bg: #25334d;
+    --app-connection-inbound-hover: #2d4266;
+    --app-connection-outbound-color: #ffb86b;
+    --app-connection-outbound-bg: #493526;
+    --app-connection-outbound-hover: #5a402a;
+}
+.app-connections-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2rem;
+    margin: 0.1rem 0 0.55rem;
+}
+.app-connections-live {
+    flex: none;
+    padding: 0.16rem 0.48rem;
+    border: 1px solid color-mix(in srgb, var(--accent-green) 30%, var(--border-color));
+    border-radius: 999px;
+    color: var(--accent-green);
+    background: color-mix(in srgb, var(--accent-green) 8%, transparent);
+    font-size: 0.68rem;
+}
+.app-connections-live.is-paused {
+    border-color: var(--border-color);
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+.app-connections-table {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--card-bg) 72%, transparent);
+    scrollbar-width: none;
+}
+.app-connections-table::-webkit-scrollbar { display: none; }
+.app-connections-row {
+    display: grid;
+    grid-template-columns: 72px minmax(155px, 1fr) minmax(210px, 1.35fr) 108px minmax(130px, 0.9fr);
+    gap: 0.7rem;
+    align-items: center;
+    min-height: 3.35rem;
+    padding: 0.48rem 0.7rem;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 0.75rem;
+}
+.app-connections-row.is-inbound {
+    --app-connection-row-bg: var(--app-connection-inbound-bg);
+    background: var(--app-connection-row-bg);
+    box-shadow: inset 3px 0 var(--app-connection-inbound-color);
+}
+.app-connections-row.is-outbound {
+    --app-connection-row-bg: var(--app-connection-outbound-bg);
+    background: var(--app-connection-row-bg);
+    box-shadow: inset 3px 0 var(--app-connection-outbound-color);
+}
+.app-connections-row.is-unknown {
+    --app-connection-row-bg: var(--app-connection-unknown-bg);
+    background: var(--app-connection-row-bg);
+    box-shadow: inset 3px 0 var(--app-connection-unknown-color);
+}
+.app-connections-row.is-inbound:hover {
+    background: var(--app-connection-inbound-hover);
+}
+.app-connections-row.is-outbound:hover {
+    background: var(--app-connection-outbound-hover);
+}
+.app-connections-row.is-unknown:hover {
+    background: var(--app-connection-unknown-hover);
+}
+.app-connections-row:last-child { border-bottom: 0; }
+.app-connections-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    min-height: 2.2rem;
+    color: var(--text-muted);
+    background: var(--card-bg);
+    font-size: 0.68rem;
+    font-weight: 600;
+}
+.app-connection-protocol {
+    display: inline-flex;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--app-connection-inbound-color);
+    font-family: var(--font-number);
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.app-connection-protocol > span { overflow-wrap: anywhere; word-break: break-word; }
+.app-connections-row.is-outbound .app-connection-protocol { color: var(--app-connection-outbound-color); }
+.app-connections-row.is-unknown .app-connection-protocol { color: var(--app-connection-unknown-color); }
+.app-connection-direction {
+    padding: 0.08rem 0.34rem;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    font-size: 0.6rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+.app-connection-direction.is-inbound {
+    color: var(--app-connection-inbound-color);
+    background: var(--app-connection-inbound-bg);
+}
+.app-connection-direction.is-outbound {
+    color: var(--app-connection-outbound-color);
+    background: var(--app-connection-outbound-bg);
+}
+.app-connection-direction.is-unknown {
+    color: var(--app-connection-unknown-color);
+    background: var(--app-connection-unknown-bg);
+}
+.app-connection-endpoint {
+    min-width: 0;
+    color: var(--text-main);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.app-connection-remote {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.12rem;
+}
+.app-connection-remote small,
+.app-connection-service small {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 0.64rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.app-connection-domain {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.32rem;
+}
+.app-connection-domain > span {
+    flex: none;
+    padding: 0.04rem 0.24rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+.app-connection-domain strong {
+    min-width: 0;
+    color: var(--text-main);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.app-connection-state {
+    width: max-content;
+    max-width: 100%;
+    padding: 0.14rem 0.42rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-family: var(--font-number);
+    font-size: 0.64rem;
+    overflow-wrap: anywhere;
+    text-align: center;
+    word-break: break-word;
+}
+.app-connection-state.is-active {
+    border-color: color-mix(in srgb, var(--accent-green) 30%, var(--border-color));
+    color: var(--accent-green);
+    background: color-mix(in srgb, var(--accent-green) 7%, transparent);
+}
+.app-connection-service { display: flex; min-width: 0; flex-direction: column; gap: 0.1rem; }
+.app-connection-service strong { font-weight: 600; overflow-wrap: anywhere; word-break: break-word; }
+.app-connections-empty {
+    padding: 2.4rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-align: center;
+}
+
+@media (max-width: 820px) {
+    #app-connections-window {
+        width: calc(100vw - 1rem);
+        max-height: calc(100vh - 1rem);
+        padding: 0.8rem;
+    }
+    .app-connections-toolbar { margin-bottom: 0.4rem; }
+    .app-connections-head { display: none; }
+    .app-connections-table { border: 0; background: transparent; }
+    .app-connections-row:not(.app-connections-head) {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.32rem 0.65rem;
+        min-height: 0;
+        margin-bottom: 0.5rem;
+        padding: 0.65rem 0.7rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 9px;
+        background: var(--app-connection-row-bg, color-mix(in srgb, var(--card-bg) 76%, transparent));
+    }
+    .app-connection-protocol { grid-column: 1; grid-row: 1; }
+    .app-connection-state { grid-column: 2; grid-row: 1; justify-self: end; }
+    .app-connection-remote { grid-column: 1 / -1; grid-row: 2; padding: 0.14rem 0; }
+    .app-connection-local { grid-column: 1 / -1; grid-row: 3; color: var(--text-muted); font-size: 0.67rem; }
+    .app-connection-service { grid-column: 1 / -1; grid-row: 4; flex-flow: row wrap; gap: 0.2rem 0.35rem; font-size: 0.69rem; }
+    .app-connection-service small { font-size: 0.62rem; }
 }

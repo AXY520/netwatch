@@ -91,6 +91,9 @@ func (s *Service) ApplyHostDNS(ctx context.Context, req HostDNSApplyRequest) Hos
 		}
 	}()
 
+	// User-triggered mutation: validate against current host state rather than
+	// an older startup/window snapshot.
+	invalidateHostNetworkDeviceInventoryCache()
 	cands, err := listHostDNSCandidates(ctx)
 	if err != nil {
 		return HostDNSOpResult{Error: err.Error()}

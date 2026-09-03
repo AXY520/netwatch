@@ -35,6 +35,25 @@ func (h *Handler) handleAppTrafficHistory(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"app_id": appID, "instance_id": instanceID, "samples": samples})
 }
 
+func (h *Handler) handleAppTrafficConnections(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	appID := strings.TrimSpace(r.URL.Query().Get("app_id"))
+	instanceID := strings.TrimSpace(r.URL.Query().Get("instance_id"))
+	if appID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app_id is required"})
+		return
+	}
+	snapshot, err := h.service.AppInstanceConnections(r.Context(), appID, instanceID, clampQueryLimit(r.URL.Query().Get("limit"), 300, 300))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
 func (h *Handler) handleAppTrafficLimit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

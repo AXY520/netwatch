@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,24 +224,35 @@ func WatchEvents(ctx context.Context, onEvent func(Event)) error {
 // inspect data. This is intentionally kept independent from Lazycat app APIs:
 // labels are enough to group most lzc-docker containers by app/project.
 type ContainerRuntimeInfo struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Image         string            `json:"image,omitempty"`
-	AppID         string            `json:"app_id,omitempty"`
-	InstanceID    string            `json:"instance_id,omitempty"`
-	UserID        string            `json:"user_id,omitempty"`
-	MultiInstance bool              `json:"multi_instance,omitempty"`
-	Project       string            `json:"project,omitempty"`
-	State         string            `json:"state,omitempty"`
-	Status        string            `json:"status,omitempty"`
-	Created       int64             `json:"created,omitempty"`
-	StartedAt     int64             `json:"started_at,omitempty"`
-	NetworkMode   string            `json:"network_mode,omitempty"`
-	CgroupPath    string            `json:"cgroup_path,omitempty"`
-	Networks      []string          `json:"networks,omitempty"`
-	PID           int               `json:"pid,omitempty"`
-	Running       bool              `json:"running,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
+	ID               string                     `json:"id"`
+	Name             string                     `json:"name"`
+	Image            string                     `json:"image,omitempty"`
+	AppID            string                     `json:"app_id,omitempty"`
+	InstanceID       string                     `json:"instance_id,omitempty"`
+	UserID           string                     `json:"user_id,omitempty"`
+	MultiInstance    bool                       `json:"multi_instance,omitempty"`
+	Project          string                     `json:"project,omitempty"`
+	State            string                     `json:"state,omitempty"`
+	Status           string                     `json:"status,omitempty"`
+	Created          int64                      `json:"created,omitempty"`
+	StartedAt        int64                      `json:"started_at,omitempty"`
+	NetworkMode      string                     `json:"network_mode,omitempty"`
+	CgroupPath       string                     `json:"cgroup_path,omitempty"`
+	Networks         []string                   `json:"networks,omitempty"`
+	NetworkEndpoints []ContainerNetworkEndpoint `json:"network_endpoints,omitempty"`
+	PID              int                        `json:"pid,omitempty"`
+	Running          bool                       `json:"running,omitempty"`
+	Labels           map[string]string          `json:"labels,omitempty"`
+}
+
+// ContainerNetworkEndpoint is local Docker metadata used to associate a
+// connection peer with an internal application DNS name without PTR lookups.
+type ContainerNetworkEndpoint struct {
+	Network  string   `json:"network"`
+	IPv4     string   `json:"ipv4,omitempty"`
+	IPv6     string   `json:"ipv6,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
+	DNSNames []string `json:"dns_names,omitempty"`
 }
 
 // BuildBridgeMap returns a "host bridge name → app info" map by joining the
@@ -258,13 +270,25 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	}
 	bridgeMapCache.Unlock()
 
+	bridgeMap, _, err := BuildBridgeMapWithRuntime(ctx)
+	return bridgeMap, err
+}
+
+// BuildBridgeMapWithRuntime returns one coherent Docker topology snapshot.
+// Callers that need both bridge metadata and host-network containers should
+// use this instead of running BuildBridgeMap and ListContainerRuntime back to
+// back, which used to inspect every container twice under one short timeout.
+func BuildBridgeMapWithRuntime(ctx context.Context) (map[string]BridgeAppInfo, []ContainerRuntimeInfo, error) {
+	if !Available() {
+		return nil, nil, errors.New("docker socket not mounted")
+	}
 	networks, err := listNetworks(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list networks: %w", err)
+		return nil, nil, fmt.Errorf("list networks: %w", err)
 	}
 	containers, err := ListContainerRuntime(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
+		return nil, nil, fmt.Errorf("list containers: %w", err)
 	}
 
 	out := buildBridgeMapFromInventory(networks, containers)
@@ -272,7 +296,7 @@ func BuildBridgeMap(ctx context.Context) (map[string]BridgeAppInfo, error) {
 	bridgeMapCache.at = time.Now()
 	bridgeMapCache.data = cloneBridgeMap(out)
 	bridgeMapCache.Unlock()
-	return out, nil
+	return out, containers, nil
 }
 
 func buildBridgeMapFromInventory(networks []networkSummary, containers []ContainerRuntimeInfo) map[string]BridgeAppInfo {
@@ -519,9 +543,7 @@ func ListContainerRuntime(ctx context.Context) ([]ContainerRuntimeInfo, error) {
 				info.Project = inspect.Config.Labels["com.docker.compose.project"]
 			}
 			info.NetworkMode = inspect.HostConfig.NetworkMode
-			for network := range inspect.NetworkSettings.Networks {
-				info.Networks = append(info.Networks, network)
-			}
+			info.Networks, info.NetworkEndpoints = containerRuntimeNetworkEndpoints(inspect.NetworkSettings.Networks)
 			info.PID = inspect.State.Pid
 			info.CgroupPath = inspect.State.CgroupPath
 			info.Running = inspect.State.Running
@@ -626,8 +648,35 @@ type containerInspect struct {
 		NetworkMode string `json:"NetworkMode"`
 	} `json:"HostConfig"`
 	NetworkSettings struct {
-		Networks map[string]json.RawMessage `json:"Networks"`
+		Networks map[string]containerNetworkEndpoint `json:"Networks"`
 	} `json:"NetworkSettings"`
+}
+
+type containerNetworkEndpoint struct {
+	IPAddress         string   `json:"IPAddress"`
+	GlobalIPv6Address string   `json:"GlobalIPv6Address"`
+	Aliases           []string `json:"Aliases"`
+	DNSNames          []string `json:"DNSNames"`
+}
+
+func containerRuntimeNetworkEndpoints(networks map[string]containerNetworkEndpoint) ([]string, []ContainerNetworkEndpoint) {
+	names := make([]string, 0, len(networks))
+	for network := range networks {
+		names = append(names, network)
+	}
+	sort.Strings(names)
+	endpoints := make([]ContainerNetworkEndpoint, 0, len(names))
+	for _, network := range names {
+		endpoint := networks[network]
+		endpoints = append(endpoints, ContainerNetworkEndpoint{
+			Network:  network,
+			IPv4:     endpoint.IPAddress,
+			IPv6:     endpoint.GlobalIPv6Address,
+			Aliases:  append([]string(nil), endpoint.Aliases...),
+			DNSNames: append([]string(nil), endpoint.DNSNames...),
+		})
+	}
+	return names, endpoints
 }
 
 type networkSummary struct {

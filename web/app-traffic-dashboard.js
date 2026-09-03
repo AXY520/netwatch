@@ -20,6 +20,14 @@ function initAppTraffic() {
     var activeMenuAppID = '';
     var activeLimitAppID = '';
     var activeProxyAppID = '';
+    var activeConnectionsAppID = '';
+    var activeConnectionsItem = null;
+    var connectionsTimer = null;
+    var connectionsLoading = false;
+    var connectionsReloadPending = false;
+    var connectionsGeneration = 0;
+    var connectionsAutoRefresh = true;
+    var lastConnectionsRenderSignature = '';
     var limitWindow = document.getElementById('app-traffic-limit-window');
     var limitBackdrop = document.getElementById('app-traffic-limit-backdrop');
     var limitTitle = document.getElementById('app-traffic-limit-title');
@@ -37,6 +45,15 @@ function initAppTraffic() {
     var proxyHost = document.getElementById('app-traffic-proxy-host');
     var proxyPort = document.getElementById('app-traffic-proxy-port');
     var proxyError = document.getElementById('app-traffic-proxy-error');
+    var connectionsWindow = document.getElementById('app-connections-window');
+    var connectionsBackdrop = document.getElementById('app-connections-backdrop');
+    var connectionsTitle = document.getElementById('app-connections-title');
+    var connectionsInstance = document.getElementById('app-connections-instance');
+    var connectionsStatus = document.getElementById('app-connections-status');
+    var connectionsNote = document.getElementById('app-connections-note');
+    var connectionsBody = document.getElementById('app-connections-body');
+    var connectionsRefreshToggle = document.getElementById('toggle-app-connections-refresh');
+    var connectionsLive = document.getElementById('app-connections-live');
     var trafficLoading = false;
     // Keep failed icon URLs out of subsequent renders so a missing/broken icon
     // is not fetched again on every counter sample. A later URL change (or
@@ -383,6 +400,175 @@ function initAppTraffic() {
         setTimeout(function () { if (proxyHost) proxyHost.focus(); }, 0);
     };
 
+    var appConnectionEndpoint = function (address, port) {
+        address = String(address || '');
+        var shown = address.indexOf(':') >= 0 ? '[' + address + ']' : address;
+        return NetwatchShared.escapeHtml(shown || '—') + ':' + NetwatchShared.escapeHtml(String(Number(port) || 0));
+    };
+    var appConnectionDirection = function (direction) {
+        if (direction === 'inbound') return i18n('app_connections_inbound');
+        if (direction === 'outbound') return i18n('app_connections_outbound');
+        return i18n('app_connections_direction_unknown');
+    };
+    var renderAppConnections = function (data) {
+        var rows = data && Array.isArray(data.connections) ? data.connections : [];
+        if (connectionsStatus) {
+            connectionsStatus.textContent = (data.generated_at || '—') + ' · ' + rows.length + ' ' + i18n('app_connections_count') + (data.truncated ? ' · ' + i18n('app_connections_truncated') : '');
+        }
+        if (connectionsNote) {
+            connectionsNote.textContent = data.note || '';
+            connectionsNote.hidden = !data.note;
+        }
+        if (!connectionsBody) return;
+        var renderSignature = JSON.stringify([
+            Boolean(data.supported), Boolean(data.truncated), String(data.note || ''), rows
+        ]);
+        if (renderSignature === lastConnectionsRenderSignature) return;
+        lastConnectionsRenderSignature = renderSignature;
+        if (!data.supported) {
+            connectionsBody.innerHTML = '<div class="app-connections-empty">' + NetwatchShared.escapeHtml(data.note || i18n('app_connections_unavailable')) + '</div>';
+            return;
+        }
+        if (!rows.length) {
+            connectionsBody.innerHTML = '<div class="app-connections-empty">' + i18n('app_connections_empty') + '</div>';
+            return;
+        }
+        connectionsBody.innerHTML = rows.map(function (item) {
+            var active = item.state === 'ESTABLISHED' || item.state === 'ACTIVE';
+            var direction = ['inbound', 'outbound'].indexOf(item.direction) >= 0 ? item.direction : 'unknown';
+            var service = item.container_name || item.project || '—';
+            var process = item.process_name || '';
+            if (process && item.process_pid) process += ' · PID ' + item.process_pid;
+            var remoteHost = item.remote_host ? '<small class="app-connection-domain"><span>' + NetwatchShared.escapeHtml(i18n('app_connections_domain')) + '</span><strong title="' + NetwatchShared.escapeHtml(item.remote_host) + '">' + NetwatchShared.escapeHtml(item.remote_host) + '</strong></small>' : '';
+            return '<div class="app-connections-row is-' + direction + '" role="row">' +
+                '<span class="app-connection-protocol" role="cell"><span>' + NetwatchShared.escapeHtml(String(item.protocol || '').toUpperCase()) + ' · ' + NetwatchShared.escapeHtml(item.ip_version || '') + '</span><small class="app-connection-direction is-' + direction + '">' + NetwatchShared.escapeHtml(appConnectionDirection(direction)) + '</small></span>' +
+                '<span class="app-connection-endpoint app-connection-local" role="cell" title="' + appConnectionEndpoint(item.local_address, item.local_port) + '">' + appConnectionEndpoint(item.local_address, item.local_port) + '</span>' +
+                '<span class="app-connection-remote" role="cell"><span class="app-connection-endpoint" title="' + appConnectionEndpoint(item.remote_address, item.remote_port) + '">' + appConnectionEndpoint(item.remote_address, item.remote_port) + '</span>' + remoteHost + '</span>' +
+                '<span class="app-connection-state' + (active ? ' is-active' : '') + '" role="cell" title="' + NetwatchShared.escapeHtml(item.state || '—') + '">' + NetwatchShared.escapeHtml(item.state || '—') + '</span>' +
+                '<span class="app-connection-service" role="cell"><strong title="' + NetwatchShared.escapeHtml(service) + '">' + NetwatchShared.escapeHtml(service) + '</strong>' + (process ? '<small title="' + NetwatchShared.escapeHtml(process) + '">' + NetwatchShared.escapeHtml(process) + '</small>' : '') + '</span>' +
+                '</div>';
+        }).join('');
+    };
+    var stopAppConnectionsTimer = function () {
+        if (!connectionsTimer) return;
+        clearInterval(connectionsTimer);
+        connectionsTimer = null;
+    };
+    var syncAppConnectionsRefreshState = function () {
+        var labelKey = connectionsAutoRefresh ? 'app_connections_pause_refresh' : 'app_connections_resume_refresh';
+        if (connectionsRefreshToggle) {
+            connectionsRefreshToggle.setAttribute('title', i18n(labelKey));
+            connectionsRefreshToggle.setAttribute('aria-label', i18n(labelKey));
+            connectionsRefreshToggle.setAttribute('aria-pressed', connectionsAutoRefresh ? 'false' : 'true');
+            connectionsRefreshToggle.setAttribute('data-i18n-title', labelKey);
+            connectionsRefreshToggle.setAttribute('data-i18n-aria-label', labelKey);
+            var icon = connectionsRefreshToggle.querySelector('.ui-icon');
+            if (icon) {
+                icon.classList.toggle('ui-icon--pause', connectionsAutoRefresh);
+                icon.classList.toggle('ui-icon--play', !connectionsAutoRefresh);
+            }
+        }
+        if (connectionsLive) {
+            var liveKey = connectionsAutoRefresh ? 'app_connections_live' : 'app_connections_paused';
+            connectionsLive.textContent = i18n(liveKey);
+            connectionsLive.setAttribute('data-i18n', liveKey);
+            connectionsLive.classList.toggle('is-paused', !connectionsAutoRefresh);
+        }
+    };
+    var startAppConnectionsTimer = function () {
+        stopAppConnectionsTimer();
+        if (!connectionsAutoRefresh || !activeConnectionsItem) return;
+        connectionsTimer = setInterval(function () {
+            if (!document.hidden) loadAppConnections(false);
+        }, 3000);
+    };
+    var setAppConnectionsAutoRefresh = function (enabled) {
+        enabled = Boolean(enabled);
+        if (connectionsAutoRefresh === enabled) {
+            syncAppConnectionsRefreshState();
+            return;
+        }
+        connectionsAutoRefresh = enabled;
+        if (enabled) {
+            startAppConnectionsTimer();
+            loadAppConnections(false);
+        } else {
+            stopAppConnectionsTimer();
+            connectionsReloadPending = false;
+            // Freeze the visible snapshot even if an earlier request is still in flight.
+            connectionsGeneration++;
+        }
+        syncAppConnectionsRefreshState();
+    };
+    var loadAppConnections = async function (manual) {
+        if (!activeConnectionsItem) return;
+        if (connectionsLoading) {
+            connectionsReloadPending = true;
+            return;
+        }
+        connectionsLoading = true;
+        var generation = connectionsGeneration;
+        if (connectionsStatus && manual) connectionsStatus.textContent = i18n('app_connections_loading');
+        try {
+            var data = await netwatchGet('/api/v1/network/app-traffic/connections', {
+                app_id: activeConnectionsItem.app_id,
+                instance_id: appTrafficInstanceID(activeConnectionsItem),
+                limit: 300
+            });
+            if (generation === connectionsGeneration && activeConnectionsAppID) renderAppConnections(data || {});
+        } catch (error) {
+            if (generation === connectionsGeneration && activeConnectionsAppID) {
+                lastConnectionsRenderSignature = '';
+                if (connectionsStatus) connectionsStatus.textContent = i18n('app_connections_failed');
+                if (connectionsNote) {
+                    connectionsNote.textContent = error.message || i18n('app_connections_failed');
+                    connectionsNote.hidden = false;
+                }
+                if (connectionsBody) connectionsBody.innerHTML = '<div class="app-connections-empty">' + NetwatchShared.escapeHtml(error.message || i18n('app_connections_failed')) + '</div>';
+            }
+        } finally {
+            connectionsLoading = false;
+            if (connectionsReloadPending && activeConnectionsItem) {
+                connectionsReloadPending = false;
+                loadAppConnections(false);
+            }
+        }
+    };
+    var closeAppConnections = function () {
+        stopAppConnectionsTimer();
+        connectionsGeneration++;
+        connectionsAutoRefresh = true;
+        connectionsReloadPending = false;
+        lastConnectionsRenderSignature = '';
+        activeConnectionsAppID = '';
+        activeConnectionsItem = null;
+        if (connectionsWindow) connectionsWindow.classList.remove('active');
+        if (connectionsBackdrop) connectionsBackdrop.classList.remove('active');
+        NetwatchShared.unlockModalScroll();
+    };
+    var openAppConnections = function (item) {
+        if (!item || !item.app_id || !connectionsWindow) return;
+        activeMenuAppID = '';
+        activeConnectionsItem = item;
+        activeConnectionsAppID = appTrafficInstanceID(item);
+        connectionsGeneration++;
+        connectionsAutoRefresh = true;
+        connectionsReloadPending = false;
+        lastConnectionsRenderSignature = '';
+        updateTrafficMenus();
+        if (connectionsTitle) connectionsTitle.textContent = i18n('app_connections_title') + ' · ' + appTrafficDisplayName(item);
+        if (connectionsInstance) connectionsInstance.textContent = appTrafficInstanceCaption(item);
+        if (connectionsStatus) connectionsStatus.textContent = i18n('app_connections_loading');
+        if (connectionsNote) connectionsNote.hidden = true;
+        if (connectionsBody) connectionsBody.innerHTML = '<div class="app-connections-empty">' + i18n('app_connections_loading') + '</div>';
+        if (connectionsBackdrop) connectionsBackdrop.classList.add('active');
+        connectionsWindow.classList.add('active');
+        NetwatchShared.lockModalScroll();
+        syncAppConnectionsRefreshState();
+        loadAppConnections(true);
+        startAppConnectionsTimer();
+    };
+
     tbody.addEventListener('click', async function (e) {
         var action = e.target.closest('[data-action]');
         if (!action) return;
@@ -392,6 +578,8 @@ function initAppTraffic() {
         if (action.dataset.action === 'traffic-more') {
             activeMenuAppID = activeMenuAppID === instanceID ? '' : instanceID;
             updateTrafficMenus();
+        } else if (action.dataset.action === 'traffic-connections') {
+            openAppConnections(appForID(instanceID));
         } else if (action.dataset.action === 'traffic-limit') {
 			openLimit(appForID(instanceID));
 		} else if (action.dataset.action === 'traffic-network') {
@@ -515,6 +703,12 @@ function initAppTraffic() {
     var closeProxyButton = document.getElementById('close-app-traffic-proxy-window');
     if (closeProxyButton) closeProxyButton.addEventListener('click', closeProxy);
     if (proxyBackdrop) proxyBackdrop.addEventListener('click', closeProxy);
+    var closeConnectionsButton = document.getElementById('close-app-connections-window');
+    if (closeConnectionsButton) closeConnectionsButton.addEventListener('click', closeAppConnections);
+    if (connectionsBackdrop) connectionsBackdrop.addEventListener('click', closeAppConnections);
+    if (connectionsRefreshToggle) connectionsRefreshToggle.addEventListener('click', function () {
+        setAppConnectionsAutoRefresh(!connectionsAutoRefresh);
+    });
     [proxyHost, proxyPort].forEach(function (input) {
         if (input) input.addEventListener('input', function () {
             input.setAttribute('aria-invalid', 'false');
@@ -536,6 +730,7 @@ function initAppTraffic() {
         if (e.key !== 'Escape') return;
         if (limitWindow && limitWindow.classList.contains('active')) closeLimit();
         if (proxyWindow && proxyWindow.classList.contains('active')) closeProxy();
+        if (connectionsWindow && connectionsWindow.classList.contains('active')) closeAppConnections();
     });
 
     sortButtons.forEach(function (button) {
@@ -635,12 +830,18 @@ function appTrafficControlStatusMarkup(item) {
             '<span class="app-control-status-label"><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(limitStatusLabel) + '</span></span>' +
             '<span class="app-control-status-values">' + NetwatchShared.escapeHtml(limitValues.join(' · ')) + '</span></span>');
     }
-    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
-    if (blocked) {
+    var desiredBlocked = policy.desired && policy.desired.internet_allowed === false;
+    if (desiredBlocked) {
         var blockedStatusLabel = appTrafficCompactStatusLabel('app_traffic_internet_disabled_status', '禁用外网', 'Internet blocked');
-        parts.push('<span class="app-control-status app-control-status-blocked" title="' + NetwatchShared.escapeHtml(i18n('app_traffic_internet_disabled')) + '">' +
+        var internetInSync = policy.internet_in_sync !== false && policy.internet_state === 'blocked';
+        var blockedTitle = internetInSync ? i18n('app_traffic_internet_disabled') : (policy.diagnostic || i18n('app_traffic_internet_disabled'));
+        parts.push('<span class="app-control-status app-control-status-blocked' + (internetInSync ? '' : ' app-control-status--drifted') + '" title="' + NetwatchShared.escapeHtml(blockedTitle) + '">' +
             '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(blockedStatusLabel) + '</span></span></span>');
-	}
+	} else if (policy.internet_state === 'partial' && capabilities.internet_control === true) {
+        var internetDriftLabel = appTrafficCompactStatusLabel('app_traffic_internet_policy_drifted', '外网策略异常', 'Internet policy drift');
+        parts.push('<span class="app-control-status app-control-status--drifted" title="' + NetwatchShared.escapeHtml(policy.diagnostic || internetDriftLabel) + '">' +
+            '<span class="app-control-status-label"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span class="app-control-status-label-text">' + NetwatchShared.escapeHtml(internetDriftLabel) + '</span></span></span>');
+    }
     var proxyEnabled = policy.desired && policy.desired.proxy_enabled === true;
     if (proxyEnabled) {
         var proxyPaused = policy.proxy_state === 'paused';
@@ -674,7 +875,7 @@ function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var limitAllowed = capabilities.upload_limit === true && capabilities.download_limit === true;
     var internetAllowed = capabilities.internet_control === true;
     var proxyAllowed = capabilities.proxy_control === true;
-    var blocked = policy.internet_state === 'blocked' || policy.internet_state === 'partial';
+    var blocked = policy.desired && policy.desired.internet_allowed === false;
     var proxyEnabled = policy.desired && policy.desired.proxy_enabled === true;
     var hostTarget = appTrafficHasHostTarget(item);
     var limited = appTrafficHasLimit(item);
@@ -683,23 +884,23 @@ function appTrafficMoreMenu(item, limitSupported, activeAppID) {
     var open = activeAppID === instanceID;
     var identityAttrs = ' data-app-id="' + NetwatchShared.escapeHtml(appID) + '" data-instance-id="' + NetwatchShared.escapeHtml(instanceID) + '"';
     var menu = '<button type="button" class="icon-button app-traffic-more-btn" data-action="traffic-more"' + identityAttrs + ' aria-label="' + i18n('app_traffic_more') + '" title="' + i18n('app_traffic_more') + '" aria-expanded="' + (open ? 'true' : 'false') + '"><span class="ui-icon ui-icon--more" aria-hidden="true"></span></button>';
-    if (!limitAllowed && !internetAllowed && !proxyAllowed) return '';
     if (!open) return '<div class="app-traffic-action-menu">' + menu + '</div>';
-    var panel = '<div class="app-traffic-more-panel" role="menu">';
+    var panel = '<div class="app-traffic-more-panel" role="menu">' +
+        '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-connections"' + identityAttrs + '><span class="ui-icon ui-icon--connections" aria-hidden="true"></span><span>' + i18n('app_connections_title') + '</span></button>';
+    var controls = '';
     // The experimental switch gates Host/Mixed policing; read-only accounting
     // stays active regardless of that setting.
 	if (showLimit) {
-        panel += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit"' + identityAttrs + '><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
+		controls += '<button type="button" class="app-traffic-menu-item" role="menuitem" data-action="traffic-limit"' + identityAttrs + '><span class="ui-icon ui-icon--gauge" aria-hidden="true"></span><span>' + i18n('app_traffic_limit') + '</span></button>';
 	}
     if (showProxy) {
-        if (showLimit) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
-        panel += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy"' + identityAttrs + ' data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
+		controls += '<button type="button" class="app-traffic-menu-item' + (proxyEnabled ? ' restore' : '') + '" role="menuitem" data-action="traffic-proxy"' + identityAttrs + ' data-proxy-state="' + (proxyEnabled ? 'disable' : 'enable') + '"><span class="ui-icon ui-icon--route" aria-hidden="true"></span><span>' + (proxyEnabled ? i18n('app_proxy_restore_direct') : i18n('app_proxy_set')) + '</span></button>';
     }
     if (internetAllowed) {
-        if (showLimit || showProxy) panel += '<div class="app-traffic-menu-divider" role="separator"></div>';
-        panel += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network"' + identityAttrs + ' data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
+		controls += '<button type="button" class="app-traffic-menu-item ' + (blocked ? 'restore' : 'danger') + '" role="menuitem" data-action="traffic-network"' + identityAttrs + ' data-network-state="' + (blocked ? 'restore' : 'disable') + '"><span class="ui-icon ui-icon--network" aria-hidden="true"></span><span>' + (blocked ? i18n('app_traffic_restore_internet') : i18n('app_traffic_disable_internet')) + '</span></button>';
     }
-    return '<div class="app-traffic-action-menu">' + menu + panel + '</div>';
+	if (controls) panel += '<div class="app-traffic-menu-divider" role="separator"></div>' + controls;
+    return '<div class="app-traffic-action-menu">' + menu + panel + '</div></div>';
 }
 
 async function appTrafficSetInternetAccess(item, restore) {
@@ -815,13 +1016,10 @@ function initNICRealtime() {
                 ' / ↑ ' + NetwatchShared.formatBytes(n.tx_total) + '</div></div>';
         }).join('');
         if (statusEl) NetwatchShared.setObservationStatus(statusEl, {
-            state: data.stale ? 'stale' : 'fresh',
+            state: 'fresh',
             count: nics.length,
             countLabel: i18n('interfaces_unit'),
-            generatedAt: data.timestamp,
-            stale: !!data.stale,
-            ageSeconds: data.age_seconds,
-            staleAfterSeconds: 15
+            generatedAt: data.timestamp
         });
     };
     var tick = async function (manual) {
@@ -843,8 +1041,9 @@ function initNICRealtime() {
     if (els.nicRealtimeRefreshBtn) {
         els.nicRealtimeRefreshBtn.addEventListener('click', function () { tick(true); });
     }
-    // Startup: always force one double-sample so the card is not empty/zero-rate
-    tick(true);
+    // Page startup reads the lifecycle sampler's current snapshot. Only the
+    // card refresh button performs a forced double-sample.
+    tick(false);
     if (window.__app.applySettingsToForm) window.__app.applySettingsToForm();
 }
 

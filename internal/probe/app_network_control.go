@@ -443,8 +443,12 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 		default:
 			status.InternetState = "partial"
 		}
-	} else if blockedCount > 0 || !inSync {
+	} else if blockedCount > 0 {
 		status.InternetState = "partial"
+	} else if !inSync {
+		// The desired policy still allows internet access. Missing runtime
+		// verification must not be reported as an intentional block.
+		status.InternetState = "verifying"
 	}
 	if status.Desired.ProxyEnabled {
 		switch {

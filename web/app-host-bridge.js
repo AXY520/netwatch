@@ -399,7 +399,7 @@ async function finishHostBridge(action) {
         networkMutationCoordinator.setPending('bridge', null);
         await loadHostBridges();
         if (window.__app && window.__app.loadNetworkConfigDevices) {
-            await window.__app.loadNetworkConfigDevices();
+            await window.__app.loadNetworkConfigDevices(undefined, true);
         }
         try { await refreshNetworkDetailCards(); } catch (_) {}
         refreshAppTrafficSoon();
@@ -506,7 +506,7 @@ async function createHostBridge() {
         setTimeout(function () {
             loadHostBridgePending(true).catch(function () {});
             if (window.__app && window.__app.loadNetworkConfigDevices) {
-                window.__app.loadNetworkConfigDevices().catch(function () {});
+                window.__app.loadNetworkConfigDevices(undefined, true).catch(function () {});
             }
             refreshNetworkDetailCards().catch(function () {});
             refreshAppTrafficSoon();
@@ -540,7 +540,7 @@ async function dissolveHostBridge() {
         if (e.status) e.status.textContent = result.note || '';
         await loadHostBridges();
         if (window.__app && window.__app.loadNetworkConfigDevices) {
-            await window.__app.loadNetworkConfigDevices();
+            await window.__app.loadNetworkConfigDevices(undefined, true);
         }
         try { await refreshNetworkDetailCards(); } catch (_) {}
         refreshAppTrafficSoon();

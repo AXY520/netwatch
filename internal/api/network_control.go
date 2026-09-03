@@ -35,9 +35,12 @@ func (h *Handler) handleNetworkMutationAudit(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) handleNetworkConfigDevices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
+	}
+	if r.Method == http.MethodPost {
+		h.service.InvalidateNetworkConfigDeviceSnapshot()
 	}
 	resp := h.service.ListNetworkConfigDevices(r.Context())
 	status := http.StatusOK

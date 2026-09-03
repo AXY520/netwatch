@@ -113,6 +113,9 @@ func (s *Service) CreateHostBridge(ctx context.Context, req HostBridgeCreateRequ
 
 	var dev NetworkConfigDevice
 	if backend == "nmcli" {
+		// User-triggered mutation: refresh the process-owned inventory before
+		// validating and changing the selected device.
+		invalidateHostNetworkDeviceInventoryCache()
 		devices, err := listNetworkConfigDevices(ctx)
 		if err != nil {
 			return HostBridgeOpResult{Device: req.Device, Error: err.Error()}
@@ -946,19 +949,6 @@ func joinLogs(logs []string, extra string) string {
 		return extra
 	}
 	return strings.Join(logs, "\n") + "\n" + extra
-}
-
-// connectionIsBridgePort reports whether an NM connection is a bridge slave.
-func connectionIsBridgePort(ctx context.Context, connection string) bool {
-	connection = strings.TrimSpace(connection)
-	if connection == "" {
-		return false
-	}
-	out, err := nmcli(ctx, []string{"-g", "connection.slave-type", "connection", "show", connection}, 4*time.Second)
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(out) == "bridge"
 }
 
 // repairManagedBridgeDNS fills empty/missing DNS on managed bridge NM profiles.

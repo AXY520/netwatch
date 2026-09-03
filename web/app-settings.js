@@ -172,8 +172,15 @@ async function loadSettings() {
     }
 }
 
-async function saveSettings() {
-    var payload = {
+var settingsAutoSaveTimer = null;
+var scheduledSettingsPayload = null;
+var pendingSettingsPayload = null;
+var settingsSaveRunner = null;
+var settingsLastSaveError = null;
+var settingsAutoSaveBound = false;
+
+function buildSettingsPayload() {
+    return {
         refresh_interval_sec: state.settings.refresh_interval_sec,
         nic_realtime_enabled: !!(els.settingNICRealtimeEnabled && els.settingNICRealtimeEnabled.checked),
         nic_realtime_interval_sec: parseInt((els.settingNICRealtimeIntervalSec && els.settingNICRealtimeIntervalSec.value) || '1', 10) || 1,
@@ -187,7 +194,7 @@ async function saveSettings() {
         notify_abnormal_traffic: !!(els.settingNotifyAbnormalTraffic && els.settingNotifyAbnormalTraffic.checked),
         notify_egress_change: !!(els.settingNotifyEgressChange && els.settingNotifyEgressChange.checked),
         notify_connectivity_change: !!(els.settingNotifyConnectivityChange && els.settingNotifyConnectivityChange.checked),
-        notify_lan_device_change: state.settings.notify_lan_device_change !== false,
+        notify_lan_device_change: !!(els.settingNotifyLANDeviceChange && els.settingNotifyLANDeviceChange.checked),
         lan_device_offline_after_sec: state.settings.lan_device_offline_after_sec || 180,
         lan_device_online_after_sec: state.settings.lan_device_online_after_sec !== undefined ? state.settings.lan_device_online_after_sec : 0,
         lan_device_offline_notify_delay_sec: state.settings.lan_device_offline_notify_delay_sec !== undefined ? state.settings.lan_device_offline_notify_delay_sec : 120,
@@ -210,48 +217,141 @@ async function saveSettings() {
         dnd_end: (els.settingDNDEnd && els.settingDNDEnd.value) || '08:00',
         scheduled_notify_enabled: !!(els.settingScheduledNotifyEnabled && els.settingScheduledNotifyEnabled.checked),
         scheduled_notify_time: (els.settingScheduledNotifyTime && els.settingScheduledNotifyTime.value) || '09:00',
-        notification_device_ids: state.settings.notification_device_ids || []
+        notification_device_ids: (state.settings.notification_device_ids || []).slice()
     };
+}
 
+function updateLocalSettings(payload) {
+    state.settings = Object.assign({}, state.settings, payload);
+    state.refreshInterval = payload.refresh_interval_sec;
+}
 
-    try {
-        var saved;
-        if (window.NetwatchAPI) {
-            saved = await window.NetwatchAPI.post('/api/v1/settings', payload);
-        } else {
-            var settingsResp = await fetch('/api/v1/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!settingsResp.ok) throw new Error('settings save failed');
-            saved = await settingsResp.json();
-        }
-        // Always prefer server-normalized settings (clamps, defaults, LAN fields).
-        if (saved && typeof saved === 'object') {
-            state.settings = Object.assign({}, state.settings, saved);
-            if (saved.refresh_interval_sec) {
-                state.refreshInterval = saved.refresh_interval_sec;
-            }
-        } else {
-            state.settings = Object.assign({}, state.settings, payload);
-            state.refreshInterval = payload.refresh_interval_sec;
-        }
-        applySettingsToForm();
-        state.nicRealtimeInitialized = false;
-        if (window.__app.initNICRealtime) window.__app.initNICRealtime();
-        if (window.__app.refreshAppTraffic) window.__app.refreshAppTraffic();
-        if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
-        NetwatchShared.showToast(i18n('save_settings_success'), 'success');
-	} catch (error) {
-		console.error(error);
-		NetwatchShared.showToast(i18n('save_settings_fail') + ': ' + (error.message || ''), 'error');
+async function persistSettings(payload) {
+    if (window.NetwatchAPI) {
+        return window.NetwatchAPI.post('/api/v1/settings', payload);
     }
+    var settingsResp = await fetch('/api/v1/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    if (!settingsResp.ok) throw new Error('settings save failed');
+    return settingsResp.json();
+}
+
+function applySavedSettings(saved, payload) {
+    var newerPayload = scheduledSettingsPayload || pendingSettingsPayload;
+    if (saved && typeof saved === 'object') {
+        state.settings = Object.assign({}, state.settings, saved, newerPayload || {});
+        if (saved.refresh_interval_sec && !newerPayload) {
+            state.refreshInterval = saved.refresh_interval_sec;
+        }
+    } else {
+        state.settings = Object.assign({}, state.settings, payload, newerPayload || {});
+        if (!newerPayload) state.refreshInterval = payload.refresh_interval_sec;
+    }
+
+    // A newer edit is already waiting. Do not let this older response rewrite
+    // the form while the user is still interacting with it.
+    if (newerPayload) return;
+
+    applySettingsToForm();
+    state.nicRealtimeInitialized = false;
+    if (window.__app.initNICRealtime) window.__app.initNICRealtime();
+    if (window.__app.refreshAppTraffic) window.__app.refreshAppTraffic();
+    if (window.__app.updateAppTrafficRealtime) window.__app.updateAppTrafficRealtime();
+}
+
+function startSettingsSaveRunner() {
+    if (settingsSaveRunner) return settingsSaveRunner;
+
+    settingsSaveRunner = (async function () {
+        while (pendingSettingsPayload) {
+            var payload = pendingSettingsPayload;
+            pendingSettingsPayload = null;
+            try {
+                var saved = await persistSettings(payload);
+                settingsLastSaveError = null;
+                applySavedSettings(saved, payload);
+            } catch (error) {
+                settingsLastSaveError = error;
+                console.error(error);
+                NetwatchShared.showToast(i18n('save_settings_fail') + ': ' + (error.message || ''), 'error');
+            }
+        }
+    })().finally(function () {
+        settingsSaveRunner = null;
+        if (pendingSettingsPayload) startSettingsSaveRunner();
+    });
+
+    return settingsSaveRunner;
+}
+
+function scheduleSettingsAutoSave(delay) {
+    var payload = buildSettingsPayload();
+    scheduledSettingsPayload = payload;
+    updateLocalSettings(payload);
+
+    if (settingsAutoSaveTimer) clearTimeout(settingsAutoSaveTimer);
+    settingsAutoSaveTimer = setTimeout(function () {
+        settingsAutoSaveTimer = null;
+        pendingSettingsPayload = scheduledSettingsPayload;
+        scheduledSettingsPayload = null;
+        startSettingsSaveRunner();
+    }, delay === undefined ? 80 : delay);
+}
+
+async function flushSettingsAutoSave() {
+    if (settingsAutoSaveTimer) {
+        clearTimeout(settingsAutoSaveTimer);
+        settingsAutoSaveTimer = null;
+    }
+
+    var payload = buildSettingsPayload();
+    scheduledSettingsPayload = null;
+    pendingSettingsPayload = payload;
+    updateLocalSettings(payload);
+    await startSettingsSaveRunner();
+
+    // A payload may have been queued just as the previous runner settled.
+    if (settingsSaveRunner) await settingsSaveRunner;
+    if (settingsLastSaveError) throw settingsLastSaveError;
+}
+
+function isDebouncedSettingsTextInput(target) {
+    if (!target || target.tagName !== 'INPUT') return false;
+    var type = (target.type || 'text').toLowerCase();
+    return ['text', 'url', 'email', 'tel', 'password', 'search'].indexOf(type) !== -1;
+}
+
+function bindSettingsAutoSave() {
+    if (settingsAutoSaveBound) return;
+    settingsAutoSaveBound = true;
+
+    [els.settingsWindow, els.notificationSettingsWindow].forEach(function (settingsWindow) {
+        if (!settingsWindow) return;
+
+        settingsWindow.addEventListener('input', function (event) {
+            if (isDebouncedSettingsTextInput(event.target)) {
+                scheduleSettingsAutoSave(600);
+            }
+        });
+        settingsWindow.addEventListener('change', function (event) {
+            if (!event.target || !event.target.matches('input, select')) return;
+            scheduleSettingsAutoSave(80);
+            if (event.target.type === 'checkbox') applySettingsToForm();
+        });
+        settingsWindow.addEventListener('focusout', function (event) {
+            if (isDebouncedSettingsTextInput(event.target)) {
+                flushSettingsAutoSave().catch(function () {});
+            }
+        });
+    });
 }
 
 async function testBarkNotification() {
     try {
-        await saveSettings();
+        await flushSettingsAutoSave();
         if (window.NetwatchAPI) {
             await window.NetwatchAPI.post('/api/v1/notifications/bark/test');
         } else {
@@ -269,7 +369,7 @@ async function testBarkNotification() {
 
 async function testPushPlusNotification() {
     try {
-        await saveSettings();
+        await flushSettingsAutoSave();
         if (window.NetwatchAPI) {
             await window.NetwatchAPI.post('/api/v1/notifications/pushplus/test');
         } else {
@@ -375,7 +475,8 @@ function isNotificationUnsupportedError(err) {
 
 window.__app.applySettingsToForm = applySettingsToForm;
 window.__app.loadSettings = loadSettings;
-window.__app.saveSettings = saveSettings;
+window.__app.bindSettingsAutoSave = bindSettingsAutoSave;
+window.__app.flushSettingsAutoSave = flushSettingsAutoSave;
 window.__app.testBarkNotification = testBarkNotification;
 window.__app.testPushPlusNotification = testPushPlusNotification;
 window.__app.loadLazycatDevices = loadLazycatDevices;

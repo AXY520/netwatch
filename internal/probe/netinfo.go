@@ -52,6 +52,13 @@ type ipSBResponse struct {
 }
 
 func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
+	return s.probeNetworkInfo(ctx, true)
+}
+
+// probeNetworkInfo always refreshes local interface and platform state. Public
+// identity is refreshed only for the initial probe; routine page refreshes
+// reuse the last value and leave explicit egress refresh to its own endpoint.
+func (s *Service) probeNetworkInfo(ctx context.Context, refreshPublicIdentity bool) NetworkInfo {
 	hostname, _ := os.Hostname()
 	hostname = sanitizeHostname(hostname)
 
@@ -75,9 +82,20 @@ func (s *Service) ProbeNetworkInfo(ctx context.Context) NetworkInfo {
 
 	interfaces := collectInterfaces(sdkStatus, sdkOK)
 
-	// 公网 IP + 地理位置查询（api.ipify.org / ipinfo.io 等）成本高且结果稳定，
-	// 缓存 5 分钟避免短时间内重复打外部 API。
-	egressIPv4, egressIPv6, egressIPv4Region, egressIPv6Region := s.getPublicIPWithCache(ctx)
+	var egressIPv4, egressIPv6 string
+	var egressIPv4Region, egressIPv6Region EgressLocation
+	if refreshPublicIdentity {
+		// Public IP and location requests are reserved for the initial probe.
+		egressIPv4, egressIPv6, egressIPv4Region, egressIPv6Region = s.getPublicIPWithCache(ctx)
+	} else {
+		s.mu.RLock()
+		previous := s.summary.NetworkInfo
+		s.mu.RUnlock()
+		egressIPv4 = previous.EgressIPv4
+		egressIPv6 = previous.EgressIPv6
+		egressIPv4Region = previous.EgressIPv4Region
+		egressIPv6Region = previous.EgressIPv6Region
+	}
 
 	info := NetworkInfo{
 		GeneratedAt:      localTimestamp(),
@@ -603,16 +621,29 @@ func bridgeDeviceStatus(present bool, kernelOperState string, hasAddrs bool) str
 // If the SDK says "connected" but the kernel operstate is "down" or there are
 // no IP addresses, the interface is not truly connected.
 func reconcileStatus(sdkStatus, kernelOperState string, hasAddrs bool) string {
-	if sdkStatus != "connected" {
+	sdkStatus = strings.ToLower(strings.TrimSpace(sdkStatus))
+	kernelOperState = strings.ToLower(strings.TrimSpace(kernelOperState))
+
+	if sdkStatus == "connected" {
+		if kernelOperState == "down" || kernelOperState == "lowerlayerdown" || kernelOperState == "notpresent" || !hasAddrs {
+			return "disconnected"
+		}
+		return "connected"
+	}
+	if sdkStatus != "" && sdkStatus != "unknown" {
 		return sdkStatus
 	}
-	if kernelOperState == "down" {
+
+	// Status() and Connectivity() are separate SDK RPCs. Connectivity may
+	// succeed while Status() fails, leaving the SDK device status empty. In
+	// that partial-success case, use the local kernel link/address evidence.
+	if kernelOperState == "down" || kernelOperState == "lowerlayerdown" || kernelOperState == "notpresent" {
 		return "disconnected"
 	}
-	if !hasAddrs {
-		return "disconnected"
+	if hasAddrs {
+		return "connected"
 	}
-	return sdkStatus
+	return "unknown"
 }
 
 // readMACFromSys reads MAC address from /sys/class/net/<iface>/address

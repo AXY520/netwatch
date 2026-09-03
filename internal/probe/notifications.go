@@ -82,7 +82,6 @@ func (s *Service) startBackgroundMonitor() {
 				if intervalSec < 10 {
 					intervalSec = 60
 				}
-				s.runBackgroundMonitorTick()
 				wait = time.Duration(intervalSec) * time.Second
 			}
 
@@ -92,6 +91,9 @@ func (s *Service) startBackgroundMonitor() {
 				timer.Stop()
 				return
 			case <-timer.C:
+				if enabled {
+					s.runBackgroundMonitorTick()
+				}
 			}
 		}
 	}()
@@ -124,7 +126,10 @@ func (s *Service) runBackgroundMonitorTick() {
 		}
 	}
 
-	summary, err := s.collectFastSummaryConditional(ctx, runConnectivity)
+	// Egress is refreshed in the background only when the user explicitly
+	// enabled egress-change notifications; ordinary page/background refreshes
+	// preserve the existing public identity.
+	summary, err := s.collectFastSummaryConditional(ctx, runConnectivity, runConnectivity && cfg.NotifyEgressChange)
 	if err != nil {
 		s.pushNotification("background_probe_failed", "warn", "Netwatch 后台检测失败",
 			fmt.Sprintf("后台定时检测出错，请检查服务状态。\n错误信息：%s", err.Error()))

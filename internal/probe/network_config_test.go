@@ -1,9 +1,47 @@
 package probe
 
 import (
+	"context"
 	"slices"
 	"testing"
+	"time"
 )
+
+func TestNetworkConfigInventoryPageReadKeepsStartupSnapshot(t *testing.T) {
+	hostNetworkDeviceInventoryCache.Lock()
+	previousAt := hostNetworkDeviceInventoryCache.at
+	previousDevices := hostNetworkDeviceInventoryCache.devices
+	previousLoading := hostNetworkDeviceInventoryCache.loading
+	previousGeneration := hostNetworkDeviceInventoryCache.generation
+	previousReady := hostNetworkDeviceInventoryCache.ready
+	previousErr := hostNetworkDeviceInventoryCache.err
+	hostNetworkDeviceInventoryCache.at = time.Now().Add(-time.Hour)
+	hostNetworkDeviceInventoryCache.devices = []hostNetworkDeviceInventoryItem{{Device: "startup0", Type: "ethernet", State: "connected"}}
+	hostNetworkDeviceInventoryCache.loading = nil
+	hostNetworkDeviceInventoryCache.ready = true
+	hostNetworkDeviceInventoryCache.err = nil
+	hostNetworkDeviceInventoryCache.Unlock()
+	t.Cleanup(func() {
+		hostNetworkDeviceInventoryCache.Lock()
+		hostNetworkDeviceInventoryCache.at = previousAt
+		hostNetworkDeviceInventoryCache.devices = previousDevices
+		hostNetworkDeviceInventoryCache.loading = previousLoading
+		hostNetworkDeviceInventoryCache.generation = previousGeneration
+		hostNetworkDeviceInventoryCache.ready = previousReady
+		hostNetworkDeviceInventoryCache.err = previousErr
+		hostNetworkDeviceInventoryCache.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := listHostNetworkDeviceInventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Device != "startup0" {
+		t.Fatalf("page read replaced startup snapshot: %+v", got)
+	}
+}
 
 func TestNetworkConfigMAC(t *testing.T) {
 	got, err := normalizeNetworkConfigMAC("02-11-22-33-44-55")

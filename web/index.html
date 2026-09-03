@@ -14,8 +14,8 @@
         }
         document.documentElement.setAttribute('data-theme', savedTheme);
     </script>
-    <script src="/i18n.js" defer></script>
-    <link rel="stylesheet" href="/app.css">
+    <script src="/i18n.js?v=layout-stability-1" defer></script>
+    <link rel="stylesheet" href="/app.css?v=layout-stability-2">
 </head>
 <body>
     <div id="loading-overlay"><div class="spinner"></div></div>
@@ -275,6 +275,35 @@
         </form>
     </section>
 
+    <div id="app-connections-backdrop" class="window-backdrop"></div>
+    <section class="floating-window app-connections-window" id="app-connections-window" role="dialog" aria-modal="true" aria-labelledby="app-connections-title">
+        <div class="window-head">
+            <div>
+                <div class="window-title" id="app-connections-title" data-i18n="app_connections_title">连接明细</div>
+                <div class="note" id="app-connections-instance"></div>
+            </div>
+            <div class="window-actions">
+                <button type="button" class="icon-button" id="toggle-app-connections-refresh" title="暂停自动刷新" aria-label="暂停自动刷新" aria-pressed="false" data-i18n-title="app_connections_pause_refresh" data-i18n-aria-label="app_connections_pause_refresh"><span class="ui-icon ui-icon--pause" aria-hidden="true"></span></button>
+                <button type="button" class="icon-button window-close-btn" id="close-app-connections-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
+            </div>
+        </div>
+        <div class="app-connections-toolbar">
+            <span id="app-connections-status" class="placeholder" aria-live="polite" data-i18n="app_connections_loading">正在读取连接…</span>
+            <span class="app-connections-live" id="app-connections-live" data-i18n="app_connections_live">实时快照</span>
+        </div>
+        <div id="app-connections-note" class="traffic-note" role="status" hidden></div>
+        <div class="app-connections-table" role="table" aria-label="应用连接明细" data-i18n-aria-label="app_connections_title">
+            <div class="app-connections-row app-connections-head" role="row">
+                <span role="columnheader" data-i18n="app_connections_protocol">协议</span>
+                <span role="columnheader" data-i18n="app_connections_local">本地端点</span>
+                <span role="columnheader" data-i18n="app_connections_remote">远程目标</span>
+                <span role="columnheader" data-i18n="status_col">状态</span>
+                <span role="columnheader" data-i18n="app_connections_service">服务</span>
+            </div>
+            <div id="app-connections-body" role="rowgroup"></div>
+        </div>
+    </section>
+
     <section class="floating-window" id="host-port-detail-window">
         <div class="window-head">
             <div>
@@ -490,11 +519,11 @@
                     <div class="ipv6-detail-desc" data-i18n="ipv6_detail_outbound_desc">能否通过 IPv6 连接到外部网络（国内大厂 anycast / 双栈站点）。</div>
                 </div>
                 <div class="ipv6-detail-item">
-                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-https">·</span><span data-i18n="ipv6_layer_https">HTTPS over IPv6</span></div>
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-https">·</span><span data-i18n="ipv6_layer_https">HTTPS over IPv6</span><strong id="ipv6-detail-https-val"></strong></div>
                     <div class="ipv6-detail-desc" data-i18n="ipv6_detail_https_desc">应用层能否通过 IPv6 完成 HTTPS 访问（国内双栈域名）。</div>
                 </div>
                 <div class="ipv6-detail-item">
-                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-dns">·</span><span data-i18n="ipv6_layer_dns">DNS AAAA 解析</span></div>
+                    <div class="ipv6-detail-head"><span class="ipv6-avail-dot" id="ipv6-detail-dns">·</span><span data-i18n="ipv6_layer_dns">DNS AAAA 解析</span><strong id="ipv6-detail-dns-val"></strong></div>
                     <div class="ipv6-detail-desc" data-i18n="ipv6_detail_dns_desc">DNS 能否返回 AAAA 记录（应用走 IPv6 的前提）。</div>
                 </div>
             </div>
@@ -672,7 +701,6 @@
                 <!-- <div class="note" id="settings-note" data-i18n="settings_note">统一调整网卡实时监测和后续可配置项。</div> -->
             </div>
             <div class="window-actions">
-                <button id="save-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
                 <button type="button" class="icon-button window-close-btn" id="close-settings-window" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
@@ -724,7 +752,6 @@
                 <div class="note" data-i18n="notification_settings_desc">配置通知触发条件、通知渠道、设备选择和免打扰时段。</div>
             </div>
             <div class="window-actions">
-                <button id="save-notification-settings" type="button" class="btn-with-icon"><span class="ui-icon ui-icon--save" aria-hidden="true"></span><span data-i18n="save_btn">保存</span></button>
                 <button type="button" class="icon-button window-close-btn" id="close-notification-settings" title="关闭" aria-label="关闭" data-i18n-title="close_btn" data-i18n-aria-label="close_btn"><span class="ui-icon ui-icon--close" aria-hidden="true"></span></button>
             </div>
         </div>
@@ -835,17 +862,17 @@
     </section>
     <script src="/speedtest.js" defer></script>
     <script src="/broadband-node-config.js" defer></script>
-    <script src="/shared.js" defer></script>
+    <script src="/shared.js?v=observation-copy-1" defer></script>
     <script src="/api.js" defer></script>
     <script src="/app-core.js" defer></script>
     <script src="/app-containers.js" defer></script>
     <script src="/app-network.js" defer></script>
-    <script src="/app-traffic-dashboard.js" defer></script>
+    <script src="/app-traffic-dashboard.js?v=layout-stability-2" defer></script>
     <script src="/app-network-config.js" defer></script>
     <script src="/app-host-bridge.js" defer></script>
     <script src="/app-host-dns.js" defer></script>
     <script src="/app-host-ports.js" defer></script>
-    <script src="/app-speedtest.js" defer></script>
+    <script src="/app-speedtest.js?v=layout-stability-1" defer></script>
     <script src="/app-settings.js" defer></script>
     <script src="/dns.js" defer></script>
     <script src="/app.js" defer></script>
