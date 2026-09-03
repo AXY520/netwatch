@@ -15,7 +15,11 @@ import (
 	"netwatch/internal/logger"
 )
 
-const hostAppTargetPrefix = "host-app:"
+const (
+	hostAppTargetPrefix          = "host-app:"
+	lazycatRuntimeCgroupRoot     = "/system.slice/runc-lzc-os.scope"
+	lazycatApplicationCgroupRoot = lazycatRuntimeCgroupRoot + "/lzcapp.slice"
+)
 
 type hostAppRuntime struct {
 	AppID         string
@@ -264,11 +268,7 @@ func resolveContainerHostCgroupPath(
 	// lzc-docker does not expose State.CgroupPath on current Lazycat builds.
 	// Keep the runtime's stable systemd layout as a final validated candidate.
 	if appID, containerID := strings.TrimSpace(container.AppID), strings.TrimSpace(container.ID); appID != "" && containerID != "" {
-		candidates = append(candidates, filepath.ToSlash(filepath.Join(
-			"/system.slice/runc-lzc-os.scope/lzcapp.slice",
-			"lzcapp-"+appID+".slice",
-			"docker-"+containerID+".scope",
-		)))
+		candidates = append(candidates, lazycatContainerCgroupCandidate(appID, containerID))
 	}
 
 	seen := make(map[string]struct{}, len(candidates))
@@ -293,6 +293,36 @@ func resolveContainerHostCgroupPath(
 		return "", "未找到容器 cgroup 路径：Docker 未返回 cgroup，且容器进程信息不可用"
 	}
 	return "", fmt.Sprintf("未找到容器 cgroup 路径：%d 个候选路径均不存在", len(seen))
+}
+
+// lazycatContainerCgroupCandidate expands a systemd slice name into its full
+// hierarchy. A slice such as lzcapp-example-rustdesk-server.slice is stored as
+// lzcapp.slice/lzcapp-example-rustdesk.slice/lzcapp-example-rustdesk-server.slice,
+// so joining only the final slice silently misses applications whose IDs
+// contain a hyphen.
+func lazycatContainerCgroupCandidate(appID, containerID string) string {
+	slice := "lzcapp-" + strings.TrimSpace(appID) + ".slice"
+	parts := systemdSliceHierarchy(slice)
+	parts = append([]string{lazycatRuntimeCgroupRoot}, parts...)
+	parts = append(parts, "docker-"+strings.TrimSpace(containerID)+".scope")
+	return filepath.ToSlash(filepath.Join(parts...))
+}
+
+func systemdSliceHierarchy(slice string) []string {
+	slice = strings.TrimSpace(slice)
+	base := strings.TrimSuffix(slice, ".slice")
+	if base == "" || base == slice {
+		return nil
+	}
+	segments := strings.Split(base, "-")
+	hierarchy := make([]string, 0, len(segments))
+	for index := range segments {
+		if segments[index] == "" {
+			return nil
+		}
+		hierarchy = append(hierarchy, strings.Join(segments[:index+1], "-")+".slice")
+	}
+	return hierarchy
 }
 
 func readProcessCgroup(pid int) (string, error) {

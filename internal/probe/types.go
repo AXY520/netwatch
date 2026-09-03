@@ -191,11 +191,15 @@ type AppConnectionEntry struct {
 	LocalPort           int    `json:"local_port"`
 	RemoteAddress       string `json:"remote_address"`
 	RemotePort          int    `json:"remote_port"`
+	RemoteHost          string `json:"remote_host,omitempty"`
 	State               string `json:"state"`
 	Direction           string `json:"direction"`
 	ContainerID         string `json:"container_id,omitempty"`
 	ContainerName       string `json:"container_name,omitempty"`
+	ProcessName         string `json:"process_name,omitempty"`
+	ProcessPID          int    `json:"process_pid,omitempty"`
 	AppID               string `json:"app_id,omitempty"`
+	InstanceID          string `json:"instance_id,omitempty"`
 	Project             string `json:"project,omitempty"`
 	NetworkMode         string `json:"network_mode,omitempty"`
 	AttributionReliable bool   `json:"attribution_reliable"`
@@ -203,8 +207,9 @@ type AppConnectionEntry struct {
 
 type AppConnectionSnapshot struct {
 	GeneratedAt string               `json:"generated_at"`
+	AppID       string               `json:"app_id"`
+	InstanceID  string               `json:"instance_id"`
 	Supported   bool                 `json:"supported"`
-	Revealed    bool                 `json:"revealed"`
 	Truncated   bool                 `json:"truncated"`
 	Limit       int                  `json:"limit"`
 	Connections []AppConnectionEntry `json:"connections"`
@@ -639,11 +644,15 @@ type DomesticIPSnapshot struct {
 type IPv6Availability struct {
 	HasGlobalAddress  bool   `json:"has_global_address"`
 	GlobalAddress     string `json:"global_address,omitempty"`
+	AddressError      string `json:"address_error,omitempty"`
 	OutboundReachable bool   `json:"outbound_reachable"`
 	OutboundLatencyMS int64  `json:"outbound_latency_ms,omitempty"`
 	OutboundTarget    string `json:"outbound_target,omitempty"`
+	OutboundError     string `json:"outbound_error,omitempty"`
 	HTTPSReachable    bool   `json:"https_reachable"`
+	HTTPSError        string `json:"https_error,omitempty"`
 	DNSResolvable     bool   `json:"dns_resolvable"`
+	DNSError          string `json:"dns_error,omitempty"`
 	Summary           string `json:"summary"`
 	CheckedAt         string `json:"checked_at,omitempty"`
 }
@@ -704,39 +713,27 @@ type NATInfo struct {
 	MappingBehavior   string           `json:"mapping_behavior,omitempty"`
 	FilteringBehavior string           `json:"filtering_behavior,omitempty"`
 	ExternalAddr      string           `json:"external_addr,omitempty"`
-	ProxyAffected     bool             `json:"proxy_affected,omitempty"`
 	Diagnostic        string           `json:"diagnostic,omitempty"`
 	Note              string           `json:"note"`
 	Observations      []NATObservation `json:"observations,omitempty"`
 }
 
-type ProxyEnvironmentInfo struct {
-	Detected             bool     `json:"detected"`
-	Mode                 string   `json:"mode"` // none / tun / environment / mixed
-	Confidence           string   `json:"confidence,omitempty"`
-	Interfaces           []string `json:"interfaces,omitempty"`
-	EnvironmentVariables []string `json:"environment_variables,omitempty"`
-	NATMayBeAffected     bool     `json:"nat_may_be_affected,omitempty"`
-	Note                 string   `json:"note,omitempty"`
-}
-
 type NetworkInfo struct {
-	GeneratedAt          string               `json:"generated_at"`
-	Hostname             string               `json:"hostname"`
-	Interfaces           []InterfaceInfo      `json:"interfaces"`
-	DefaultIPv4          DefaultRoute         `json:"default_ipv4"`
-	DefaultIPv6          DefaultRoute         `json:"default_ipv6"`
-	EgressIPv4           string               `json:"egress_ipv4,omitempty"`
-	EgressIPv6           string               `json:"egress_ipv6,omitempty"`
-	EgressIPv4Region     EgressLocation       `json:"egress_ipv4_region"`
-	EgressIPv6Region     EgressLocation       `json:"egress_ipv6_region"`
-	NAT                  NATInfo              `json:"nat"`
-	ProxyEnvironment     ProxyEnvironmentInfo `json:"proxy_environment"`
-	PlatformConnectivity string               `json:"platform_connectivity,omitempty"` // Full/Limited/Portal/None/Unknown
-	HasInternet          bool                 `json:"has_internet,omitempty"`
-	WifiSSID             string               `json:"wifi_ssid,omitempty"`
-	WifiSignal           int32                `json:"wifi_signal,omitempty"`
-	DetectionNotes       []string             `json:"detection_notes,omitempty"`
+	GeneratedAt          string          `json:"generated_at"`
+	Hostname             string          `json:"hostname"`
+	Interfaces           []InterfaceInfo `json:"interfaces"`
+	DefaultIPv4          DefaultRoute    `json:"default_ipv4"`
+	DefaultIPv6          DefaultRoute    `json:"default_ipv6"`
+	EgressIPv4           string          `json:"egress_ipv4,omitempty"`
+	EgressIPv6           string          `json:"egress_ipv6,omitempty"`
+	EgressIPv4Region     EgressLocation  `json:"egress_ipv4_region"`
+	EgressIPv6Region     EgressLocation  `json:"egress_ipv6_region"`
+	NAT                  NATInfo         `json:"nat"`
+	PlatformConnectivity string          `json:"platform_connectivity,omitempty"` // Full/Limited/Portal/None/Unknown
+	HasInternet          bool            `json:"has_internet,omitempty"`
+	WifiSSID             string          `json:"wifi_ssid,omitempty"`
+	WifiSignal           int32           `json:"wifi_signal,omitempty"`
+	DetectionNotes       []string        `json:"detection_notes,omitempty"`
 }
 
 type BroadbandSpeedResult struct {

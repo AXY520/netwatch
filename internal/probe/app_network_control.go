@@ -443,8 +443,12 @@ func (s *Service) appNetworkPolicyStatus(app AppTrafficUsage, blocked map[string
 		default:
 			status.InternetState = "partial"
 		}
-	} else if blockedCount > 0 || !inSync {
+	} else if blockedCount > 0 {
 		status.InternetState = "partial"
+	} else if !inSync {
+		// The desired policy still allows internet access. Missing runtime
+		// verification must not be reported as an intentional block.
+		status.InternetState = "verifying"
 	}
 	if status.Desired.ProxyEnabled {
 		switch {
@@ -541,6 +545,14 @@ func (s *Service) applyAppNetworkPolicyUpdate(ctx context.Context, appID string,
 }
 
 func (s *Service) applyAppNetworkPolicyUpdateForInstance(ctx context.Context, appID, policyID string, targets []AppNetworkTarget, update appNetworkPolicyUpdate) error {
+	// Serialize before reading the current policy. Otherwise two concurrent
+	// requests can both validate against an online/unlimited snapshot, then
+	// sequentially leave the final state both blocked and limited/proxied.
+	s.appNetworkController.mu.Lock()
+	defer s.appNetworkController.mu.Unlock()
+	s.appTrafficLimiter.operationMu.Lock()
+	defer s.appTrafficLimiter.operationMu.Unlock()
+
 	current := s.currentAppNetworkPolicy(policyID, targets)
 	desired := current
 	if update.UploadKbps != nil {
@@ -576,19 +588,24 @@ func (s *Service) applyAppNetworkPolicyUpdateForInstance(ctx context.Context, ap
 	if isWhitelistedApp(appID, "") {
 		return fmt.Errorf("application %s does not allow network policy changes", appID)
 	}
-	if !current.InternetAllowed && !desired.InternetAllowed {
+	// The final policy must be internally consistent, including when several
+	// fields are changed by one API request. Checking only the current blocked
+	// state allowed {internet_allowed:false, upload_kbps:...} (or proxy_enabled)
+	// to install mutually exclusive controls atomically.
+	if !desired.InternetAllowed {
 		if proxyChangedRequested && desired.ProxyEnabled {
 			return errors.New("已禁用外网，请先恢复外网后再设置代理")
+		}
+		if desired.ProxyEnabled {
+			return errors.New("应用代理已启用，请先恢复直连后再禁用外网")
 		}
 		if limitChanged && (desired.UploadKbps > 0 || desired.DownloadKbps > 0) {
 			return errors.New("已禁用外网，请先恢复外网后再限制网速")
 		}
+		if desired.UploadKbps > 0 || desired.DownloadKbps > 0 {
+			return errors.New("应用限速已启用，请先取消限速后再禁用外网")
+		}
 	}
-	s.appNetworkController.mu.Lock()
-	defer s.appNetworkController.mu.Unlock()
-	s.appTrafficLimiter.operationMu.Lock()
-	defer s.appTrafficLimiter.operationMu.Unlock()
-
 	previousLimit := s.appTraffic.limitForApp(policyID)
 	previousBlockedApps := s.containers.snapshotBlockedApps()
 	proxyDefault, previousProxyApps, previousProxyConfigs := s.settings.appProxyState()

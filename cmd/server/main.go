@@ -138,7 +138,10 @@ func noStoreStatic(next http.Handler) http.Handler {
 		case ".ttf", ".woff2", ".woff", ".otf", ".eot":
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		case ".js", ".css":
-			w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
+			// Asset filenames are stable across in-place LPK upgrades. Force a
+			// conditional revalidation so a normal refresh cannot keep an older
+			// dashboard bundle for several minutes after deployment.
+			w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
 		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico":
 			w.Header().Set("Cache-Control", "public, max-age=86400, must-revalidate")
 		case ".html", ".json", "":

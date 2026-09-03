@@ -72,7 +72,6 @@ func lookupDomesticIPv4(ctx context.Context) DomesticIPEntry {
 		// Order verified 2026-07: ipip JSON stable; cip.cc needs curl UA; zxinc getip often drifts.
 		{name: "ipip.net", fn: lookupDomesticIPv4ViaIPIP},
 		{name: "cip.cc", fn: lookupDomesticIPv4ViaCipCC},
-		{name: "zxinc", fn: lookupDomesticIPv4ViaZXINC},
 	}
 
 	var lastErr string
@@ -112,7 +111,10 @@ func lookupDomesticIPv6Local(ctx context.Context, cfg Config) DomesticIPEntry {
 	entry.IP = ip
 	entry.HasPublicPath = true
 	if location, isp, err := fetchZXINCLocation(ctx, ip); err == nil {
-		entry.Location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+		if strings.TrimSpace(location) == "" {
+			location = lookupPConlineLocation(ctx, ip)
+		}
+		entry.Location = normalizeDomesticLocation(location)
 		entry.ISP = isp
 	} else if !isCNIPv6(net.ParseIP(ip)) {
 		entry.IP = ""
@@ -217,7 +219,10 @@ func lookupDomesticIPv4ViaZXINC(ctx context.Context) DomesticIPEntry {
 		entry.Error = err.Error()
 		return entry
 	}
-	location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+	if strings.TrimSpace(location) == "" {
+		location = lookupPConlineLocation(ctx, ip)
+	}
+	location = normalizeDomesticLocation(location)
 	if !isMainlandChinaLocation(location) {
 		entry.Error = "海外 IPv4 出口: " + firstNonEmpty(location, ip)
 		entry.IP = ""
@@ -246,7 +251,10 @@ func lookupDomesticIPv6ViaZXINC(ctx context.Context) DomesticIPEntry {
 		entry.Error = err.Error()
 		return entry
 	}
-	location = normalizeDomesticLocation(firstNonEmpty(location, lookupPConlineLocation(ctx, ip)))
+	if strings.TrimSpace(location) == "" {
+		location = lookupPConlineLocation(ctx, ip)
+	}
+	location = normalizeDomesticLocation(location)
 	if !isDomesticIPv6Candidate(ip, location) {
 		entry.Error = "海外 IPv6 出口: " + firstNonEmpty(location, ip)
 		entry.IP = ""

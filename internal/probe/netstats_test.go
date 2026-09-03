@@ -41,3 +41,15 @@ func TestForceSampleAndSnapshotAlwaysDoubleSamples(t *testing.T) {
 		t.Fatalf("forceSampleAndSnapshot should always double-sample, took %v", time.Since(start))
 	}
 }
+
+func TestGetRealtimeNetStatsOnlyReadsBackgroundSnapshot(t *testing.T) {
+	tracker := newNICStatsTracker()
+	tracker.sample()
+	before := tracker.sampleCount
+	service := &Service{nicStats: tracker}
+
+	_ = service.GetRealtimeNetStats()
+	if tracker.sampleCount != before {
+		t.Fatalf("GET sampled counters: count=%d, want %d", tracker.sampleCount, before)
+	}
+}

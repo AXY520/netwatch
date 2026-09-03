@@ -37,12 +37,11 @@ func (s *Service) RefreshNetworkInfo(ctx context.Context) NetworkInfo {
 	s.mu.Lock()
 	prev := s.summary.NetworkInfo
 	info := NetworkInfo{
-		GeneratedAt:      localTimestamp(),
-		Hostname:         hostname,
-		Interfaces:       interfaces,
-		DefaultIPv4:      readDefaultIPv4Route(),
-		DefaultIPv6:      readDefaultIPv6Route(),
-		ProxyEnvironment: detectProxyEnvironment(),
+		GeneratedAt: localTimestamp(),
+		Hostname:    hostname,
+		Interfaces:  interfaces,
+		DefaultIPv4: readDefaultIPv4Route(),
+		DefaultIPv6: readDefaultIPv6Route(),
 		// Keep last known egress snapshot; full probe/run refreshes these later.
 		EgressIPv4:           prev.EgressIPv4,
 		EgressIPv6:           prev.EgressIPv6,
@@ -70,35 +69,28 @@ func (s *Service) RefreshNetworkInfo(ctx context.Context) NetworkInfo {
 }
 
 func (s *Service) Refresh(ctx context.Context) Summary {
-	// 手动刷新时清除公网 IP 缓存，强制重新查询
-	s.publicIPMu.Lock()
-	s.publicIPCache = publicIPCacheData{}
-	s.publicIPMu.Unlock()
-	// 同时清除出口 IP 查询缓存
-	s.RefreshEgressLookups(ctx)
-	s.refreshFast(ctx)
+	// Routine page refresh updates website and local interface state only.
+	// Public identity is handled by initial load and the explicit egress button.
+	s.refreshFast(ctx, false, manualObservationRefreshCooldown)
 	return s.GetSummary()
 }
 
 func (s *Service) RefreshNAT(ctx context.Context) NATInfo {
-	s.refreshNAT(ctx)
+	s.refreshNAT(ctx, manualObservationRefreshCooldown)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.summary.NetworkInfo.NAT
 }
 
 func (s *Service) RefreshWebsiteConnectivity(ctx context.Context) WebsiteConnectivity {
-	s.mu.RLock()
-	timeout := s.cfg.HTTPTimeout
-	s.mu.RUnlock()
-	if timeout <= 0 {
-		timeout = websiteProbeTimeoutFallback
-	}
-	// Slightly above per-target budget so we never cancel a still-valid last hop.
-	ctx, cancel := context.WithTimeout(ctx, timeout+500*time.Millisecond)
+	timeout, domesticSites, globalSites := s.websiteProbeConfigSnapshot()
+	// Each lane checks its sites sequentially. Keep the outer request alive for
+	// the full longest-lane budget so a slow first site cannot cancel the next.
+	budget := websiteProbeBudget(timeout, len(domesticSites), len(globalSites)) + websiteProbeCallerGrace
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
-	website := s.ProbeWebsiteConnectivity(ctx)
+	website := s.probeWebsiteConnectivity(ctx, manualObservationRefreshCooldown)
 
 	s.mu.Lock()
 	s.summary.WebsiteConnectivity = website
@@ -211,7 +203,9 @@ func (s *Service) GetTimeseries(limit int) []TimeseriesPoint {
 }
 
 func (s *Service) GetRealtimeNetStats() RealtimeNetStats {
-	return s.nicStats.sampleAndSnapshot()
+	// GET is a snapshot read. The lifecycle sampler owns automatic collection;
+	// only the explicit refresh endpoint may force new counter samples.
+	return s.nicStats.snapshot()
 }
 
 // ForceGetRealtimeNetStats always double-samples so manual refresh gets fresh bps.
@@ -219,16 +213,27 @@ func (s *Service) ForceGetRealtimeNetStats() RealtimeNetStats {
 	return s.nicStats.forceSampleAndSnapshot()
 }
 
-// GetEgressLookups 返回缓存的多源查询结果，若没缓存则同步触发一次（冷启动场景）。
+const (
+	egressLookupCacheTTL        = 2 * time.Minute
+	egressLookupRefreshCooldown = 15 * time.Second
+)
+
+// GetEgressLookups is the page-load path. It never starts a public probe.
+// Startup owns the initial collection and explicit refreshes use
+// RefreshEgressLookups. If startup is still collecting, wait for that same
+// in-flight result rather than issuing a duplicate request batch.
 func (s *Service) GetEgressLookups(ctx context.Context) EgressLookupResult {
 	s.egressMu.Lock()
 	cache := s.egressCache
-	empty := cache.GeneratedAt == ""
+	inflight := s.egressInflight
 	s.egressMu.Unlock()
-	if !empty {
+	if cache.GeneratedAt != "" {
 		return cache
 	}
-	return s.RefreshEgressLookups(ctx)
+	if inflight {
+		return s.waitForEgressLookup(ctx)
+	}
+	return cache
 }
 
 // ClearPublicIPCache 清除公网 IP 缓存，下次 ProbeNetworkInfo 会重新查询。
@@ -238,11 +243,25 @@ func (s *Service) ClearPublicIPCache() {
 	s.publicIPMu.Unlock()
 }
 
-// RefreshEgressLookups 强制立刻刷新并更新缓存。
+// RefreshEgressLookups 请求刷新并更新缓存。连续手动触发会命中短时冷却，
+// 防止重复点击在短时间内产生多批公网请求。
 func (s *Service) RefreshEgressLookups(ctx context.Context) EgressLookupResult {
+	return s.refreshEgressLookups(ctx, true)
+}
+
+func (s *Service) refreshEgressLookups(ctx context.Context, force bool) EgressLookupResult {
 	s.egressMu.Lock()
+	cache := s.egressCache
+	now := time.Now()
+	maxAge := egressLookupCacheTTL
+	if force {
+		maxAge = egressLookupRefreshCooldown
+	}
+	if cache.GeneratedAt != "" && egressCacheWithin(s.egressUpdatedAt, now, maxAge) {
+		s.egressMu.Unlock()
+		return cache
+	}
 	if s.egressInflight {
-		cache := s.egressCache
 		empty := cache.GeneratedAt == ""
 		s.egressMu.Unlock()
 		if empty {
@@ -253,16 +272,40 @@ func (s *Service) RefreshEgressLookups(ctx context.Context) EgressLookupResult {
 	s.egressInflight = true
 	cfg := s.cfg
 	s.egressMu.Unlock()
+	return s.collectEgressLookups(ctx, cfg)
+}
 
+// reserveInitialEgressLookup marks the startup probe as in flight before the
+// HTTP server can serve a page-load read. The actual public work can then run
+// asynchronously without a cold GET racing it and starting a second batch.
+func (s *Service) reserveInitialEgressLookup() (Config, bool) {
+	s.egressMu.Lock()
+	defer s.egressMu.Unlock()
+	if s.egressCache.GeneratedAt != "" || s.egressInflight {
+		return Config{}, false
+	}
+	s.egressInflight = true
+	return s.cfg, true
+}
+
+func (s *Service) collectEgressLookups(ctx context.Context, cfg Config) EgressLookupResult {
 	result := LookupEgressIPs(ctx)
 	result.DomesticIP = lookupDomesticIPs(ctx, cfg)
 
 	s.egressMu.Lock()
 	s.egressCache = result
+	s.egressUpdatedAt = time.Now()
 	s.egressInflight = false
 	s.egressCond.Broadcast()
 	s.egressMu.Unlock()
 	return result
+}
+
+func egressCacheWithin(updatedAt, now time.Time, maxAge time.Duration) bool {
+	if updatedAt.IsZero() || maxAge <= 0 || now.Before(updatedAt) {
+		return false
+	}
+	return now.Sub(updatedAt) < maxAge
 }
 
 func (s *Service) waitForEgressLookup(ctx context.Context) EgressLookupResult {
@@ -299,16 +342,23 @@ func (s *Service) waitForEgressLookup(ctx context.Context) EgressLookupResult {
 	return cache
 }
 
-func (s *Service) refreshFast(ctx context.Context) {
+const manualObservationRefreshCooldown = 15 * time.Second
+
+func (s *Service) refreshFast(ctx context.Context, refreshPublicIdentity bool, websiteMinAge time.Duration) {
 	s.mu.RLock()
 	interval := s.cfg.RefreshInterval
 	currentNAT := s.summary.NetworkInfo.NAT
 	s.mu.RUnlock()
+	websiteTimeout, domesticSites, globalSites := s.websiteProbeConfigSnapshot()
+	budget := websiteProbeBudget(websiteTimeout, len(domesticSites), len(globalSites)) + websiteProbeCallerGrace
+	if interval > budget {
+		budget = interval
+	}
 
-	ctx, cancel := context.WithTimeout(ctx, interval)
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
-	summary, err := s.collectFastSummary(ctx)
+	summary, err := s.collectFastSummary(ctx, refreshPublicIdentity, websiteMinAge)
 
 	s.mu.Lock()
 
@@ -361,7 +411,7 @@ func (s *Service) recordTimeseries(summary Summary) {
 	s.timeseries.append(point)
 }
 
-func (s *Service) refreshNAT(ctx context.Context) {
+func (s *Service) refreshNAT(ctx context.Context, minAge time.Duration) {
 	s.mu.RLock()
 	timeout := s.cfg.NATTimeout
 	s.mu.RUnlock()
@@ -369,7 +419,7 @@ func (s *Service) refreshNAT(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, timeout*2)
 	defer cancel()
 
-	nat := s.ProbeNAT(ctx)
+	nat := s.probeNAT(ctx, minAge)
 	s.mu.Lock()
 	previousSummary := s.summary
 	s.summary.NetworkInfo.NAT = nat
@@ -380,7 +430,7 @@ func (s *Service) refreshNAT(ctx context.Context) {
 	s.broadcast(snap)
 }
 
-func (s *Service) collectFastSummary(ctx context.Context) (Summary, error) {
+func (s *Service) collectFastSummary(ctx context.Context, refreshPublicIdentity bool, websiteMinAge time.Duration) (Summary, error) {
 	var website WebsiteConnectivity
 	var networkInfo NetworkInfo
 
@@ -389,12 +439,12 @@ func (s *Service) collectFastSummary(ctx context.Context) (Summary, error) {
 
 	go func() {
 		defer wg.Done()
-		website = s.ProbeWebsiteConnectivity(ctx)
+		website = s.probeWebsiteConnectivity(ctx, websiteMinAge)
 	}()
 
 	go func() {
 		defer wg.Done()
-		networkInfo = s.ProbeNetworkInfo(ctx)
+		networkInfo = s.probeNetworkInfo(ctx, refreshPublicIdentity)
 		networkInfo.NAT = NATInfo{}
 	}()
 
@@ -409,9 +459,9 @@ func (s *Service) collectFastSummary(ctx context.Context) (Summary, error) {
 	}, nil
 }
 
-func (s *Service) collectFastSummaryConditional(ctx context.Context, runConnectivity bool) (Summary, error) {
+func (s *Service) collectFastSummaryConditional(ctx context.Context, runConnectivity, refreshPublicIdentity bool) (Summary, error) {
 	if runConnectivity {
-		return s.collectFastSummary(ctx)
+		return s.collectFastSummary(ctx, refreshPublicIdentity, 0)
 	}
 	s.mu.RLock()
 	prev := s.summary

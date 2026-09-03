@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+	tcnetlink "github.com/vishvananda/netlink"
 )
 
 func TestHostLimitConfigUsesSharedApplicationRecord(t *testing.T) {
@@ -42,11 +43,47 @@ func TestHostLimitBPFCollectionShape(t *testing.T) {
 	}
 	mapTypes := map[string]ebpf.MapType{
 		"config": ebpf.Array, "download_states": ebpf.Array, "socket_tags": ebpf.SkStorage,
-		"bridge_ifindexes": ebpf.Hash, "flows": ebpf.LRUHash,
+		"bridge_ifindexes": ebpf.Hash, "flows": ebpf.LRUHash, "local_upload_bytes": ebpf.Array,
 	}
 	for name, want := range mapTypes {
 		if spec.Maps[name] == nil || spec.Maps[name].Type != want {
 			t.Fatalf("map %s=%#v want=%v", name, spec.Maps[name], want)
 		}
+	}
+}
+
+func TestAcceptedHostUploadBytesUsesPostPoliceAction(t *testing.T) {
+	police := tcnetlink.NewPoliceAction()
+	police.ActionAttrs.Statistics = &tcnetlink.ActionStatistic{
+		Basic: &tcnetlink.GnetStatsBasic{Bytes: 21_254_751},
+	}
+	clearMark := tcnetlink.NewSkbEditAction()
+	clearMark.ActionAttrs.Statistics = &tcnetlink.ActionStatistic{
+		Basic: &tcnetlink.GnetStatsBasic{Bytes: 13_018_945},
+	}
+	instance := &hostTrafficLimitInstance{slot: 7, limit: AppTrafficLimit{UploadKbps: 1000}}
+	filters := []tcnetlink.Filter{&tcnetlink.FwFilter{
+		FilterAttrs: tcnetlink.FilterAttrs{Handle: 7 << 16, Priority: hostTrafficLimitPolicePreference},
+		Actions:     []tcnetlink.Action{police, clearMark},
+	}}
+
+	got, ok := acceptedHostUploadBytes(filters, instance)
+	if !ok || got != 13_018_945 {
+		t.Fatalf("accepted bytes=%d ok=%v, want post-police skbedit counter", got, ok)
+	}
+}
+
+func TestAcceptedHostUploadBytesRejectsPrePoliceOrWrongFilter(t *testing.T) {
+	clearMark := tcnetlink.NewSkbEditAction()
+	clearMark.ActionAttrs.Statistics = &tcnetlink.ActionStatistic{
+		Basic: &tcnetlink.GnetStatsBasic{Bytes: 1234},
+	}
+	instance := &hostTrafficLimitInstance{slot: 3, limit: AppTrafficLimit{UploadKbps: 1000}}
+	filters := []tcnetlink.Filter{&tcnetlink.FwFilter{
+		FilterAttrs: tcnetlink.FilterAttrs{Handle: 4 << 16, Priority: hostTrafficLimitPolicePreference},
+		Actions:     []tcnetlink.Action{clearMark},
+	}}
+	if got, ok := acceptedHostUploadBytes(filters, instance); ok || got != 0 {
+		t.Fatalf("accepted bytes=%d ok=%v for unrelated filter", got, ok)
 	}
 }

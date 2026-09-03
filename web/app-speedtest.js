@@ -107,7 +107,9 @@ function selectedBroadbandRequest() {
 
 async function loadBroadbandNodes() {
     if (state.runningTest) return;
-    if (els.broadbandNodeStatus) els.broadbandNodeStatus.textContent = i18n('broadband_nodes_loading');
+    // Transient loading/success copy changed the dialog height on first open
+    // and disappeared on the first mode switch. Keep this row for errors only.
+    if (els.broadbandNodeStatus) els.broadbandNodeStatus.textContent = '';
     try {
         var nodes = await speedAPIGet('/api/v1/speed/broadband/catalog');
         if (!Array.isArray(nodes) || !nodes.length) throw new Error(i18n('broadband_nodes_empty'));
@@ -125,7 +127,7 @@ async function loadBroadbandNodes() {
             };
         });
         renderBroadbandNodeOptions();
-        if (els.broadbandNodeStatus) els.broadbandNodeStatus.textContent = i18n('broadband_nodes_loaded').replace('{count}', String(state.broadbandNodes.length));
+        if (els.broadbandNodeStatus) els.broadbandNodeStatus.textContent = '';
     } catch (error) {
         console.error(error);
         if (!state.broadbandNodes.length) state.broadbandNodes = builtinBroadbandNodes().slice();

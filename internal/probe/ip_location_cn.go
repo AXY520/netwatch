@@ -75,7 +75,10 @@ func classifyIPLocation(ctx context.Context, ip string) string {
 	if isCGNATIPv4(parsed) {
 		return "运营商级NATIP地址"
 	}
-	return firstNonEmpty(lookupIPAPI(ctx, ip), lookupPConlineLocation(ctx, ip))
+	if location := lookupIPAPI(ctx, ip); location != "" {
+		return location
+	}
+	return lookupPConlineLocation(ctx, ip)
 }
 
 func decodePCOnlineJSON(body []byte) string {
@@ -136,7 +139,6 @@ func lookupIPAPI(ctx context.Context, ip string) string {
 	parts := filterNonEmpty([]string{payload.Country, payload.RegionName, payload.City, payload.ISP})
 	return strings.Join(parts, " ")
 }
-
 
 func isPrivateIPv4(ip net.IP) bool {
 	v4 := ip.To4()

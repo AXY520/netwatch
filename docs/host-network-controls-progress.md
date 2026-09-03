@@ -1,7 +1,7 @@
 # Host 网络控制与应用流量统计进度
 
-更新时间：2026-08-31<br>
-当前分支：`feat/host-network-controls`
+更新时间：2026-09-01<br>
+当前分支：`fix/host-cgroup-tun-detection`
 
 本文总结当前分支对应用流量统计、限制网速、禁用外网和应用代理的实现状态。详细技术说明见 [app-traffic-controls.html](./app-traffic-controls.html)。
 
@@ -44,7 +44,8 @@
 
 - 下载使用 root TBF，固定 handle `194:`。
 - 上传使用 ingress `clsact`、局域网 bypass filter 和 `police` filter。
-- 上传规则使用 `conform-exceed drop/ok`，正常包放行，超限包丢弃。
+- 上传 police 使用 `mtu 65535` 和至少 128 KiB burst，避免 GSO 大包因默认 2 KiB MTU 或过小 token bucket 被全部判为超限。
+- 上传规则使用 `conform-exceed drop/pipe`，police 后的 `gact pass` 同时承担实际放行字节计数；局域网 bypass 的 `gact` 计数也会一并累加。
 - 修改和取消会清理 Netwatch 自有优先级下的重复或旧规则。
 
 ### 2.4 Host/Mixed 限制网速
@@ -55,7 +56,7 @@
 - 物理网卡 ingress 通过 socket lookup 识别 Host 下载，通过 egress 建立的反向流记录识别 NAT 后的 Bridge 下载；每应用一份 eBPF token bucket。
 - 物理网卡 egress 只负责给 Host/Bridge 上传包写入应用 mark；同一应用的一条原生 `fw + act_police` 规则提供共享上传预算，避免 eBPF 在 GSO 下重复发放额度。
 - Mixed 应用只调用一次 Host/Mixed limiter，不再保留独立的 Bridge TBF/police，因此不会产生第二份预算。
-- IPv4/IPv6、TCP/UDP 共用该分类路径；RFC1918、loopback、IPv4/IPv6 link-local 和 IPv6 ULA 不进入公网限速。
+- IPv4/IPv6 共用该分类路径；TCP/UDP、其他 IP 协议、IPv4 分片和有界的 IPv6 扩展头链均不能绕过分类。RFC1918、loopback、IPv4/IPv6 link-local 和 IPv6 ULA 不进入公网限速。
 - 只添加 `clsact` 和 Netwatch 保留优先级 `49160/49161`，不替换物理网卡 root qdisc；mark 只使用并清理掩码 `0x0fff0000` 内的位。
 - 每应用独立程序/map 实例，Mixed 的 Host/Bridge 共享该实例；最多同时支持 4095 个 Host/Mixed 限速应用。
 
@@ -81,6 +82,11 @@ Host 统计使用 `cgroup_skb` eBPF：
 - 状态层按 cgroup 路径维护独立 baseline，再按 `instance_id` 聚合。
 - 一个 Host 容器重启或计数归零，不会丢失同应用其他容器的增量。
 - Bridge 与 Host 混合应用分别计算增量后再聚合。
+- 私有 cgroup namespace 返回的 `/../../lzcapp-*` 路径会重新锚定到宿主机应用树；systemd slice 按连字符展开完整父层级，兼容 `rustdesk-server` 一类多层应用 ID。
+- 仅部分 Host 容器解析失败时，快照报告失败数量并保留其余 Host/Bridge 统计，不再把单项失败描述成全局不可用。
+- 限速时上传使用 police 后公网放行计数加局域网实际计数；禁用外网时只计入防火墙私网 `RETURN` 规则，不计入 `DROP` 的发送尝试。
+- 这一“实际有效上传”口径同时驱动实时速率、今日/本月/总量和趋势；原始 baseline 仍继续推进，解除策略后不会回放之前被丢弃的字节。
+- Prometheus 从状态层的只读快照按 `app_id + instance_id` 输出，不在 `/metrics` 请求中触发 Docker/懒猫发现、策略 reconcile 或采样；Bridge 不再出现空 `app_id`，Host/Mixed 也会进入指标。
 
 ### 2.7 Host eBPF map 持久化
 
@@ -91,7 +97,7 @@ Host 统计 map 优先 pin 到宿主机 bpffs：
 /sys/fs/bpf/netwatch/netwatch_cgrp_tx
 ```
 
-Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写或 pin 失败，则降级为临时 map，并在 Host 目标 diagnostic 中提示重启会重置计数。eBPF 程序和 cgroup attachment 仍由当前进程管理，服务退出时主动解除，避免挂住已删除应用的 cgroup。
+Netwatch 重启后会复用已有 map。启动时会检查容器路径和 `/proc/1/root/sys/fs/bpf`；宿主尚未挂载 bpffs 时，会在 PID 1 的 mount namespace 中 best-effort 挂载，并通过 `/proc/1/root/sys/fs/bpf/netwatch` 持久 pin。挂载、写入或 pin 失败仍降级为临时 map，并在 Host 目标 diagnostic 中保留具体原因。eBPF 程序和 cgroup attachment 仍由当前进程管理，服务退出时主动解除，避免挂住已删除应用的 cgroup。
 
 ### 2.8 Host eBPF 生命周期清理
 
@@ -124,13 +130,13 @@ Netwatch 重启后会复用已有 map。如果未挂载 bpffs、bpffs 不可写�
 
 ### 4.2 Netwatch 停止期间
 
-map 持久化只保留已经累计的计数。cgroup attachment 不 pin，因此 Netwatch 完全停止期间不会产生新的 Host 统计；这样可以避免永久持有已删除容器的 cgroup。目标盒子的 `/sys/fs/bpf` 当前只是普通 sysfs 目录而非 bpffs，因此本机使用临时 map，Netwatch 重启会归零；API 已明确暴露该降级状态。
+map 持久化只保留已经累计的计数。cgroup attachment 不 pin，因此 Netwatch 完全停止期间不会产生新的 Host 统计；这样可以避免永久持有已删除容器的 cgroup。旧版在目标盒子上因 `/sys/fs/bpf` 仅为 sysfs 目录而降级；新的宿主 mount namespace 初始化仍需等待本轮部署后真机复验，失败时 API 会继续明确暴露降级原因。
 
 ### 4.3 Host/Mixed 限速
 
 Host/Mixed 限速是 policing，不是 shaping：TCP 会通过重传和拥塞控制接近目标速率，UDP 超限包会直接丢弃，短流还会受到 128 KiB burst 影响。下载按物理 ingress `skb.len` 计费，上传由原生 `act_police` 计费；数值是应用级公网总预算，不是每容器预算。
 
-当前只选择一个默认出口设备；IPv4 与 IPv6 默认路由若位于不同设备会拒绝启用。多 WAN、策略路由、VPN/tunnel、IPv6 扩展头和出口切换仍是明确边界。取消策略会删除所有应用 filter、attachment 和 map；空的 `clsact` 可以保留，因为它不替换也不改变原有 root qdisc。
+当前只选择一个默认出口设备；IPv4 与 IPv6 默认路由若位于不同设备会拒绝启用。多 WAN、策略路由、VPN/tunnel 和出口切换仍是明确边界。取消策略会删除所有应用 filter、attachment 和 map；空的 `clsact` 可以保留，因为它不替换也不改变原有 root qdisc。
 
 ## 五、验证记录
 
@@ -186,8 +192,8 @@ git diff --check
 1. Host/Mixed 限速已进入产品路径，但仍受“Host 网络控制（实验性）”开关控制；开关关闭时能力为 false，并清理已有 Host/Mixed 限速状态。
 2. Mixed 的 Host 与 Bridge 共用一个下载 eBPF bucket 和一条上传原生 police，避免重复预算；纯 Bridge 仍沿用网桥 TBF/police。
 3. 方案是 policing，TCP 会近似收敛，UDP 会丢弃超限包；不承诺无丢包 shaping，也不承诺短流瞬时速率等于配置值。
-4. 当前只支持 IPv4/IPv6 默认路由位于同一出口设备的拓扑；多 WAN、策略路由、VPN/tunnel、IPv6 扩展头和出口切换需要后续单独设计。
-5. bpffs 挂载仍只影响 Host 流量统计 map 的跨重启累计，不是 Host/Mixed 限速的依赖；Netwatch 不会自行修改宿主机全局 mount namespace。
+4. 当前只支持 IPv4/IPv6 默认路由位于同一出口设备的拓扑；多 WAN、策略路由、VPN/tunnel 和出口切换需要后续单独设计。
+5. bpffs 挂载仍只影响 Host 流量统计 map 的跨重启累计，不是 Host/Mixed 限速的依赖；Netwatch 仅在确认宿主 bpffs 缺失时 best-effort 初始化该专用挂载点，失败即降级。
 
 ## 七、每应用独立代理上游（已完成）
 

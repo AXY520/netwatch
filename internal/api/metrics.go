@@ -34,18 +34,18 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeHelp("netwatch_nat_reachable", "STUN reachability", "gauge")
 	fmt.Fprintf(&b, "netwatch_nat_reachable %d\n", boolInt(summary.NetworkInfo.NAT.Reachable))
 
-	traffic := probe.CollectAppTrafficCounters()
-	writeHelp("netwatch_app_traffic_rx_bytes", "Raw bytes received by the host bridge", "counter")
-	writeHelp("netwatch_app_traffic_tx_bytes", "Raw bytes transmitted by the host bridge", "counter")
-	writeHelp("netwatch_app_traffic_upload_bytes", "Application upload bytes from the host-bridge perspective", "counter")
-	writeHelp("netwatch_app_traffic_download_bytes", "Application download bytes from the host-bridge perspective", "counter")
+	traffic := h.service.AppTrafficMetricsSnapshot()
+	writeHelp("netwatch_app_traffic_rx_bytes", "Application upload bytes kept for metric-name compatibility", "counter")
+	writeHelp("netwatch_app_traffic_tx_bytes", "Application download bytes kept for metric-name compatibility", "counter")
+	writeHelp("netwatch_app_traffic_upload_bytes", "Actually accounted application upload bytes", "counter")
+	writeHelp("netwatch_app_traffic_download_bytes", "Actually accounted application download bytes", "counter")
 	for _, app := range traffic {
-		label := fmt.Sprintf(`bridge="%s",app_id="%s",perspective="%s",source="%s"`,
-			escapeLabel(app.Bridge), escapeLabel(app.AppID), escapeLabel(app.CounterPerspective), escapeLabel(app.Source))
-		fmt.Fprintf(&b, "netwatch_app_traffic_rx_bytes{%s} %d\n", label, app.RxBytes)
-		fmt.Fprintf(&b, "netwatch_app_traffic_tx_bytes{%s} %d\n", label, app.TxBytes)
-		fmt.Fprintf(&b, "netwatch_app_traffic_upload_bytes{%s} %d\n", label, app.UploadBytes)
-		fmt.Fprintf(&b, "netwatch_app_traffic_download_bytes{%s} %d\n", label, app.DownloadBytes)
+		label := fmt.Sprintf(`bridge="%s",app_id="%s",instance_id="%s",perspective="application",source="netwatch_effective_history"`,
+			escapeLabel(strings.Join(app.Bridges, ",")), escapeLabel(app.AppID), escapeLabel(app.InstanceID))
+		fmt.Fprintf(&b, "netwatch_app_traffic_rx_bytes{%s} %d\n", label, app.TotalUpload)
+		fmt.Fprintf(&b, "netwatch_app_traffic_tx_bytes{%s} %d\n", label, app.TotalDownload)
+		fmt.Fprintf(&b, "netwatch_app_traffic_upload_bytes{%s} %d\n", label, app.TotalUpload)
+		fmt.Fprintf(&b, "netwatch_app_traffic_download_bytes{%s} %d\n", label, app.TotalDownload)
 	}
 
 	_, _ = w.Write([]byte(b.String()))

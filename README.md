@@ -10,7 +10,6 @@ Netwatch 是面向懒猫微服的主机网络观测应用，用于查看网站�
 - 主机网络配置：通过懒猫 SDK 修改网卡 IP、网桥和 DNS，并支持超时自动回滚
 - 出口信息：公网 IPv4/IPv6、国内出口、地区识别
 - NAT 类型检测：复用同一 UDP socket 进行多 STUN 映射对比，不可达时返回未知而不冒充对称型 NAT
-- 代理环境判断：识别已知 Mihomo/Clash 等 TUN 网卡与进程代理环境变量，并提示 NAT 结果是否可能受代理影响
 - 网卡实时速率：自动识别宿主物理有线和 Wi-Fi 网卡
 - 应用网络控制：按应用聚合 Bridge/Host 流量，并支持限速、禁用外网和独立 HTTP/SOCKS5 代理
 - 宽带测速：分别测量用户设备直连公网、服务器出口直连公网的下载/上传/延迟
@@ -168,6 +167,8 @@ NetWatch 只重建该来源的基线，不会重复计入旧字节数。
 TC/eBPF 分类和 policing，Mixed 共享一份应用预算。禁用外网和代理规则按 Bridge 网桥或 Host
 应用父 cgroup 展开。详细实现、环境要求和拓扑边界见
 [应用流量与网络控制实现说明](docs/app-traffic-controls.html)。
+限制网速、禁用外网和设置代理的专项数据路径与事务原理见
+[应用网络控制技术原理](docs/app-network-controls-principles.html)。
 
 `/metrics` 同时暴露原始 `netwatch_app_traffic_rx_bytes`、
 `netwatch_app_traffic_tx_bytes` 和语义化 `netwatch_app_traffic_upload_bytes`、

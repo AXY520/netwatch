@@ -66,6 +66,7 @@ func (h *Handler) registerNotificationRoutes(mux *http.ServeMux) {
 func (h *Handler) registerTrafficRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/network/app-traffic", h.handleAppTraffic)
 	mux.HandleFunc("/api/v1/network/app-traffic/history", h.handleAppTrafficHistory)
+	mux.HandleFunc("/api/v1/network/app-traffic/connections", h.handleAppTrafficConnections)
 	mux.HandleFunc("/api/v1/network/app-traffic/limit", h.handleAppTrafficLimit)
 	mux.HandleFunc("/api/v1/network/app-policy", h.handleAppNetworkPolicy)
 	mux.HandleFunc("/api/v1/network/app-proxy/settings", h.handleAppProxySettings)

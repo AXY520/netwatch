@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -49,44 +48,49 @@ type egressProvider struct {
 	fetch func(ctx context.Context) (EgressLookup, error)
 }
 
-// International egress lookup probes several overseas sources but returns only
-// one result. In split-routing environments, different "what is my IP" APIs may
-// be classified differently by the upstream router; prefer a non-mainland
-// result when one is available, otherwise show the first valid result.
+// 出口查询只保留一个主源和一个备用源，按顺序执行并在成功后立即停止。
 var internationalEgressProviders = []egressProvider{
 	{name: "ifconfig.co", scope: "global", fetch: fetchIfconfigCO},
-	{name: "icanhazip.com", scope: "global", fetch: fetchICanHazIP},
 	{name: "ip.sb", scope: "global", fetch: fetchIPSB},
-	{name: "ipwho.is", scope: "global", fetch: fetchIPWhoIs},
-	{name: "ipinfo.io", scope: "global", fetch: fetchIPInfo},
 }
 
-// LookupEgressIPs returns one international egress result, total timeout 10s.
+// LookupEgressIPs returns one international egress result. It never races
+// public providers and never attempts more than one fallback.
 func LookupEgressIPs(ctx context.Context) EgressLookupResult {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	return lookupEgressWithProviders(ctx, internationalEgressProviders)
+}
 
-	candidates := make([]EgressLookup, len(internationalEgressProviders))
-	var wg sync.WaitGroup
-	for i, p := range internationalEgressProviders {
-		wg.Add(1)
-		go func(i int, p egressProvider) {
-			defer wg.Done()
-			start := time.Now()
-			lu, err := p.fetch(ctx)
-			lu.Provider = p.name
-			lu.Scope = p.scope
-			lu.DurationMS = time.Since(start).Milliseconds()
-			if err != nil {
-				lu.Error = err.Error()
+func lookupEgressWithProviders(ctx context.Context, providers []egressProvider) EgressLookupResult {
+	var firstFailure EgressLookup
+	for i, provider := range providers {
+		if i >= 2 || ctx.Err() != nil {
+			break
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		start := time.Now()
+		lookup, err := provider.fetch(attemptCtx)
+		cancel()
+		lookup.Provider = provider.name
+		lookup.Scope = provider.scope
+		lookup.DurationMS = time.Since(start).Milliseconds()
+		if err != nil {
+			lookup.Error = err.Error()
+		}
+		if strings.TrimSpace(lookup.IP) != "" && net.ParseIP(strings.TrimSpace(lookup.IP)) != nil && lookup.Error == "" {
+			return EgressLookupResult{GeneratedAt: localTimestamp(), Lookups: []EgressLookup{lookup}}
+		}
+		if firstFailure.Provider == "" {
+			if lookup.Error == "" {
+				lookup.Error = "未返回有效公网 IP"
 			}
-			candidates[i] = lu
-		}(i, p)
+			firstFailure = lookup
+		}
 	}
-	wg.Wait()
 	return EgressLookupResult{
 		GeneratedAt: localTimestamp(),
-		Lookups:     []EgressLookup{pickInternationalEgress(candidates)},
+		Lookups:     []EgressLookup{firstFailure},
 	}
 }
 
@@ -94,8 +98,8 @@ func pickInternationalEgress(candidates []EgressLookup) EgressLookup {
 	// Prefer majority agreement on the observed public IP. A single flaky
 	// overseas source (wrong anycast / middlebox) must not override the rest.
 	type bucket struct {
-		sample EgressLookup
-		count  int
+		sample   EgressLookup
+		count    int
 		overseas int
 		mainland int
 	}

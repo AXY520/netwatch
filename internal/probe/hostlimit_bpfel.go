@@ -96,11 +96,12 @@ type hostlimitProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type hostlimitMapSpecs struct {
-	BridgeIfindexes *ebpf.MapSpec `ebpf:"bridge_ifindexes"`
-	Config          *ebpf.MapSpec `ebpf:"config"`
-	DownloadStates  *ebpf.MapSpec `ebpf:"download_states"`
-	Flows           *ebpf.MapSpec `ebpf:"flows"`
-	SocketTags      *ebpf.MapSpec `ebpf:"socket_tags"`
+	BridgeIfindexes  *ebpf.MapSpec `ebpf:"bridge_ifindexes"`
+	Config           *ebpf.MapSpec `ebpf:"config"`
+	DownloadStates   *ebpf.MapSpec `ebpf:"download_states"`
+	Flows            *ebpf.MapSpec `ebpf:"flows"`
+	LocalUploadBytes *ebpf.MapSpec `ebpf:"local_upload_bytes"`
+	SocketTags       *ebpf.MapSpec `ebpf:"socket_tags"`
 }
 
 // hostlimitVariableSpecs contains global variables before they are loaded into the kernel.
@@ -129,11 +130,12 @@ func (o *hostlimitObjects) Close() error {
 //
 // It can be passed to loadHostlimitObjects or ebpf.CollectionSpec.LoadAndAssign.
 type hostlimitMaps struct {
-	BridgeIfindexes *ebpf.Map `ebpf:"bridge_ifindexes"`
-	Config          *ebpf.Map `ebpf:"config"`
-	DownloadStates  *ebpf.Map `ebpf:"download_states"`
-	Flows           *ebpf.Map `ebpf:"flows"`
-	SocketTags      *ebpf.Map `ebpf:"socket_tags"`
+	BridgeIfindexes  *ebpf.Map `ebpf:"bridge_ifindexes"`
+	Config           *ebpf.Map `ebpf:"config"`
+	DownloadStates   *ebpf.Map `ebpf:"download_states"`
+	Flows            *ebpf.Map `ebpf:"flows"`
+	LocalUploadBytes *ebpf.Map `ebpf:"local_upload_bytes"`
+	SocketTags       *ebpf.Map `ebpf:"socket_tags"`
 }
 
 func (m *hostlimitMaps) Close() error {
@@ -142,6 +144,7 @@ func (m *hostlimitMaps) Close() error {
 		m.Config,
 		m.DownloadStates,
 		m.Flows,
+		m.LocalUploadBytes,
 		m.SocketTags,
 	)
 }

@@ -1,9 +1,11 @@
 package probe
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -44,9 +46,9 @@ func TestBuildAppFirewallRulesUsesPrivateBypassBeforeDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantV4 := [][]string{
-		{"-i", "lzc-br-demo", "-d", "10.0.0.0/8", "-j", "RETURN"},
-		{"-i", "lzc-br-demo", "-d", "172.16.0.0/12", "-j", "RETURN"},
-		{"-i", "lzc-br-demo", "-d", "192.168.0.0/16", "-j", "RETURN"},
+		appFirewallCounterRule([]string{"-i", "lzc-br-demo", "-d", "10.0.0.0/8", "-j", "RETURN"}, "app.demo"),
+		appFirewallCounterRule([]string{"-i", "lzc-br-demo", "-d", "172.16.0.0/12", "-j", "RETURN"}, "app.demo"),
+		appFirewallCounterRule([]string{"-i", "lzc-br-demo", "-d", "192.168.0.0/16", "-j", "RETURN"}, "app.demo"),
 		{"-i", "lzc-br-demo", "-j", "DROP"},
 	}
 	if !reflect.DeepEqual(v4.forward, wantV4) {
@@ -54,6 +56,45 @@ func TestBuildAppFirewallRulesUsesPrivateBypassBeforeDrop(t *testing.T) {
 	}
 	if len(v6.forward) != 3 || v6.forward[len(v6.forward)-1][len(v6.forward[len(v6.forward)-1])-1] != "DROP" {
 		t.Fatalf("IPv6 forward rules=%#v", v6.forward)
+	}
+}
+
+func TestParseAppFirewallLocalCounters(t *testing.T) {
+	one := appFirewallCounterPrefix + "YXBwLm9uZQ"
+	two := appFirewallCounterPrefix + "YXBwLnR3bw"
+	output := " pkts bytes target prot opt in out source destination\n" +
+		" 3 120 RETURN all -- lzc-br-one * 0.0.0.0/0 10.0.0.0/8 /* " + one + " */\n" +
+		" 2 80 RETURN all -- lzc-br-one * 0.0.0.0/0 192.168.0.0/16 /* " + one + " */\n" +
+		" 1 64 RETURN all -- * * 0.0.0.0/0 172.16.0.0/12 /* " + two + " */\n" +
+		" 9 900 DROP all -- lzc-br-one * 0.0.0.0/0 0.0.0.0/0"
+	got := parseAppFirewallLocalCounters(output)
+	if got["app.one"] != 200 || got["app.two"] != 64 || len(got) != 2 {
+		t.Fatalf("counters=%#v", got)
+	}
+}
+
+func TestAppFirewallLocalCountersRemainMonotonicAcrossChainRotation(t *testing.T) {
+	previous := runAppFirewallCommand
+	t.Cleanup(func() { runAppFirewallCommand = previous })
+	comment := appFirewallCounterPrefix + "YXBwLm9uZQ"
+	bytes := uint64(100)
+	runAppFirewallCommand = func(_ context.Context, _ bool, _ ...string) (string, error) {
+		return "1 " + strconv.FormatUint(bytes, 10) + " RETURN all -- lzc-br-one * 0.0.0.0/0 10.0.0.0/8 /* " + comment + " */", nil
+	}
+	controller := newAppInternetController()
+	controller.activeV4 = appFirewallActiveChains{forward: appFirewallForwardChainA}
+	controller.counterGeneration = 1
+	if got := controller.localUploadCounters(context.Background())["app.one"]; got != 100 {
+		t.Fatalf("first total=%d", got)
+	}
+	bytes = 150
+	if got := controller.localUploadCounters(context.Background())["app.one"]; got != 150 {
+		t.Fatalf("same-generation total=%d", got)
+	}
+	controller.counterGeneration = 2
+	bytes = 20
+	if got := controller.localUploadCounters(context.Background())["app.one"]; got != 170 {
+		t.Fatalf("rotated total=%d", got)
 	}
 }
 

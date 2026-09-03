@@ -68,9 +68,7 @@ function openWindow(name) {
         if (window.__app.loadNetworkConfigDevices) window.__app.loadNetworkConfigDevices();
         if (window.__app.loadNetworkConfigPending) window.__app.loadNetworkConfigPending(false);
         if (window.__app.bindHostBridgeUI) window.__app.bindHostBridgeUI();
-        if (window.__app.loadHostBridges) window.__app.loadHostBridges();
         if (window.__app.bindHostDNSUI) window.__app.bindHostDNSUI();
-        if (window.__app.loadHostDNS) window.__app.loadHostDNS();
     } else if (name === 'notification-settings') {
         if (els.notificationSettingsWindow) els.notificationSettingsWindow.classList.add('active');
         if (window.__app.loadLazycatDevices) window.__app.loadLazycatDevices();
@@ -200,7 +198,6 @@ function bindControls() {
     if (els.closeNetworkConfigWindow) els.closeNetworkConfigWindow.addEventListener('click', closeCurrentWindow);
     if (els.closeNotificationSettings) els.closeNotificationSettings.addEventListener('click', closeCurrentWindow);
     if (els.openNotificationSettings) els.openNotificationSettings.addEventListener('click', function () { openWindow('notification-settings'); });
-    if (els.saveNotificationSettings) els.saveNotificationSettings.addEventListener('click', function () { if (A.saveSettings) A.saveSettings(); });
 
     var openNotifyTemplate = document.getElementById('open-notify-template');
     if (openNotifyTemplate) {
@@ -274,11 +271,9 @@ function bindControls() {
     if (ipv6RenewExecBtn) ipv6RenewExecBtn.addEventListener('click', function () { if (A.runIPv6Renew) A.runIPv6Renew(); });
 
     var networkConfigRefreshBtn = document.getElementById('network-config-refresh-btn');
-    if (networkConfigRefreshBtn) networkConfigRefreshBtn.addEventListener('click', function () { if (A.loadNetworkConfigDevices) A.loadNetworkConfigDevices(); });
+    if (networkConfigRefreshBtn) networkConfigRefreshBtn.addEventListener('click', function () { if (A.loadNetworkConfigDevices) A.loadNetworkConfigDevices(undefined, true); });
     if (A.bindHostBridgeUI) A.bindHostBridgeUI();
-    if (A.loadHostBridges) A.loadHostBridges();
     if (A.bindHostDNSUI) A.bindHostDNSUI();
-    if (A.loadHostDNS) A.loadHostDNS();
     var networkConfigMethod = document.getElementById('network-config-method');
     if (networkConfigMethod) networkConfigMethod.addEventListener('change', function () {
         if (A.updateNetworkConfigMethodState) A.updateNetworkConfigMethodState();
@@ -313,8 +308,6 @@ function bindControls() {
     if (els.clearBroadbandHistory) els.clearBroadbandHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('broadband'); });
     els.runTransferTest.addEventListener('click', function () { if (A.runTransferTest) A.runTransferTest(); });
     if (els.clearTransferHistory) els.clearTransferHistory.addEventListener('click', function () { if (A.clearSpeedHistory) A.clearSpeedHistory('local'); });
-    if (els.saveSettings) els.saveSettings.addEventListener('click', function () { if (A.saveSettings) A.saveSettings(); });
-
     if (els.settingNICRealtimeEnabled) {
         els.settingNICRealtimeEnabled.addEventListener('change', function () {
             var isEnabled = !!els.settingNICRealtimeEnabled.checked;
@@ -411,6 +404,8 @@ function bindControls() {
             state.settings.dnd_end = els.settingDNDEnd.value || '08:00';
         });
     }
+
+    if (A.bindSettingsAutoSave) A.bindSettingsAutoSave();
 }
 
 function setSSEStatus(status) {
@@ -544,6 +539,13 @@ function initDashboardPanelCollapse() {
     var collapsed = new Set((state.settings.dashboard_collapsed_sections || []).filter(function (key) {
         return !!allowed[key];
     }));
+    var compactViewport = !!(window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+    var mobileHostPortsPreferenceKey = 'netwatch_mobile_host_ports_panel_v1';
+    var mobileHostPortsPreference = compactViewport ? localStorage.getItem(mobileHostPortsPreferenceKey) : null;
+    if (compactViewport) {
+        if (mobileHostPortsPreference === 'expanded') collapsed.delete('host_ports');
+        else collapsed.add('host_ports');
+    }
     var saveQueue = Promise.resolve();
 
     var paint = function () {
@@ -593,6 +595,9 @@ function initDashboardPanelCollapse() {
             if (!allowed[key]) return;
             if (collapsed.has(key)) collapsed.delete(key);
             else collapsed.add(key);
+            if (compactViewport && key === 'host_ports') {
+                localStorage.setItem(mobileHostPortsPreferenceKey, collapsed.has(key) ? 'collapsed' : 'expanded');
+            }
             paint();
             persist();
         });

@@ -129,7 +129,6 @@ func DefaultConfig() Config {
 		STUNServers: envCSV("STUN_SERVERS", []string{
 			"stun.chat.bilibili.com:3478",
 			"stun.miwifi.com:3478",
-			"stun.l.google.com:19302",
 		}),
 		HTTPTimeout:            envDurationValue("HTTP_TIMEOUT_SEC", 5*time.Second),
 		NATTimeout:             envDurationValue("NAT_TIMEOUT_SEC", 1500*time.Millisecond),

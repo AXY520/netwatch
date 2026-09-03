@@ -39,11 +39,20 @@ type Service struct {
 	egressMu              sync.Mutex
 	egressCond            *sync.Cond
 	egressInflight        bool
+	egressUpdatedAt       time.Time
 	publicIPCache         publicIPCacheData
 	publicIPMu            sync.Mutex
 	events                *networkEventStore
 	lastConnectivityProbe time.Time
 	lastEgressProbe       time.Time
+	websiteProbeMu        sync.Mutex
+	websiteProbeDone      chan struct{}
+	websiteProbeCache     WebsiteConnectivity
+	websiteProbeUpdatedAt time.Time
+	natProbeMu            sync.Mutex
+	natProbeDone          chan struct{}
+	natProbeCache         NATInfo
+	natProbeUpdatedAt     time.Time
 
 	// lifecycle workers
 	nicStop               chan struct{}
@@ -131,10 +140,33 @@ func NewService(cfg Config) *Service {
 
 func (s *Service) Start(baseCtx context.Context) {
 	startCtx, cancelStart := context.WithCancel(baseCtx)
+	egressCfg, collectInitialEgress := s.reserveInitialEgressLookup()
 
 	go func() {
-		s.Refresh(startCtx)
+		// Service start owns all one-shot public observations. Keep them in one
+		// sequence so startup cannot fan out several independent public batches.
+		s.refreshFast(startCtx, true, manualObservationRefreshCooldown)
+		s.mu.Lock()
+		s.lastConnectivityProbe = time.Now()
+		s.mu.Unlock()
+		if collectInitialEgress {
+			s.collectEgressLookups(startCtx, egressCfg)
+		}
+		s.refreshNAT(startCtx, manualObservationRefreshCooldown)
 	}()
+
+	// LAN discovery is local, but follows the same lifecycle rule: collect once
+	// at process start and thereafter only on an explicit scan (or an enabled
+	// background monitor rule).
+	s.StartLANScan()
+
+	// Mark the startup port collection in-flight before serving page reads, so
+	// early clients join it instead of seeing an uninitialized snapshot.
+	startHostPortsCollection(startCtx)
+
+	// The inventory is local-only and mutation-aware. Reserve its initial load
+	// synchronously so opening the configuration window can only join/read it.
+	startHostNetworkDeviceInventoryCollection(startCtx)
 
 	// Rebuild the single host network mutation and its rollback timer from disk.
 	go func() {
